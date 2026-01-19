@@ -415,7 +415,8 @@ ui <- page_sidebar(
                                     choices = c("default", "viridis", "magma", "plasma", "inferno",
                                                 "RdYlBu", "Spectral", "RdBu", "BrBG"),
                                     selected = "default") %>%
-                              tooltip("Override the default palette for the current raster variable")
+                              tooltip("Override the default palette for the current raster variable"),
+                        input_switch("show_site", "Show focal site", TRUE)
                   ),
 
                   accordion_panel(
@@ -840,42 +841,47 @@ server <- function(input, output, session) {
 
             grounds <- (electrodes()$destinations + leakage()) %>% setNames("grounds")
 
-            # write rasters to disk as ASCII grids
-            if(!dir.exists("circuitscape")) dir.create("circuitscape")
-            writeRaster(resistance()$resistance, "circuitscape/resistance.asc", overwrite = TRUE)
-            writeRaster(electrodes()$sources, "circuitscape/sources.asc", overwrite = TRUE)
-            writeRaster(grounds, "circuitscape/grounds.asc", overwrite = TRUE)
+            # Create a unique temp directory for this computation
+            tmp_dir <- tempfile(pattern = "circuitscape_")
+            dir.create(tmp_dir)
+            on.exit(unlink(tmp_dir, recursive = TRUE), add = TRUE)  # Clean up when done
 
-            # create INI file
-            ini_content <- '
+            # Write rasters to the temp directory
+            writeRaster(resistance()$resistance, file.path(tmp_dir, "resistance.asc"), overwrite = TRUE)
+            writeRaster(electrodes()$sources, file.path(tmp_dir, "sources.asc"), overwrite = TRUE)
+            writeRaster(grounds, file.path(tmp_dir, "grounds.asc"), overwrite = TRUE)
+
+            # Create INI file with temp paths
+            ini_content <- sprintf('
 [circuitscape mode]
 data_type = raster
 scenario = advanced
 
 [habitat raster or graph]
-habitat_file = circuitscape/resistance.asc
+habitat_file = %s/resistance.asc
 habitat_map_is_resistances = True
 
 [options for advanced mode]
-source_file = circuitscape/sources.asc
-ground_file = circuitscape/grounds.asc
+source_file = %s/sources.asc
+ground_file = %s/grounds.asc
 ground_file_is_resistances = False
 
 [output options]
-output_file = circuitscape/result.out
+output_file = %s/result.out
 write_cur_maps = True
 write_volt_maps = False
-'
-            writeLines(ini_content, "circuitscape/config.ini")
+', tmp_dir, tmp_dir, tmp_dir, tmp_dir)
 
-            # run Circuitscape in Julia
+            writeLines(ini_content, file.path(tmp_dir, "config.ini"))
+
+            # Run Circuitscape
             julia_command('using Circuitscape')
             voltage <- suppressMessages(julia_call('Circuitscape.compute',
-                                                   "circuitscape/config.ini"))
+                                                   file.path(tmp_dir, "config.ini")))
             julia_command("GC.gc()")
 
-            # Read results back into R
-            current <- rast("circuitscape/result_curmap.asc") %>%
+            # Read results
+            current <- rast(file.path(tmp_dir, "result_curmap.asc")) %>%
                   "+"(0) %>% # force into memory
                   setNames("current_flow")
             voltage <- setValues(current, voltage) %>% setNames("voltage")
@@ -883,7 +889,7 @@ write_volt_maps = False
             curr_dest <- electrodes()$destinations %>% "*"(voltage) %>% setNames("current_destinations")
             curr_loss <- leakage() %>% "*"(voltage) %>% setNames("current_loss")
 
-            # power dissipation (pinch points)
+            # Power dissipation (pinch points)
             curr_power <- (current^2 * resistance()$resistance) %>% setNames("current_power")
             curr_dir <- gradient_bearing(-voltage) %>% setNames("current_direction")
 
@@ -932,22 +938,28 @@ write_volt_maps = False
                   site$x <- input$map_click$lng
                   site$y <- input$map_click$lat
 
-                  r1 <- geo_circle(cbind(site$x, site$y), input$theta_geog)
-                  r3 <- geo_circle(cbind(site$x, site$y), input$theta_geog * 3)
-
                   leafletProxy("map") %>%
-                        clearGroup("focal_site") %>%
-                        addCircles(lng = site$x, lat = site$y,
-                                   radius = input$theta_geog / 10,
-                                   opacity = 1, fillOpacity = .5, color = "#4c32a8",
-                                   group = "focal_site") %>%
-                        addPolygons(lng = r1[,1], lat = r1[,2],
-                                    color = "#4c32a8", weight = 2, fill = FALSE,
-                                    dashArray = "12, 5",
-                                    group = "focal_site") %>%
-                        addPolygons(lng = r3[,1], lat = r3[,2],
-                                    color = "#4c32a8", weight = 2, fill = FALSE,
-                                    group = "focal_site")
+                        clearGroup("focal_site")
+
+                  if(input$show_site){
+                        r1 <- geo_circle(cbind(site$x, site$y), input$theta_geog)
+                        r3 <- geo_circle(cbind(site$x, site$y), input$theta_geog * 3)
+
+                        leafletProxy("map") %>%
+                              addCircles(lng = site$x, lat = site$y,
+                                         radius = input$theta_geog / 10,
+                                         opacity = 1, fillOpacity = .5, color = "#4c32a8",
+                                         group = "focal_site") %>%
+                              addPolygons(lng = r1[,1], lat = r1[,2],
+                                          color = "#4c32a8", weight = 2, fill = FALSE,
+                                          dashArray = "12, 5",
+                                          group = "focal_site") %>%
+                              addPolygons(lng = r3[,1], lat = r3[,2],
+                                          color = "#4c32a8", weight = 2, fill = FALSE,
+                                          group = "focal_site")
+                  }
+
+
             }
       })
 
@@ -1380,7 +1392,10 @@ write_volt_maps = False
                         .groups = "drop"
                   ) %>%
                   filter(!is.na(species))
-            a$value <- a[[var()]]
+
+            v <- if(var() == "baplot") "batot" else var()
+            a$value <- a[[v]]
+
             lab <- gsub(" ", "\n", paste(input$summary_stat, input$fia_var))
             ggplot(a %>% arrange(desc(value)),
                    aes(type, species, size = value, fill = value)) +
