@@ -969,33 +969,6 @@ write_volt_maps = False
                                     group = "focal_site")
             }
       })
-      # observe({
-      #       if(!is.null(input$map_click)){
-      #             site$x <- input$map_click$lng
-      #             site$y <- input$map_click$lat
-      #
-      #             leafletProxy("map") %>%
-      #                   clearGroup("focal_site")
-      #
-      #             if(input$show_site){
-      #                   r1 <- geo_circle(cbind(site$x, site$y), input$theta_geog)
-      #                   r3 <- geo_circle(cbind(site$x, site$y), input$theta_geog * 3)
-      #
-      #                   leafletProxy("map") %>%
-      #                         addCircles(lng = site$x, lat = site$y,
-      #                                    radius = input$theta_geog / 10,
-      #                                    opacity = 1, fillOpacity = .5, color = "#4c32a8",
-      #                                    group = "focal_site") %>%
-      #                         addPolygons(lng = r1[,1], lat = r1[,2],
-      #                                     color = "#4c32a8", weight = 2, fill = FALSE,
-      #                                     dashArray = "12, 5",
-      #                                     group = "focal_site") %>%
-      #                         addPolygons(lng = r3[,1], lat = r3[,2],
-      #                                     color = "#4c32a8", weight = 2, fill = FALSE,
-      #                                     group = "focal_site")
-      #             }
-      #       }
-      # })
 
       # raster layer of euclidean climatic distance to focal site
       site_diff <- reactive({
