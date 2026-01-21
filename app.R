@@ -13,7 +13,6 @@ library(sf)
 library(leafgl)
 library(JuliaCall)
 
-
 ## global setup ##
 
 clim_vars <- function() c("tmean", "ppt", "aet", "cwd", "tmincm", "tmaxwm")
@@ -645,7 +644,6 @@ server <- function(input, output, session) {
             }
       })
 
-
       ## ANALOG IMPACT MODEL -----------------------------------------
 
       clim <- reactive({
@@ -658,6 +656,7 @@ server <- function(input, output, session) {
                   aggregate(input$clim_agg, na.rm = TRUE)
             list(hst = clim_hst, fut = clim_fut)
       })
+
 
       pool <- reactive({
             req(plot_occ())
@@ -765,7 +764,7 @@ server <- function(input, output, session) {
             }else if(input$cs_targets == "selected site" && !is.null(site$y)){
                   xy <- matrix(c(site$x, site$y), nrow = 1)
                   destinations <- aim()$fut[[var()]]
-                  destinations <- rasterize(xy, destinations) # * extract(destinations, xy)[1,1]
+                  destinations <- rasterize(xy, destinations)
             }else{
                   # fia plots
                   v <- plot_occ()[, c("x", "y")]
@@ -933,39 +932,73 @@ write_volt_maps = False
 
 
       ### Focal site -----------------------------
-      observe({
-            if(!is.null(input$map_click)){
-                  site$x <- input$map_click$lng
-                  site$y <- input$map_click$lat
-
-                  leafletProxy("map") %>%
-                        clearGroup("focal_site")
-
-                  if(input$show_site){
-                        r1 <- geo_circle(cbind(site$x, site$y), input$theta_geog)
-                        r3 <- geo_circle(cbind(site$x, site$y), input$theta_geog * 3)
-
-                        leafletProxy("map") %>%
-                              addCircles(lng = site$x, lat = site$y,
-                                         radius = input$theta_geog / 10,
-                                         opacity = 1, fillOpacity = .5, color = "#4c32a8",
-                                         group = "focal_site") %>%
-                              addPolygons(lng = r1[,1], lat = r1[,2],
-                                          color = "#4c32a8", weight = 2, fill = FALSE,
-                                          dashArray = "12, 5",
-                                          group = "focal_site") %>%
-                              addPolygons(lng = r3[,1], lat = r3[,2],
-                                          color = "#4c32a8", weight = 2, fill = FALSE,
-                                          group = "focal_site")
-                  }
-
-
-            }
+      # Update site coordinates on click only
+      observeEvent(input$map_click, {
+            site$x <- input$map_click$lng
+            site$y <- input$map_click$lat
       })
 
-      site_diff <- reactive({
-            # returns raster layer of euclidean climatic distance to focal site
+      # Draw focal site whenever relevant inputs change
+      observe({
+            # Dependencies that should trigger redraw
+            input$bbox_x
+            input$bbox_y
+            input$theta_geog
+            input$show_site
+            site$x
+            site$y
 
+            leafletProxy("map") %>%
+                  clearGroup("focal_site")
+
+            if(input$show_site && !is.null(site$x)){
+                  r1 <- geo_circle(cbind(site$x, site$y), input$theta_geog)
+                  r3 <- geo_circle(cbind(site$x, site$y), input$theta_geog * 3)
+
+                  leafletProxy("map") %>%
+                        addCircles(lng = site$x, lat = site$y,
+                                   radius = input$theta_geog / 10,
+                                   opacity = 1, fillOpacity = .5, color = "#4c32a8",
+                                   group = "focal_site") %>%
+                        addPolygons(lng = r1[,1], lat = r1[,2],
+                                    color = "#4c32a8", weight = 2, fill = FALSE,
+                                    dashArray = "12, 5",
+                                    group = "focal_site") %>%
+                        addPolygons(lng = r3[,1], lat = r3[,2],
+                                    color = "#4c32a8", weight = 2, fill = FALSE,
+                                    group = "focal_site")
+            }
+      })
+      # observe({
+      #       if(!is.null(input$map_click)){
+      #             site$x <- input$map_click$lng
+      #             site$y <- input$map_click$lat
+      #
+      #             leafletProxy("map") %>%
+      #                   clearGroup("focal_site")
+      #
+      #             if(input$show_site){
+      #                   r1 <- geo_circle(cbind(site$x, site$y), input$theta_geog)
+      #                   r3 <- geo_circle(cbind(site$x, site$y), input$theta_geog * 3)
+      #
+      #                   leafletProxy("map") %>%
+      #                         addCircles(lng = site$x, lat = site$y,
+      #                                    radius = input$theta_geog / 10,
+      #                                    opacity = 1, fillOpacity = .5, color = "#4c32a8",
+      #                                    group = "focal_site") %>%
+      #                         addPolygons(lng = r1[,1], lat = r1[,2],
+      #                                     color = "#4c32a8", weight = 2, fill = FALSE,
+      #                                     dashArray = "12, 5",
+      #                                     group = "focal_site") %>%
+      #                         addPolygons(lng = r3[,1], lat = r3[,2],
+      #                                     color = "#4c32a8", weight = 2, fill = FALSE,
+      #                                     group = "focal_site")
+      #             }
+      #       }
+      # })
+
+      # raster layer of euclidean climatic distance to focal site
+      site_diff <- reactive({
             req(site$x, site$y)
 
             s <- switch(input$analog_direction,
@@ -1110,15 +1143,19 @@ write_volt_maps = False
                         opacity = input$rast_opacity,
                         method = proj_method,
                         group = "AIM results"
-                  ) %>%
-                  addLegend(
-                        position = "topright",
-                        pal      = rast_pal,
-                        values   = dom,
-                        title    = HTML(title),
-                        layerId  = "raster_legend",
-                        opacity  = input$rast_opacity
                   )
+
+            if(input$rast_opacity > 0){
+                  proxy <- proxy %>%
+                        addLegend(
+                              position = "topright",
+                              pal      = rast_pal,
+                              values   = dom,
+                              title    = HTML(title),
+                              layerId  = "raster_legend",
+                              opacity  = input$rast_opacity
+                        )
+            }
       })
 
 
@@ -1243,6 +1280,13 @@ write_volt_maps = False
 
       ## FOCAL SITE PLOTS ----------------------------
 
+      eras <- reactive({
+            switch(input$analog_direction,
+                   "Reverse analogs" = c("historic", "future"),
+                   "Forward analogs" = c("future", "historic"),
+                   "Contemporary analogs" = c("historic", "historic"))
+      })
+
       ### climate space --------------------------------
       output$clim_plot <- renderPlot({
             req(site_analogs())
@@ -1298,17 +1342,33 @@ write_volt_maps = False
                              aes(v1, v2, fill = value),
                              color = "gray70", size = 1.5) +
                   geom_point(data = filter(d, samp_method_cd == 1),
-                             aes(v1, v2, fill = value),
-                             shape = 21, color = "black", size = 3) +
-                  annotate(geom = "point",
-                           x = s[[v1]] * scl1$sd + scl1$mean,
-                           y = s[[v2]] * scl2$sd + scl2$mean,
-                           color = "#4c32a8", size = 4, alpha = .5) +
-                  scale_fill_gradientn(colors = c("gray90", green), limits = dom) +
+                             aes(v1, v2, fill = value,
+                                 shape = paste0("analog FIA plot,\n", eras()[1], " climate")),
+                             color = "black", size = 3) +
+                  geom_point(aes(x = s[[v1]] * scl1$sd + scl1$mean,
+                                 y = s[[v2]] * scl2$sd + scl2$mean,
+                                 shape = paste0("selected site,\n", eras()[2], " climate")),
+                             color = "#4c32a8", fill = "#4c32a8", size = 4, alpha = .5) +
+                  scale_fill_gradientn(colors = c("gray90", green), limits = dom, guide = "none") +
+                  scale_shape_manual(values = c(21, 22)) +
                   scale_linetype(guide = "none") +
-                  theme(legend.position = "none") +
+                  theme(legend.position = "top") +
                   labs(y = v1,
-                       x = v2)
+                       x = v2,
+                       shape = NULL)
+
+            if(input$analog_direction != "Contemporary analogs"){
+                  h <- a$hst_site; names(h) <- gsub("1|2", "", names(h))
+                  f <- a$fut_site; names(f) <- gsub("1|2", "", names(f))
+                  p <- p +
+                        annotate(geom = "segment",
+                                 x = h[[v1]] * scl1$sd + scl1$mean,
+                                 y = h[[v2]] * scl2$sd + scl2$mean,
+                                 xend = f[[v1]] * scl1$sd + scl1$mean,
+                                 yend = f[[v2]] * scl2$sd + scl2$mean,
+                                 arrow = arrow(angle = 15, type = "closed"),
+                                 color = "#4c32a8", alpha = .5)
+            }
 
             if(nrow(filter(d, clim_dist <= input$theta_clim * 3)) == 0){
                   p <- p +
@@ -1348,7 +1408,9 @@ write_volt_maps = False
                   geom_point(data = filter(d, samp_method_cd == 2), color = "gray70", size = 1.5) +
                   geom_point(data = filter(d, samp_method_cd == 1), shape = 21, color = "black", size = 3) +
 
-                  annotate(geom = "point", x = 0, y = 0, color = "#4c32a8", size = 5, alpha = .5) +
+                  annotate(geom = "point", x = 0, y = 0,
+                           color = "#4c32a8", fill = "#4c32a8",
+                           size = 10, alpha = .5, shape = 22) +
 
                   scale_fill_gradientn(colors = c("gray90", green), limits = dom) +
                   theme(legend.position = "none") +
@@ -1358,7 +1420,6 @@ write_volt_maps = False
 
       ### forest composition --------------------------------
       output$comp_plot <- renderPlot({
-
             d <- bind_rows(site_analogs()$rev_analogs %>% mutate(type = "reverse"),
                            site_analogs()$fwd_analogs %>% mutate(type = "forward"),
                            site_analogs()$bsl_analogs %>% mutate(type = "contemporary")) %>%
@@ -1396,15 +1457,21 @@ write_volt_maps = False
             v <- if(var() == "baplot") "batot" else var()
             a$value <- a[[v]]
 
-            lab <- gsub(" ", "\n", paste(input$summary_stat, input$fia_var))
-            ggplot(a %>% arrange(desc(value)),
-                   aes(type, species, size = value, fill = value)) +
-                  geom_point(color = "black", shape = 21) +
+            lab <- paste("historic", input$summary_stat, input$fia_var)
+
+            a %>%
+                  arrange(species) %>%
+                  mutate(y = as.integer(factor(species)),
+                         svalue = value / max(value)) %>%
+                  ggplot(aes(type, species, height = svalue, fill = value)) +
+                  geom_tile(width = .9, linewidth = 0) +
                   scale_fill_gradientn(colors = c("gray90", green), guide = "legend") +
                   scale_size_area(max_size = 20) +
+                  theme(panel.grid = element_blank(),
+                        axis.text.x = element_text(angle = 45, hjust = 1)) +
                   labs(x = "analog type",
-                       fill = lab,
-                       size = lab)
+                       y = NULL,
+                       fill = gsub(" ", "\n", lab))
       })
 
 
