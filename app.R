@@ -234,7 +234,17 @@ make_spokes <- function(mag, dir, subsample = 10, arrow_scale = 0.5) {
       )
 }
 
-tooltip <- function(x, ...) bslib::tooltip(x, ...)
+aggregate <- function(x, fact, ...){
+      if(fact == 1) return(x)
+      terra::aggregate(x, fact = fact, ...)
+}
+
+auc <- function(obs, pred){
+      if(!all(obs %in% 0:1)) return(NA)
+      as.vector(pROC::roc(obs, pred, quiet = TRUE)$auc)
+}
+
+tooltip <- function(x, ...) bslib::tooltip(x, ..., options = list(delay = list(show = 2000, hide = 100)))
 
 
 # UI ---------------------------------------------------
@@ -257,30 +267,30 @@ ui <- page_sidebar(
 ")),
 
       tags$head(
-            tags$style(HTML(
-                  "/* Make the tooltip wider */
-                    .tooltip-inner {
-                        max-width: 350px !important;
-                        text-align: left;
-                        text-transform: none !important;
-                        line-height: 1.2 !important;
-                        padding: 8px 12px;
-                        font-size: 0.85rem;
-                    }
+            tags$style(HTML("
+              /* Make the tooltip wider */
+              .tooltip-inner {
+                  max-width: 350px !important;
+                  text-align: left;
+                  text-transform: none !important;
+                  line-height: 1.2 !important;
+                  padding: 8px 12px;
+                  font-size: 0.85rem;
+              }
 
-                    /* Subtle styling for definition list descriptions */
-                    .tooltip-inner dd {
-                        color: #aaa;
-                        margin-left: 0;
-                        margin-bottom: 0.5em;
-                    }
+              /* Subtle styling for definition list descriptions */
+              .tooltip-inner dd {
+                  color: #aaa;
+                  margin-left: 0;
+                  margin-bottom: 0.5em;
+              }
 
-                    /* Optional: make terms stand out more */
-                    .tooltip-inner dt {
-                        color: #fff;
-                        font-weight: 600;
-                    }
-  "))
+              /* Optional: make terms stand out more */
+              .tooltip-inner dt {
+                  color: #fff;
+                  font-weight: 600;
+              }
+      "))
       ),
 
       theme = bs_theme(version = 5, bootswatch = "sandstone"),
@@ -289,7 +299,7 @@ ui <- page_sidebar(
 
       # "FORSITE" FORest Species Impact & Transition Explorer
       # "FLAIM" Forest Landscape Analog Impact Model
-      title = "FIA climate analog explorer",
+      title = "TreeShift",
 
 
       ## LEFT SIDEBAR ------------------------------------
@@ -300,7 +310,7 @@ ui <- page_sidebar(
 
             accordion(
                   id = "sidebar_acc",
-                  open = "Info",
+                  open = "Intro",
                   multiple = FALSE,
 
                   accordion_panel(
@@ -519,7 +529,7 @@ ui <- page_sidebar(
                                           checkboxGroupInput("eval_params", NULL,
                                                              choiceNames = c("Test geographic bandwidths", "Test climate bandwidths", "Test climate variables"),
                                                              choiceValues = c("geog", "clim", "vars")),
-                                          selectInput("eval_stat", "Evaluation statistic",  c("R-squared", "RMSE", "delta AIC")),
+                                          selectInput("eval_stat", "Evaluation statistic",  c("R-squared", "RMSE", "delta AIC", "AUC")),
                                           sliderInput("eval_n_vars", "Max n climate vars", 1, 6, value = c(1, 2), step = 1),
                                           actionButton("optimal_params", "Apply optimal parameters"),
                                           actionButton("run_eval", "Run evaluations")
@@ -625,6 +635,18 @@ server <- function(input, output, session) {
       observe({
             if(input$stat %in% cs_stat_names){
                   updateSelectInput(session, "time", selected = "delta")
+            }
+      })
+
+      # Only show AUC option for presence-absence variable
+      observe({
+            if(input$fia_var == "presence probability"){
+                  updateSelectInput(session, "eval_stat",
+                                    choices = c("R-squared", "RMSE", "delta AIC", "AUC"),
+                                    selected = "AUC")
+            }else{
+                  updateSelectInput(session, "eval_stat",
+                                    choices = c("R-squared", "RMSE", "delta AIC"))
             }
       })
 
@@ -808,7 +830,7 @@ server <- function(input, output, session) {
             } else if(input$cs_conductance_layer == "suitability") {
                   conductance <- suitability()
             } else if(input$cs_conductance_layer == "suitability * wind") {
-                  conductance <- aligned_flux(bearing, wind()) * suitability
+                  conductance <- aligned_flux(bearing, wind()) * suitability()
             } else { # uniform conductance
                   # v <- 10^input$cs_conductance
                   conductance <- setValues(electrodes()$sources, 1)
@@ -1078,7 +1100,7 @@ write_volt_maps = False
                   )
             } else if(input$stat == "focal site similarity") {
                   rast_pal <- colorNumeric(
-                        palette = c("gray90", "darkorchid4") %>% choose_palette(),
+                        palette = "magma" %>% choose_palette(),
                         domain = dom,
                         na.color = "transparent",
                         reverse = TRUE
@@ -1115,7 +1137,8 @@ write_volt_maps = False
                         colors  = rast_pal,
                         opacity = input$rast_opacity,
                         method = proj_method,
-                        group = "AIM results"
+                        group = "AIM results",
+                        maxBytes = 10 * 1024 * 1024 # increase limit to 10 MB
                   )
 
             if(input$rast_opacity > 0){
@@ -1496,7 +1519,8 @@ write_volt_maps = False
                         aim <- aim  %>%
                               summarize(rsq = cor(pred, obs)^2,
                                         rmse = sqrt(mean((obs - pred)^2)),
-                                        daicc = aicc(obs, pred, length(clim_vars) + 2)) %>%
+                                        daicc = aicc(obs, pred, length(clim_vars) + 2),
+                                        auc = auc(obs, pred)) %>%
                               mutate(theta_clim = theta_clim,
                                      theta_geog = theta_geog)
                   }
@@ -1517,7 +1541,7 @@ write_volt_maps = False
                                    values_train = values[train], values_test = values[!train]) %>%
                         purrr::list_rbind() %>%
                         mutate(daicc = daicc - min(daicc)) %>% # convert AIC to delta AIC
-                        tidyr::gather(stat, value, rsq, rmse, daicc) %>%
+                        tidyr::gather(stat, value, rsq, rmse, daicc, auc) %>%
                         mutate(clim_vars = paste(clim_vars, collapse = "_"))
             }else{
                   e <- eval(input$theta_clim, input$theta_geog,
@@ -1551,11 +1575,12 @@ write_volt_maps = False
             metric <- switch(input$eval_stat,
                              "RMSE" = "rmse",
                              "R-squared" = "rsq",
-                             "delta AIC" = "daicc")
+                             "delta AIC" = "daicc",
+                             "AUC" = "auc")
 
             opt <- model_eval$comparison %>% ungroup() %>%
                   filter(stat == metric) %>%
-                  mutate(value = ifelse(stat == "rsq", value, -value)) %>%
+                  mutate(value = ifelse(stat %in% c("rsq", "auc"), value, -value)) %>%
                   filter(value == max(value))
 
             updateSliderInput(session, "theta_geog", value = opt$theta_geog)
@@ -1569,9 +1594,10 @@ write_volt_maps = False
             metric <- switch(input$eval_stat,
                              "RMSE" = "rmse",
                              "R-squared" = "rsq",
-                             "delta AIC" = "daicc")
+                             "delta AIC" = "daicc",
+                             "AUC" = "auc")
 
-            opt <- if(metric == "rsq") 1 else -1
+            opt <- if(metric %in% c("rsq", "auc")) 1 else -1
 
             e <- model_eval$comparison %>% ungroup() %>%
                   filter(stat == metric) %>%
@@ -1609,7 +1635,7 @@ write_volt_maps = False
             ggplot(e, aes(obs, pred)) +
                   geom_point() +
                   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "dodgerblue") +
-                  geom_smooth(method = lm, se = F, color = "red") +
+                  geom_smooth(method = lm, se = F, color = "red", formula = 'y ~ x') +
                   annotate(geom = "point", color = "red", size = 4,
                            x = mean(e$obs), y = mean(e$pred)) +
                   scale_x_sqrt() +
