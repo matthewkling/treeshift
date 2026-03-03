@@ -322,7 +322,8 @@ ui <- page_sidebar(
                           and explore properties of plots that are analogs to your focal sites.",
                           style = "font-size: 14px; color: #555;"),
                         br(),
-                        p("NOTE: This tool is a prototype and is still under development. Contact ",
+                        p("NOTE: This tool is a prototype and is still under development.
+                          Please contact matthew.kling@umontana.edu with questions or bug reports.",
                           style = "font-size: 14px; color: #555;")
                   ),
 
@@ -389,7 +390,7 @@ ui <- page_sidebar(
                                               <dt>FIA variable</dt> <dd>Interpolated values for the plot variable selected above</dd>
                                               <dt>Effective sample size</dt> <dd>Effective number of FIA plots within climatic and geographic range, accounting for weights</dd>
                                               <dt>Focal site similarity</dt> <dd>Climatic distance to the site selected on map, based on the selected analog direction</dd>
-                                              <dt>Current flow</dt> <dd>Total current passing through each cell; high values indicate important movement corridors</dd>
+                                              <dt>Current flow</dt> <dd>Total current passing through each cell; high values indicate important range shift corridors</dd>
                                               <dt>Current on target</dt> <dd>Current delivered to destination grounds; shows where dispersers successfully reach future-suitable habitat</dd>
                                               <dt>Current loss</dt> <dd>Current lost to non-target grounds; represents dispersers removed via mortality or settlement before reaching destinations</dd>
                                               <dt>Current pinch points</dt> <dd>Power dissipation (I²R); highlights bottlenecks where connectivity is both concentrated and tenuous — priorities for restoration or protection</dd>
