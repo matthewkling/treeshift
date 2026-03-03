@@ -1,7 +1,7 @@
-# TreeFlux
+# TreeShift
 
 <!-- badges: start -->
 
 <!-- badges: end -->
 
-This repo contains source code for the `TreeFlux` Shiny app.
+This repo contains source code for the `TreeShift` Shiny app.
