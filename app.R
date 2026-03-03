@@ -3,7 +3,7 @@ library(shiny)
 library(leaflet)
 library(ggplot2)
 library(terra)
-library(analogs)
+library(analogs) # renv::install("matthewkling/analogs")
 library(dplyr)
 library(readr)
 library(bslib)
@@ -11,9 +11,12 @@ library(shinybusy)
 library(leaflet.extras2)
 library(sf)
 library(leafgl)
-library(JuliaCall)
+library(circuitscaper) # renv::install("matthewkling/circuitscaper")
+
 
 ## global setup ##
+
+cs_setup()
 
 clim_vars <- function() c("tmean", "ppt", "aet", "cwd", "tmincm", "tmaxwm")
 bbox_res <- 1
@@ -22,8 +25,6 @@ clim_bbox <- c(floor(clim_bbox[c(1, 3)] / bbox_res) * bbox_res, ceiling(clim_bbo
 
 spp <- sort(unique(read_csv("data/fia.csv")$species))
 
-julia_setup()
-julia_library("Circuitscape") # julia_install_package("Circuitscape")
 cs_stat_names <- c("current flow", "current on target", "current loss", "current pinch points",
                    "current direction", "voltage", "conductance", "loss")
 cs_stats <- c("current_flow", "current_destinations", "current_loss", "current_power",
@@ -297,8 +298,6 @@ ui <- page_sidebar(
 
       fillable = TRUE,   # lets the page body fill the browser height
 
-      # "FORSITE" FORest Species Impact & Transition Explorer
-      # "FLAIM" Forest Landscape Analog Impact Model
       title = "TreeShift",
 
 
@@ -321,6 +320,9 @@ ui <- page_sidebar(
                           Use it to assess potential shifts in species distributions and other forest characteristics,
                           model connectivity between current and potential future distributions,
                           and explore properties of plots that are analogs to your focal sites.",
+                          style = "font-size: 14px; color: #555;"),
+                        br(),
+                        p("NOTE: This tool is a prototype and is still under development. Contact ",
                           style = "font-size: 14px; color: #555;")
                   ),
 
@@ -860,52 +862,16 @@ server <- function(input, output, session) {
       ### Circuitscape --------------
       connectivity <- reactive({
 
+            # Ground nodes
             grounds <- (electrodes()$destinations + leakage()) %>% setNames("grounds")
 
-            # Create a unique temp directory for this computation
-            tmp_dir <- tempfile(pattern = "circuitscape_")
-            dir.create(tmp_dir)
-            on.exit(unlink(tmp_dir, recursive = TRUE), add = TRUE)  # Clean up when done
+            # Run circuitscape
+            cs <- cs_advanced(resistance()$resistance, electrodes()$sources, grounds,
+                              resistance_is = "resistances", ground_is = "conductances")
 
-            # Write rasters to the temp directory
-            writeRaster(resistance()$resistance, file.path(tmp_dir, "resistance.asc"), overwrite = TRUE)
-            writeRaster(electrodes()$sources, file.path(tmp_dir, "sources.asc"), overwrite = TRUE)
-            writeRaster(grounds, file.path(tmp_dir, "grounds.asc"), overwrite = TRUE)
-
-            # Create INI file with temp paths
-            ini_content <- sprintf('
-[circuitscape mode]
-data_type = raster
-scenario = advanced
-
-[habitat raster or graph]
-habitat_file = %s/resistance.asc
-habitat_map_is_resistances = True
-
-[options for advanced mode]
-source_file = %s/sources.asc
-ground_file = %s/grounds.asc
-ground_file_is_resistances = False
-
-[output options]
-output_file = %s/result.out
-write_cur_maps = True
-write_volt_maps = False
-', tmp_dir, tmp_dir, tmp_dir, tmp_dir)
-
-            writeLines(ini_content, file.path(tmp_dir, "config.ini"))
-
-            # Run Circuitscape
-            julia_command('using Circuitscape')
-            voltage <- suppressMessages(julia_call('Circuitscape.compute',
-                                                   file.path(tmp_dir, "config.ini")))
-            julia_command("GC.gc()")
-
-            # Read results
-            current <- rast(file.path(tmp_dir, "result_curmap.asc")) %>%
-                  "+"(0) %>% # force into memory
-                  setNames("current_flow")
-            voltage <- setValues(current, voltage) %>% setNames("voltage")
+            # Derived variables
+            current <- cs$cumulative_current %>% setNames("current_flow")
+            voltage <- cs$voltage
             curr_ground <- grounds %>% "*"(voltage) %>% setNames("current_ground")
             curr_dest <- electrodes()$destinations %>% "*"(voltage) %>% setNames("current_destinations")
             curr_loss <- leakage() %>% "*"(voltage) %>% setNames("current_loss")
@@ -914,9 +880,7 @@ write_volt_maps = False
             curr_power <- (current^2 * resistance()$resistance) %>% setNames("current_power")
             curr_dir <- gradient_bearing(-voltage) %>% setNames("current_direction")
 
-            # Clean temp files
-            file.remove(list.files("circuitscape", full.names = T))
-
+            # Return results
             c(current, voltage, curr_dest, curr_loss, curr_power,
               resistance()$conductance, leakage(), curr_dir) %>%
                   mask(aim()$bsl[[var()]])
