@@ -357,7 +357,9 @@ ui <- page_sidebar(
                                               <dt>TMAXWM</dt> <dd>Avg max temp of warmest month</dd>
                                           </dl>")),
                         sliderInput("clim_agg", "Raster grain size", 1, 10, value = 10, step = 1, post = " km") %>%
-                              tooltip("Select the resolution of the modeling grid; larger values are faster but less precise.")
+                              tooltip("Select the resolution of the modeling grid; larger values are faster but less precise."),
+                        selectInput("scenario", "Future climate scenario", "coming soon") %>%
+                              tooltip("Select a time period, emissions scenario, and climate model.")
                   ),
 
                   accordion_panel(
@@ -399,8 +401,8 @@ ui <- page_sidebar(
                                               <dt>Conductance</dt> <dd>Model input: ease of movement across the landscape (inverse of resistance)</dd>
                                               <dt>Loss</dt> <dd>Model input: rate at which dispersers are removed from the migrating pool at each cell</dd>
                                           </dl>")),
-                        selectInput("time", "Raster variable timeframe", c("historic", "future", "delta")) %>%
-                              tooltip("Choose whether to display historic or future model predictions, or their difference.
+                        selectInput("time", "Raster variable timeframe", c("historical", "future", "delta")) %>%
+                              tooltip("Choose whether to display historical or future model predictions, or their difference.
                                       Only relevant for `FIA varibale` and `ESS` raster variables."),
                         selectInput("vector", "Vector layer",
                                     c("occupied FIA plots", "all FIA plots", "focal site analogs", "current animation", "current field", "none")) %>%
@@ -474,9 +476,9 @@ ui <- page_sidebar(
                                           selectInput("analog_direction", NULL, c("Contemporary analogs", "Reverse analogs", "Forward analogs")) %>%
                                                 tooltip(HTML("Choose which type of analog to visualize:
                                                 <ul>
-                                                    <li>Contemporary analogs have historic climates similar to the focal site's historic climate.</li>
-                                                    <li>Reverse (inbound) analogs have historic climates similar to the focal site's future climate.</li>
-                                                    <li>Forward (outbound) analogs have future climates similar to the focal site's historic climate.</li>
+                                                    <li>Contemporary analogs have historical climates similar to the focal site's historical climate.</li>
+                                                    <li>Reverse (inbound) analogs have historical climates similar to the focal site's future climate.</li>
+                                                    <li>Forward (outbound) analogs have future climates similar to the focal site's historical climate.</li>
                                                 </ul>")),
                                           actionButton("highlight_site", "Highlight on map"),
                                           input_switch("filter_clim", "Exclude non-analog plots", TRUE) %>%
@@ -490,8 +492,22 @@ ui <- page_sidebar(
                               ),
 
                               accordion_panel(
+                                    "Study area",
+                                    helpText("Upload a polygon layer to display on the map and view the distribution of raster values within your polygon."), hr(),
+
+                                    fileInput("polygon_upload", NULL,
+                                              multiple = TRUE,
+                                              accept = c(".shp", ".dbf", ".shx", ".prj", ".kml", ".kmz",
+                                                         ".gpkg", ".geojson"),
+                                              placeholder = "Shapefile, KML, GPKG, or GeoJSON") %>%
+                                          tooltip("Upload a polygon layer. For shapefiles, select all component files (.shp, .dbf, .shx, .prj)."),
+
+                                    plotOutput("polygon_density")
+                              ),
+
+                              accordion_panel(
                                     "Connectivity",
-                                    helpText("This tool models circuit-based landscape connectivity between historic (source) and future (target) FIA surfaces."), hr(),
+                                    helpText("This tool models circuit-based landscape connectivity between historical (source) and future (target) FIA surfaces."), hr(),
 
                                     layout_column_wrap(
                                           width = 1/2,
@@ -505,7 +521,7 @@ ui <- page_sidebar(
                                                         of the selected FIA variable. If `selected site` is chosen, the focal site."),
                                           selectInput("cs_conductance_layer", "Horizontal conductance", c("suitability", "wind", "suitability * wind", "uniform")) %>%
                                                 tooltip("The inverse of landscape resistance, horizontal conductance determines how easily current can flow across a site.
-                                                        `Suitability` models conductance proportional to the mean of historic and future FIA raster values.
+                                                        `Suitability` models conductance proportional to the mean of historical and future FIA raster values.
                                                         `Wind` models conductance proportional to the frequency and speed with which wind blows toward targets."),
                                           selectInput("cs_loss_layer", "Loss (non-target grounds)", c("none", "uniform", "suitability" = "mean suitability")) %>%
                                                 tooltip("Choose whether and how to model current 'leakage' representing dispersers that are removed from the pool
@@ -606,6 +622,31 @@ server <- function(input, output, session) {
 
       clim_scales <- readRDS("data/clim_scales.rds")
 
+      user_polygon <- reactive({
+            req(input$polygon_upload)
+            files <- input$polygon_upload
+            exts <- tolower(tools::file_ext(files$name))
+
+            tryCatch({
+                  if("shp" %in% exts){
+                        tmpdir <- tempfile()
+                        dir.create(tmpdir)
+                        file.copy(files$datapath, file.path(tmpdir, files$name))
+                        shp_path <- file.path(tmpdir, files$name[exts == "shp"])
+                        st_read(shp_path, quiet = TRUE)
+                  } else if(any(exts %in% c("kml", "kmz", "gpkg", "geojson"))){
+                        st_read(files$datapath[1], quiet = TRUE)
+                  } else {
+                        showNotification("Unsupported file format.", type = "error")
+                        NULL
+                  }
+            }, error = function(e){
+                  showNotification(paste("Error reading polygon:", conditionMessage(e)), type = "error")
+                  NULL
+            }) %>%
+                  st_transform(4326)
+      })
+
 
       ## focal site
       site <- reactiveValues(x = NULL, y = NULL)
@@ -669,6 +710,30 @@ server <- function(input, output, session) {
             }
       })
 
+      # add user-provided polygon
+      observe({
+            proxy <- leafletProxy("map") %>%
+                  clearGroup("user_polygon")
+
+            # Re-draw after any raster change by taking dependency on display_layer
+            display_layer()
+
+            req(user_polygon())
+            poly <- user_polygon()
+
+            proxy %>%
+                  addPolygons(
+                        data = poly,
+                        color = "#e05c00",
+                        weight = 2,
+                        fillOpacity = 0.1,
+                        fillColor = "#e05c00",
+                        group = "user_polygon",
+                        label = if(!is.null(poly$Name)) ~Name else NULL
+                  )
+      })
+
+
       ## ANALOG IMPACT MODEL -----------------------------------------
 
       clim <- reactive({
@@ -707,9 +772,9 @@ server <- function(input, output, session) {
                         max_clim = input$theta_clim * 3,
                         max_geog = input$theta_geog * 3,
                         stat = c("count", "sum_weights", stat, "ess"),
-                        weight = "gaussian_joint",
+                        kernel = "gaussian_joint",
                         theta = c(input$theta_clim, input$theta_geog),
-                        values = pool()$values))
+                        y = pool()$values))
             }
 
             aim_bsl <- aim_query(clim()$hst)
@@ -738,7 +803,7 @@ server <- function(input, output, session) {
                         max_clim = max_clim,
                         select = "all",
                         stat = NULL,
-                        values = cbind(pool()$values, pool()$clim_hst, pool()$clim_fut)
+                        y = cbind(pool()$values, pool()$clim_hst, pool()$clim_fut)
                   ))
             }
 
@@ -986,7 +1051,7 @@ server <- function(input, output, session) {
             if(input$stat == "ESS"){
                   r <- switch(input$time,
                               "delta" = 2 / (1/aim()$fut$ess + 1/aim()$bsl$ess), # harmonic mean
-                              "historic" = aim()$bsl$ess,
+                              "historical" = aim()$bsl$ess,
                               "future" = aim()$fut$ess)
             }else if(input$stat %in% c("current animation", "current field")){
                   # show FIA delta raster for these layers
@@ -999,11 +1064,33 @@ server <- function(input, output, session) {
             }else{ # input$stat == "FIA variable"
                   r <- switch(input$time,
                               "delta" = aim()$fut[[var()]] - aim()$bsl[[var()]],
-                              "historic" = aim()$bsl[[var()]],
+                              "historical" = aim()$bsl[[var()]],
                               "future" = aim()$fut[[var()]])
             }
 
             r
+      })
+
+      raster_title <- reactive({
+            ## legend title ##
+            if(input$stat == "ESS"){
+                  title <- input$stat
+            }else{
+                  pre <- if(input$fia_var == "total basal area ALL species") "" else paste0(input$species, "<br/>")
+                  title <- paste0(pre, input$time, "<br/>", input$summary_stat, "<br/>", tolower(sub(" ", "<br/>", input$fia_var)))
+                  if(input$fia_var %in% c("total basal area", "total basal area ALL species") &&
+                     input$summary_stat == "weighted mean"){
+                        title <- paste0(title, "<br/>(m2 BA / plot)")
+                  }
+                  if(input$stat %in% cs_stat_names){
+                        title <- paste0(title, " --<br/>", input$stat)
+                  }
+                  if(input$stat == "focal site similarity"){
+                        title <- paste0(gsub(" analogs", "", input$analog_direction), "<br>climate distance<br>from focal site")
+                  }
+            }
+
+            title
       })
 
       observe({
@@ -1049,7 +1136,7 @@ server <- function(input, output, session) {
                         na.color = "transparent"
                   )
             } else if(input$stat == "FIA variable") {
-                  # historic or future estimate: domain is unit except for total BA
+                  # historical or future estimate: domain is unit except for total BA
                   rast_pal <- colorNumeric(
                         palette = c("gray90", green) %>% choose_palette(),
                         domain = dom,
@@ -1078,24 +1165,6 @@ server <- function(input, output, session) {
                   )
             }
 
-            ## legend title ##
-            if(input$stat == "ESS"){
-                  title <- input$stat
-            }else{
-                  pre <- if(input$fia_var == "total basal area ALL species") "" else paste0(input$species, "<br/>")
-                  title <- paste0(pre, input$time, "<br/>", input$summary_stat, "<br/>", tolower(sub(" ", "<br/>", input$fia_var)))
-                  if(input$fia_var %in% c("total basal area", "total basal area ALL species") &&
-                     input$summary_stat == "weighted mean"){
-                        title <- paste0(title, "<br/>(m2 BA / plot)")
-                  }
-                  if(input$stat %in% cs_stat_names){
-                        title <- paste0(title, " --<br/>", input$stat)
-                  }
-                  if(input$stat == "focal site similarity"){
-                        title <- paste0(gsub(" analogs", "", input$analog_direction), "<br>climate distance<br>from focal site")
-                  }
-            }
-
             proxy <- proxy %>%
                   addRasterImage(
                         r,
@@ -1112,7 +1181,7 @@ server <- function(input, output, session) {
                               position = "topright",
                               pal      = rast_pal,
                               values   = dom,
-                              title    = HTML(title),
+                              title    = HTML(raster_title()),
                               layerId  = "raster_legend",
                               opacity  = input$rast_opacity
                         )
@@ -1184,7 +1253,7 @@ server <- function(input, output, session) {
                   proxy <- proxy %>%
                         addControl(
                               circleLegend(
-                                    title  = HTML(paste("FIA plots: historic", input$fia_var, sep = "<br/>")),
+                                    title  = HTML(paste("FIA plots: historical", input$fia_var, sep = "<br/>")),
                                     labels = legend_labels,
                                     colors = legend_colors,
                                     radii = legend_radii
@@ -1243,9 +1312,9 @@ server <- function(input, output, session) {
 
       eras <- reactive({
             switch(input$analog_direction,
-                   "Reverse analogs" = c("historic", "future"),
-                   "Forward analogs" = c("future", "historic"),
-                   "Contemporary analogs" = c("historic", "historic"))
+                   "Reverse analogs" = c("historical", "future"),
+                   "Forward analogs" = c("future", "historical"),
+                   "Contemporary analogs" = c("historical", "historical"))
       })
 
       ### climate space --------------------------------
@@ -1418,7 +1487,7 @@ server <- function(input, output, session) {
             v <- if(var() == "baplot") "batot" else var()
             a$value <- a[[v]]
 
-            lab <- paste("historic", input$summary_stat, input$fia_var)
+            lab <- paste("historical", input$summary_stat, input$fia_var)
 
             a %>%
                   arrange(species) %>%
@@ -1435,6 +1504,33 @@ server <- function(input, output, session) {
                        fill = gsub(" ", "\n", lab))
       })
 
+
+      ## POLYGON RASTER VALUES ------------------------
+
+      polygon_raster_values <- reactive({
+            req(user_polygon(), display_layer())
+
+            poly <- user_polygon()
+            r <- display_layer()
+
+            # reproject polygon to match raster CRS
+            poly_proj <- st_transform(poly, crs(r))
+
+            terra::extract(r, vect(poly_proj), na.rm = TRUE) %>%
+                  pull(2) %>%  # column 1 is ID, column 2 is values
+                  na.omit()
+      })
+
+      output$polygon_density <- renderPlot({
+            req(polygon_raster_values())
+            vals <- polygon_raster_values()
+
+            ggplot(data.frame(value = vals), aes(x = value)) +
+                  geom_density(fill = green, color = NA, alpha = 0.7) +
+                  geom_rug(alpha = 0.2) +
+                  labs(x = gsub("<br/>", " ", raster_title()),
+                       y = "Density")
+      })
 
 
       ## MODEL EVALUATION ----------------------------
@@ -1476,7 +1572,7 @@ server <- function(input, output, session) {
                         stat = "weighted_mean",
                         weight = "gaussian_joint",
                         theta = c(theta_clim, theta_geog),
-                        values = values_train)) %>%
+                        y = values_train)) %>%
                         rename(pred = weighted_mean) %>%
                         mutate(obs = values_test) %>%
                         na.omit()
