@@ -20,8 +20,47 @@ cs_setup()
 
 clim_vars <- function() c("tmean", "ppt", "aet", "cwd", "tmincm", "tmaxwm")
 bbox_res <- 1
-clim_bbox <- as.vector(ext(rast("data/clim_quantized.tif")))
+clim_bbox <- as.vector(ext(rast("data/clim_historical.tif")))
 clim_bbox <- c(floor(clim_bbox[c(1, 3)] / bbox_res) * bbox_res, ceiling(clim_bbox[c(2, 4)] / bbox_res) * bbox_res)
+
+# Future climate scenarios: discover available .tif files in data/clim_future/.
+# Filenames follow the convention <ssp>_<period>_<model>.tif (e.g.,
+# ssp585_2041-2070_gfdl-esm4.tif). Three independent dropdowns expose the
+# pathway / era / model axes; the active raster filename is reconstructed from
+# the current selections.
+.ssp_label_map <- c(ssp126 = "SSP1-2.6", ssp245 = "SSP2-4.5",
+                    ssp370 = "SSP3-7.0", ssp585 = "SSP5-8.5")
+.scenario_files <- list.files("data/clim_future", pattern = "\\.tif$", full.names = FALSE)
+.scenario_parts <- strsplit(tools::file_path_sans_ext(.scenario_files), "_", fixed = TRUE)
+scenario_meta <- tibble::tibble(
+      file   = .scenario_files,
+      ssp    = vapply(.scenario_parts, `[`, character(1), 1),
+      period = vapply(.scenario_parts, `[`, character(1), 2),
+      model  = vapply(.scenario_parts, `[`, character(1), 3)
+) %>%
+      mutate(ssp_label = ifelse(ssp %in% names(.ssp_label_map),
+                                .ssp_label_map[ssp], toupper(ssp)),
+             model_label = toupper(model))
+
+# Per-axis choice vectors (label → value). Sorted so SSPs ascend by forcing,
+# periods ascend chronologically (string sort works for "YYYY-YYYY"), and
+# models alphabetize.
+.ssp_meta <- scenario_meta %>% distinct(ssp, ssp_label) %>% arrange(ssp)
+.period_meta <- scenario_meta %>% distinct(period) %>% arrange(period)
+.model_meta <- scenario_meta %>% distinct(model, model_label) %>% arrange(model)
+
+ssp_choices    <- setNames(as.list(.ssp_meta$ssp), .ssp_meta$ssp_label)
+period_choices <- setNames(as.list(.period_meta$period), .period_meta$period)
+model_choices  <- setNames(as.list(.model_meta$model), .model_meta$model_label)
+
+# Defaults: prefer the published baseline scenario; fall back along each axis
+# independently if a piece is missing.
+.pick_default <- function(preferred, axis_values) {
+      if (preferred %in% axis_values) preferred else axis_values[1]
+}
+default_ssp    <- .pick_default("ssp585",    .ssp_meta$ssp)
+default_period <- .pick_default("2041-2070", .period_meta$period)
+default_model  <- .pick_default("gfdl-esm4", .model_meta$model)
 
 .fia_global <- read_csv("data/fia.csv", show_col_types = FALSE)
 spp <- sort(unique(.fia_global$species))
@@ -421,7 +460,7 @@ ui <- page_sidebar(
                   ),
 
                   accordion_panel(
-                        "Region",
+                        "Spatial grid",
                         sliderInput("bbox_x", "Longitude range",
                                     min = clim_bbox["xmin"], max = clim_bbox["xmax"],
                                     value = c(-116, -100)),
@@ -432,7 +471,9 @@ ui <- page_sidebar(
                               width = 1/2,
                               uiOutput("snap_focal_btn"),
                               actionButton("window_domain", "Snap to current view")
-                        )
+                        ),
+                        sliderInput("clim_agg", "Raster grain size", 1, 10, value = 10, step = 1, post = " km") %>%
+                              tooltip("Select the resolution of the modeling grid; larger values are faster but less precise.")
                   ),
 
                   accordion_panel(
@@ -447,11 +488,18 @@ ui <- page_sidebar(
                                               <dt>TMINCM</dt> <dd>Avg min temp of coldest month</dd>
                                               <dt>TMAXWM</dt> <dd>Avg max temp of warmest month</dd>
                                           </dl>")),
-                        sliderInput("clim_agg", "Raster grain size", 1, 10, value = 10, step = 1, post = " km") %>%
-                              tooltip("Select the resolution of the modeling grid; larger values are faster but less precise."),
-                        selectInput("scenario", "Future climate scenario", "2071-2100, SSP5-8.5") %>%
-                              tooltip("Select a time period, emissions scenario, and climate model.
-                                      (Historical climate data is always 1991-2010.)")
+                        selectInput("scenario_ssp", "Emissions pathway",
+                                    choices = ssp_choices,
+                                    selected = default_ssp) %>%
+                              tooltip("Future emissions scenario (Shared Socioeconomic Pathway). Higher numbers correspond to higher emissions."),
+                        selectInput("scenario_period", "Future time period",
+                                    choices = period_choices,
+                                    selected = default_period) %>%
+                              tooltip("Future time period."),
+                        selectInput("scenario_model", "Climate model",
+                                    choices = model_choices,
+                                    selected = default_model) %>%
+                              tooltip("Global climate model (GCM).")
                   ),
 
                   accordion_panel(
@@ -554,7 +602,7 @@ ui <- page_sidebar(
                               multiple = FALSE,
 
                               accordion_panel(
-                                    "Focal site analogs",
+                                    "Focal site",
                                     helpText(
                                           "This module lets you explore climate analogs for individual sites of interest.
                                           It does not influence the model results shown on the map except for the 'Focal site similarity' raster variable.
@@ -569,34 +617,54 @@ ui <- page_sidebar(
                                                     <li>Reverse (inbound) analogs have historical climates similar to the focal site's future climate.</li>
                                                     <li>Forward (outbound) analogs have future climates similar to the focal site's historical climate.</li>
                                                 </ul>")),
-                                          actionButton("highlight_site", "Highlight on map"),
+                                          div(style = "display: flex; gap: 0.5rem;",
+                                              actionButton("highlight_site", "Highlight on map",
+                                                           style = "flex: 1;"),
+                                              actionButton("site_clear", "Clear") %>%
+                                                    tooltip("Remove the focal site from the map and plots.")),
                                           input_switch("filter_clim", "Exclude non-analog plots", TRUE) %>%
                                                 tooltip("Whether to include sites that are more than 3 climate bandwidths away from the focal site.
                                                         Sites more than 3 geographic bandwidths away are never shown.")
                                     ),
 
-                                    plotOutput("clim_plot"),
-                                    plotOutput("dist_plot"),
+                                    layout_column_wrap(
+                                          width = 1/2,
+                                          plotOutput("clim_plot"),
+                                          plotOutput("dist_plot")
+                                    ),
                                     plotOutput("comp_plot")
                               ),
 
                               accordion_panel(
                                     "Study area",
-                                    helpText("Upload a polygon layer to display on the map and view the distribution of raster values within your polygon."), hr(),
+                                    helpText("Upload a polygon layer to display on the map and compare the distribution of raster values inside your study area against the broader modeling context.
+                                             The plot shows three curves: the modeling domain (all cells in the current bbox), your study area (cells inside the polygon), and the buffered area
+                                             (cells within 3× the geographic bandwidth of the polygon — the predictive neighborhood used for analog matching)."), hr(),
 
-                                    fileInput("polygon_upload", NULL,
-                                              multiple = TRUE,
-                                              accept = c(".shp", ".dbf", ".shx", ".prj", ".kml", ".kmz",
-                                                         ".gpkg", ".geojson"),
-                                              placeholder = "Shapefile, KML, GPKG, or GeoJSON") %>%
-                                          tooltip("Upload a polygon layer. For shapefiles, select all component files (.shp, .dbf, .shx, .prj)."),
+                                    layout_column_wrap(
+                                          width = NULL,
+                                          style = htmltools::css(grid_template_columns = "1fr auto"),
+                                          fileInput("polygon_upload", NULL,
+                                                    multiple = TRUE,
+                                                    accept = c(".shp", ".dbf", ".shx", ".prj", ".kml", ".kmz",
+                                                               ".gpkg", ".geojson"),
+                                                    placeholder = "Shapefile, KML, GPKG, or GeoJSON") %>%
+                                                tooltip("Upload a polygon layer. For shapefiles, select all component files (.shp, .dbf, .shx, .prj)."),
+                                          div(style = "padding-top: 0.5rem;",
+                                              actionButton("polygon_clear", "Clear") %>%
+                                                    tooltip("Remove the polygon from the map and plot."))
+                                    ),
 
-                                    plotOutput("polygon_density")
+                                    plotOutput("polygon_density"),
+                                    selectInput("density_transform", "X-axis scale",
+                                                choices = c("identity", "uniform", "sqrt", "log10"),
+                                                selected = "identity") %>%
+                                          tooltip("Optionally transform the x-axis for skewed variables. 'uniform' rank-transforms the values across the modeling domain, spreading skewed distributions evenly.")
                               ),
 
                               accordion_panel(
-                                    "Connectivity",
-                                    helpText("This tool models circuit-based landscape connectivity between historical (source) and future (target) FIA surfaces."), hr(),
+                                    "Landscape connectivity",
+                                    helpText("This tool models circuit-based connectivity between historical (source) and future (target) FIA surfaces."), hr(),
 
                                     layout_column_wrap(
                                           width = 1/2,
@@ -695,6 +763,36 @@ server <- function(input, output, session) {
             isTruthy(input$fia_var) && input$fia_var == "presence probability"
       })
 
+      # Lower/upper bounds for the currently-displayed raster. Used by the
+      # density plot to keep KDE mass from leaking past natural limits (e.g.,
+      # presence probability is bounded [0, 1]; total BA is non-negative).
+      # Returns c(-Inf, Inf) when no informative bound applies.
+      display_bounds <- reactive({
+            if (input$stat == "ESS") {
+                  c(0, Inf)
+            } else if (input$stat == "focal site similarity") {
+                  c(0, Inf)
+            } else if (input$stat == "current direction") {
+                  c(0, 360)
+            } else if (input$stat %in% cs_stat_names) {
+                  # other connectivity stats: non-negative magnitudes
+                  c(0, Inf)
+            } else if (input$stat %in% c("current animation", "current field")) {
+                  # delta of FIA variable — real-valued
+                  c(-Inf, Inf)
+            } else if (input$stat == "FIA variable") {
+                  if (input$time == "delta") {
+                        c(-Inf, Inf)
+                  } else if (response_is_binary()) {
+                        c(0, 1)
+                  } else {
+                        c(0, Inf)
+                  }
+            } else {
+                  c(-Inf, Inf)
+            }
+      })
+
 
       ## DATA SETUP -----------------------
 
@@ -785,9 +883,28 @@ server <- function(input, output, session) {
 
       clim_scales <- readRDS("data/clim_scales.rds")
 
+      # Tracks whether the user has clicked Clear after the most recent upload.
+      # The Clear button sets this to TRUE; a fresh upload resets it to FALSE.
+      # polygon_upload_active() returns input$polygon_upload only when not
+      # cleared, so downstream polygon reactives see "no polygon" after Clear
+      # without needing to actually reset the fileInput widget.
+      polygon_cleared <- reactiveVal(FALSE)
+
+      observeEvent(input$polygon_upload, {
+            polygon_cleared(FALSE)
+      })
+
+      observeEvent(input$polygon_clear, {
+            polygon_cleared(TRUE)
+      })
+
+      polygon_upload_active <- reactive({
+            if (isTRUE(polygon_cleared())) NULL else input$polygon_upload
+      })
+
       user_polygon <- reactive({
-            req(input$polygon_upload)
-            files <- input$polygon_upload
+            req(polygon_upload_active())
+            files <- polygon_upload_active()
             exts <- tolower(tools::file_ext(files$name))
 
             tryCatch({
@@ -914,7 +1031,7 @@ server <- function(input, output, session) {
             }
       })
 
-      # add user-provided polygon
+      # add user-provided polygon (and its buffered version)
       observe({
             proxy <- leafletProxy("map") %>%
                   clearGroup("user_polygon")
@@ -927,11 +1044,19 @@ server <- function(input, output, session) {
 
             proxy %>%
                   addPolygons(
-                        data = poly,
+                        data = user_polygon_buffered(),
                         color = "#e05c00",
                         weight = 2,
+                        dashArray = "5, 5",
+                        fill = FALSE,
+                        group = "user_polygon"
+                  ) %>%
+                  addPolygons(
+                        data = poly,
+                        color = "darkred",
+                        weight = 2,
                         fillOpacity = 0.1,
-                        fillColor = "#e05c00",
+                        fillColor = "darkred",
                         group = "user_polygon",
                         label = if(!is.null(poly$Name)) ~Name else NULL
                   )
@@ -940,13 +1065,49 @@ server <- function(input, output, session) {
 
       ## ANALOG IMPACT MODEL -----------------------------------------
 
+      # Raw (uncropped, unaggregated) historical and future climate rasters,
+      # restricted to the selected climate variables. The future raster depends
+      # on the scenario selection; the historical raster is shared across
+      # scenarios. Used as the source for both the modeling grid (via clim())
+      # and for plot-level climate extraction (in pool(), site_analogs(), and
+      # eval_var_set()).
+      # Active scenario filename, reconstructed from the three scenario inputs.
+      # If the corresponding file doesn't exist on disk (partial factorial),
+      # surfaces a user-visible message via validate() rather than silently
+      # failing — downstream outputs (the map, the focal-site plots, etc.)
+      # will display this message instead of erroring.
+      scenario_file <- reactive({
+            req(isTruthy(input$scenario_ssp),
+                isTruthy(input$scenario_period),
+                isTruthy(input$scenario_model))
+            f <- paste0(input$scenario_ssp, "_",
+                        input$scenario_period, "_",
+                        input$scenario_model, ".tif")
+            path <- file.path("data/clim_future", f)
+            shiny::validate(need(file.exists(path),
+                                 "Selected scenario combination is not available. Try a different emissions pathway, era, or climate model."))
+            path
+      })
+
+      clim_pool <- reactive({
+            # Resolve scenario_file() at the top level so a req() short-circuit
+            # (e.g., user selected a (ssp, period, model) combination whose
+            # file doesn't exist) propagates as a clean reactive cancellation
+            # rather than an rast() argument-evaluation error.
+            sf <- scenario_file()
+            r_hst <- rast("data/clim_historical.tif")[[input$clim_vars]]
+            r_fut <- rast(sf)[[input$clim_vars]]
+            list(hst = r_hst, fut = r_fut)
+      })
+
       clim <- reactive({
-            r <- rast("data/clim_quantized.tif")
-            clim_hst <- r[[paste0(input$clim_vars, 1)]] %>%
-                  crop(ext(c(input$bbox_x, input$bbox_y))) %>%
+            cp <- clim_pool()
+            bb_ext <- ext(c(input$bbox_x, input$bbox_y))
+            clim_hst <- cp$hst %>%
+                  crop(bb_ext) %>%
                   aggregate(input$clim_agg, na.rm = TRUE)
-            clim_fut <- r[[paste0(input$clim_vars, 2)]] %>%
-                  crop(ext(c(input$bbox_x, input$bbox_y))) %>%
+            clim_fut <- cp$fut %>%
+                  crop(bb_ext) %>%
                   aggregate(input$clim_agg, na.rm = TRUE)
             list(hst = clim_hst, fut = clim_fut)
       })
@@ -955,16 +1116,14 @@ server <- function(input, output, session) {
       pool <- reactive({
             req(plot_occ())
             xy <- plot_occ()[, c("x", "y")]
-            # Extract climate from the raw (uncropped, unaggregated) raster at
+            # Extract climate from the raw (uncropped, unaggregated) rasters at
             # each plot's actual location. This gives the climate the plot is
             # actually experiencing rather than the spatial average over a
             # coarsened cell, and means pool() doesn't depend on the modeling
             # grid (input$clim_agg) or the bbox crop.
-            r <- rast("data/clim_quantized.tif")
-            clim_hst <- extract(r[[paste0(input$clim_vars, 1)]], xy,
-                                ID = FALSE, method = "bilinear")
-            clim_fut <- extract(r[[paste0(input$clim_vars, 2)]], xy,
-                                ID = FALSE, method = "bilinear")
+            cp <- clim_pool()
+            clim_hst <- extract(cp$hst, xy, ID = FALSE, method = "bilinear")
+            clim_fut <- extract(cp$fut, xy, ID = FALSE, method = "bilinear")
             list(index_hst = build_analog_index(cbind(xy, clim_hst), coord_type = "lonlat", index_res = 8),
                  index_fut = build_analog_index(cbind(xy, clim_fut), coord_type = "lonlat", index_res = 8),
                  clim_hst = clim_hst,
@@ -981,7 +1140,7 @@ server <- function(input, output, session) {
             stat <- gsub(" ", "_", input$summary_stat)
 
             aim_query <- function(x){
-                  suppressWarnings(analogs::analog_search(
+                  suppressWarnings(analogs::analog_impact(
                         x = x,
                         pool = pool()$index_hst,
                         max_clim = input$theta_clim * 3,
@@ -1005,17 +1164,25 @@ server <- function(input, output, session) {
             req(site$x, site$y)
 
             xy <- t(as.matrix(c(x = site$x, y = site$y), nrow = 1))
-            # Extract from raw raster to match pool() (consistent scaling).
-            r <- rast("data/clim_quantized.tif")
-            hst <- cbind(xy, extract(r[[paste0(input$clim_vars, 1)]], xy, method = "bilinear"))
-            fut <- cbind(xy, extract(r[[paste0(input$clim_vars, 2)]], xy, method = "bilinear"))
+            # Extract from raw rasters to match pool() (consistent scaling).
+            cp <- clim_pool()
+            hst <- cbind(xy, extract(cp$hst, xy, method = "bilinear"))
+            fut <- cbind(xy, extract(cp$fut, xy, method = "bilinear"))
 
             max_clim <- if(input$filter_clim) input$theta_clim * 3 else NULL
 
             # Hoist the pool reactive's result so the inner function doesn't
             # shadow it with its `index` argument.
             pool_data <- pool()
-            pool_y <- cbind(pool_data$values, pool_data$clim_hst, pool_data$clim_fut)
+            # Climate columns in clim_hst and clim_fut share the same names
+            # (e.g., "aet", "cwd") since the post-refactor rasters have no
+            # 1/2 suffix. Tag them explicitly so downstream consumers
+            # (clim_plot) can pull historical vs. future without ambiguity.
+            clim_hst_tagged <- setNames(pool_data$clim_hst,
+                                        paste0(names(pool_data$clim_hst), "_hst"))
+            clim_fut_tagged <- setNames(pool_data$clim_fut,
+                                        paste0(names(pool_data$clim_fut), "_fut"))
+            pool_y <- cbind(pool_data$values, clim_hst_tagged, clim_fut_tagged)
 
             analog_query <- function(x, index){
                   suppressWarnings(analogs::analog_search(
@@ -1212,6 +1379,14 @@ server <- function(input, output, session) {
             site$y <- input$map_click$lat
       })
 
+      # Clear the focal site. Sets coords back to NULL; downstream observers
+      # and reactives short-circuit on this, so the map marker, focal-site
+      # rings, density-plot vertical line, and analog plots all clear.
+      observeEvent(input$site_clear, {
+            site$x <- NULL
+            site$y <- NULL
+      })
+
       # Draw focal site whenever relevant inputs change
       observe({
             # Dependencies that should trigger redraw
@@ -1258,8 +1433,6 @@ server <- function(input, output, session) {
                         "Reverse analogs" = clim()$hst,
                         "Forward analogs" = clim()$fut)
 
-            names(s) <- gsub("1|2", "", names(s))
-            names(r) <- gsub("1|2", "", names(r))
             for(i in names(r)) r[[i]] <- abs(r[[i]] - s[[i]]) ^ 2
             r <- sqrt(app(r, sum))
             return(r)
@@ -1554,18 +1727,18 @@ server <- function(input, output, session) {
 
             if(input$analog_direction == "Reverse analogs"){
                   d <- a$rev_analogs
-                  d$v1 <- d[[paste0(v1, "1")]]
-                  d$v2 <- d[[paste0(v2, "1")]]
+                  d$v1 <- d[[paste0(v1, "_hst")]]
+                  d$v2 <- d[[paste0(v2, "_hst")]]
                   s <- a$fut_site
             }else if(input$analog_direction == "Forward analogs"){
                   d <- a$fwd_analogs
-                  d$v1 <- d[[paste0(v1, "2")]]
-                  d$v2 <- d[[paste0(v2, "2")]]
+                  d$v1 <- d[[paste0(v1, "_fut")]]
+                  d$v2 <- d[[paste0(v2, "_fut")]]
                   s <- a$hst_site
             }else if(input$analog_direction == "Contemporary analogs"){
                   d <- a$bsl_analogs
-                  d$v1 <- d[[paste0(v1, "1")]]
-                  d$v2 <- d[[paste0(v2, "1")]]
+                  d$v1 <- d[[paste0(v1, "_hst")]]
+                  d$v2 <- d[[paste0(v2, "_hst")]]
                   s <- a$hst_site
             }else{
                   stop("bug")
@@ -1575,11 +1748,10 @@ server <- function(input, output, session) {
             d$v2 <- d$v2 * scl2$sd + scl2$mean
 
             d$value <- d$response
-            d <- arrange(d, value)
+            d <- arrange(d, value) %>% mutate(panel = "Climate space")
 
 
             # search perimeters
-            names(s) <- gsub("1|2", "", names(s))
             perims <- rbind(clim_circle(c(s[[v1]], s[[v2]]), input$theta_clim,
                                         c(scl1$mean, scl2$mean), c(scl1$sd, scl2$sd)) %>%
                                   mutate(r = "b"),
@@ -1601,20 +1773,23 @@ server <- function(input, output, session) {
                                  shape = paste0("analog FIA plot,\n", eras()[1], " climate")),
                              color = "black", size = 3) +
                   geom_point(aes(x = s[[v1]] * scl1$sd + scl1$mean,
-                                 y = s[[v2]] * scl2$sd + scl2$mean,
-                                 shape = paste0("selected site,\n", eras()[2], " climate")),
+                                 y = s[[v2]] * scl2$sd + scl2$mean),
+                             shape = 22,
                              color = "#4c32a8", fill = "#4c32a8", size = 4, alpha = .5) +
                   scale_fill_gradientn(colors = c("gray90", green), limits = dom, guide = "none") +
-                  scale_shape_manual(values = c(21, 22)) +
+                  scale_shape_manual(values = 21) +
                   scale_linetype(guide = "none") +
-                  theme(legend.position = "top") +
+                  facet_wrap(~ panel) +
+                  theme(legend.position = "top",
+                        strip.text = element_text(color = "white"),
+                        strip.background = element_rect(fill = "black", color = "black")) +
                   labs(y = v1,
                        x = v2,
                        shape = NULL)
 
             if(input$analog_direction != "Contemporary analogs"){
-                  h <- a$hst_site; names(h) <- gsub("1|2", "", names(h))
-                  f <- a$fut_site; names(f) <- gsub("1|2", "", names(f))
+                  h <- a$hst_site
+                  f <- a$fut_site
                   p <- p +
                         annotate(geom = "segment",
                                  x = h[[v1]] * scl1$sd + scl1$mean,
@@ -1647,7 +1822,7 @@ server <- function(input, output, session) {
                         "Forward analogs" = site_analogs()$fwd_analogs,
                         "Contemporary analogs" = site_analogs()$bsl_analogs)
             d$value <- d$response
-            d <- arrange(d, value)
+            d <- arrange(d, value) %>% mutate(panel = "Distance space")
 
             dom <- if(!response_is_binary()) c(0, max(d$value, na.rm = TRUE)) else 0:1
 
@@ -1663,14 +1838,22 @@ server <- function(input, output, session) {
                   geom_point(data = filter(d, samp_method_cd == 2), color = "gray70", size = 1.5) +
                   geom_point(data = filter(d, samp_method_cd == 1), shape = 21, color = "black", size = 3) +
 
-                  annotate(geom = "point", x = 0, y = 0,
-                           color = "#4c32a8", fill = "#4c32a8",
-                           size = 10, alpha = .5, shape = 22) +
+                  geom_point(data = tibble::tibble(geog_dist = 0, clim_dist = 0,
+                                                   shape_label = paste0("selected site,\n",
+                                                                        eras()[2], " climate")),
+                             aes(x = geog_dist, y = clim_dist, shape = shape_label),
+                             color = "#4c32a8", fill = "#4c32a8",
+                             size = 10, alpha = .5, inherit.aes = FALSE) +
 
-                  scale_fill_gradientn(colors = c("gray90", green), limits = dom) +
-                  theme(legend.position = "none") +
+                  scale_fill_gradientn(colors = c("gray90", green), limits = dom, guide = "none") +
+                  scale_shape_manual(values = 22) +
+                  facet_wrap(~ panel) +
+                  theme(legend.position = "top",
+                        strip.text = element_text(color = "white"),
+                        strip.background = element_rect(fill = "black", color = "black")) +
                   labs(y = "Climate difference from focal site (z-score)",
-                       x = "Geographic distance to focal site (km)")
+                       x = "Geographic distance to focal site (km)",
+                       shape = NULL)
       })
 
       ### forest composition --------------------------------
@@ -1819,8 +2002,8 @@ server <- function(input, output, session) {
                                   group = category, fill = category, color = category),
                               alpha = .7, linewidth = 0.05) +
                   geom_rect(data = b %>% tidyr::spread(rep, itype),
-                              aes(xmin = itype, xmax = itype2, ymin = ymin, ymax = ymax,
-                                  group = category, fill = category, color = category)) +
+                            aes(xmin = itype, xmax = itype2, ymin = ymin, ymax = ymax,
+                                group = category, fill = category, color = category)) +
                   geom_text(data = labs,
                             aes(itype, y, label = category),
                             hjust = .5, vjust = .5, fontface = "bold.italic") +
@@ -1836,6 +2019,25 @@ server <- function(input, output, session) {
 
       ## POLYGON RASTER VALUES ------------------------
 
+      # Equal-area CRS for buffering in meters (NAD83 / Conus Albers).
+      # Adequate for any CONUS-scale buffer; would need to change for
+      # other regions.
+      .buffer_crs <- "EPSG:5070"
+
+      # Polygon buffered by theta_geog * 3 (km), the analog search's geographic
+      # cutoff. Features are unioned before buffering so multi-feature polygons
+      # produce a single dissolved buffer rather than per-feature buffers.
+      # Returned in WGS84 to match the user polygon's CRS so map and raster
+      # operations are consistent.
+      user_polygon_buffered <- reactive({
+            req(user_polygon(), isTruthy(input$theta_geog))
+            poly <- user_polygon()
+            st_transform(poly, .buffer_crs) %>%
+                  st_union() %>%
+                  st_buffer(dist = input$theta_geog * 3 * 1000) %>%   # km -> m
+                  st_transform(4326)
+      })
+
       polygon_raster_values <- reactive({
             req(user_polygon(), display_layer())
 
@@ -1850,15 +2052,178 @@ server <- function(input, output, session) {
                   na.omit()
       })
 
-      output$polygon_density <- renderPlot({
-            req(polygon_raster_values())
-            vals <- polygon_raster_values()
+      polygon_buffered_raster_values <- reactive({
+            req(user_polygon_buffered(), display_layer())
 
-            ggplot(data.frame(value = vals), aes(x = value)) +
-                  geom_density(fill = green, color = NA, alpha = 0.7) +
-                  geom_rug(alpha = 0.2) +
-                  labs(x = gsub("<br/>", " ", raster_title()),
-                       y = "Density")
+            poly <- user_polygon_buffered()
+            r <- display_layer()
+
+            poly_proj <- st_transform(poly, crs(r))
+
+            terra::extract(r, vect(poly_proj), na.rm = TRUE) %>%
+                  pull(2) %>%
+                  na.omit()
+      })
+
+      output$polygon_density <- renderPlot({
+            req(display_layer())
+
+            domain_vals <- na.omit(values(display_layer(), mat = FALSE))
+
+            # Polygon-dependent values: NULL when no polygon is uploaded. The
+            # corresponding curves (study area, buffer) are then simply absent
+            # from the plot. Check the upload input directly to avoid
+            # triggering user_polygon()'s internal req() short-circuit.
+            has_polygon <- isTruthy(polygon_upload_active())
+            poly_vals   <- if (has_polygon) polygon_raster_values() else NULL
+            buffer_vals <- if (has_polygon) polygon_buffered_raster_values() else NULL
+
+            study_color   <- "darkred"   # matches the map polygon
+            buffer_color  <- "#e05c00"   # matches the buffer outline on the map
+            domain_color  <- "gray60"
+            focal_color   <- "#4c32a8"   # matches the focal site marker elsewhere
+
+            # Focal site value: extract from the displayed raster at the click
+            # location. NA if no site selected or if the point falls on a
+            # non-modeled cell.
+            focal_val <- if (!is.null(site$x) && !is.null(site$y)) {
+                  v <- terra::extract(display_layer(),
+                                      cbind(site$x, site$y),
+                                      method = "bilinear")
+                  v <- v[1, 1]
+                  if (is.finite(v)) v else NA_real_
+            } else {
+                  NA_real_
+            }
+
+            # 'uniform' rank-transforms all three distributions against the
+            # modeling-domain ECDF, so the three curves remain comparable on a
+            # common [0, 1] axis. Done in data space (ggplot scale_x_*
+            # transforms operate on the visual layer only, which would distort
+            # density estimates by squishing them after they're computed).
+            x_lab <- gsub("<br/>", " ", raster_title())
+            if (input$density_transform == "uniform") {
+                  ecdf_ref <- ecdf(domain_vals)
+                  if (has_polygon) {
+                        poly_vals   <- ecdf_ref(poly_vals)
+                        buffer_vals <- ecdf_ref(buffer_vals)
+                  }
+                  domain_vals <- ecdf_ref(domain_vals)
+                  if (!is.na(focal_val)) focal_val <- ecdf_ref(focal_val)
+                  x_lab <- paste0(x_lab, " (uniform rank)")
+                  d_bounds <- c(0, 1)
+            } else {
+                  d_bounds <- display_bounds()
+            }
+
+            # Build the long data frame, including only the curves we have data
+            # for.
+            parts <- list(
+                  tibble::tibble(value = domain_vals, source = "Modeling domain")
+            )
+            if (has_polygon) {
+                  parts <- c(parts, list(
+                        tibble::tibble(value = buffer_vals, source = "Buffered area"),
+                        tibble::tibble(value = poly_vals,   source = "Study area")
+                  ))
+            }
+            d <- bind_rows(parts) %>%
+                  mutate(source = factor(source,
+                                         levels = c("Modeling domain",
+                                                    "Buffered area",
+                                                    "Study area",
+                                                    "Focal site")))
+
+            pal <- c("Modeling domain" = domain_color,
+                     "Buffered area"   = buffer_color,
+                     "Study area"      = study_color,
+                     "Focal site"      = focal_color)
+            ltypes <- c("Modeling domain" = "solid",
+                        "Buffered area"   = "dashed",
+                        "Study area"      = "solid",
+                        "Focal site"      = "solid")
+
+            panel_levels <- c("Relative density", "ECDF")
+            factor_panel <- function(df, lvl) {
+                  df$panel <- factor(lvl, levels = panel_levels)
+                  df
+            }
+
+            # Optional focal-site reference line. Skipped (NULL → no-op when
+            # added to ggplot) if no focal site is selected or the cell value
+            # isn't finite. Built as a data-driven geom_vline so the color and
+            # linetype scales pick it up for the legend.
+            focal_layer <- if (!is.na(focal_val)) {
+                  geom_vline(data = tibble::tibble(xint = focal_val,
+                                                   source = factor("Focal site",
+                                                                   levels = c("Modeling domain",
+                                                                              "Buffered area",
+                                                                              "Study area",
+                                                                              "Focal site"))),
+                             aes(xintercept = xint, color = source,
+                                 linetype = source),
+                             linewidth = 0.6,
+                             alpha = 0.7,
+                             inherit.aes = FALSE)
+            } else {
+                  NULL
+            }
+
+            # Legend break order: include Focal site only when one is active.
+            legend_breaks <- c("Modeling domain", "Buffered area", "Study area")
+            if (!is.na(focal_val)) legend_breaks <- c(legend_breaks, "Focal site")
+
+            p <- ggplot(d, aes(x = value, color = source,
+                               fill = source, linetype = source)) +
+                  geom_density(aes(group = source, y = after_stat(scaled)),
+                               data = ~ factor_panel(., "Relative density"),
+                               alpha = 0.25, linewidth = 0.6,
+                               bounds = d_bounds) +
+                  stat_ecdf(aes(group = source),
+                            data = ~ factor_panel(., "ECDF"),
+                            geom = "step", linewidth = 0.7, pad = FALSE) +
+                  focal_layer +
+                  facet_wrap(~ panel, nrow = 1) +
+                  scale_y_continuous(
+                        breaks = c(0, 0.25, 0.5, 0.75, 1),
+                        expand = expansion(0, 0)
+                  ) +
+                  scale_fill_manual(values = c("Modeling domain" = domain_color,
+                                               "Buffered area"   = buffer_color,
+                                               "Study area"      = study_color,
+                                               "Focal site"      = NA),
+                                    breaks = legend_breaks,
+                                    guide = "none") +
+                  scale_color_manual(values = pal,
+                                     breaks = legend_breaks) +
+                  scale_linetype_manual(values = ltypes,
+                                        breaks = legend_breaks) +
+                  theme(legend.position = "top",
+                        strip.text = element_text(color = "white"),
+                        strip.background = element_rect(fill = "black", color = "black")) +
+                  labs(x = x_lab,
+                       y = NULL,
+                       fill = NULL, color = NULL, linetype = NULL)
+
+            # X-axis limits from the active variable's natural bounds. Infinite
+            # bounds become NA so ggplot auto-scales that side from data.
+            x_limits <- ifelse(is.finite(d_bounds), d_bounds, NA_real_)
+
+            if (input$density_transform == "sqrt") {
+                  p <- p + scale_x_sqrt(limits = x_limits,
+                                        expand = expansion(0, 0))
+            } else if (input$density_transform == "log10") {
+                  # log10 lower limit can't be 0 (undefined); let data set it.
+                  log_limits <- x_limits
+                  if (!is.na(log_limits[1]) && log_limits[1] <= 0) log_limits[1] <- NA
+                  p <- p + scale_x_log10(limits = log_limits,
+                                         expand = expansion(0, 0))
+            } else {
+                  p <- p + scale_x_continuous(limits = x_limits,
+                                              expand = expansion(0, 0))
+            }
+
+            p
       })
 
 
@@ -1869,9 +2234,9 @@ server <- function(input, output, session) {
 
 
       eval_var_set <- function(clim_vars, vary_bandwidths = TRUE){
-            # Extract climate from raw raster at each pool plot, matching pool().
-            r <- rast("data/clim_quantized.tif")
-            clim_r <- r[[paste0(clim_vars, 1)]]
+            # Extract historical climate from the raw raster at each pool plot,
+            # matching pool().
+            clim_r <- rast("data/clim_historical.tif")[[clim_vars]]
 
             po <- plot_occ()
             xy <- po[, c("x", "y")]

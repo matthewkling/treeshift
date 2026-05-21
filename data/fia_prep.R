@@ -198,7 +198,7 @@ d <- d %>%
 # merge with climate -------------------------------
 
 # load climate data
-climate <- rast("data/clim_quantized.tif")
+climate <- rast("data/clim_historical.tif")
 
 # filter to climate data bbox
 bb <- ext(climate)
