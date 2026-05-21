@@ -23,7 +23,64 @@ bbox_res <- 1
 clim_bbox <- as.vector(ext(rast("data/clim_quantized.tif")))
 clim_bbox <- c(floor(clim_bbox[c(1, 3)] / bbox_res) * bbox_res, ceiling(clim_bbox[c(2, 4)] / bbox_res) * bbox_res)
 
-spp <- sort(unique(read_csv("data/fia.csv")$species))
+.fia_global <- read_csv("data/fia.csv", show_col_types = FALSE)
+spp <- sort(unique(.fia_global$species))
+forest_types_in_data <- sort(unique(na.omit(.fia_global$forest_type)))
+# Initial map bounds: bounding box of all FIA plots
+fia_xy_bounds <- list(
+      xmin = min(.fia_global$x, na.rm = TRUE),
+      xmax = max(.fia_global$x, na.rm = TRUE),
+      ymin = min(.fia_global$y, na.rm = TRUE),
+      ymax = max(.fia_global$y, na.rm = TRUE)
+)
+rm(.fia_global)
+
+# Forest type / group lookup table (FIA FORTYPCD)
+forest_type_codes <- read_csv("data/forest_type_codes.csv", show_col_types = FALSE) %>%
+      bind_rows(tibble::tibble(
+            forest_type = 0L,
+            forest_type_name = "Non-forest",
+            forest_group = 0L,
+            forest_group_name = "Non-forest",
+            forest_group_abbr = "nonfor"
+      ))
+
+# Include the Non-forest sentinel in the in-data list so it appears in the
+# dropdown alongside real codes. fia_plots_species_all() recodes NA -> 0 to
+# match.
+forest_types_in_data <- sort(unique(c(0L, forest_types_in_data)))
+
+# Only expose codes that actually appear in the FIA data
+.ft_lookup <- forest_type_codes %>%
+      filter(forest_type %in% forest_types_in_data) %>%
+      arrange(forest_type_name)
+.fg_lookup <- forest_type_codes %>%
+      distinct(forest_group, forest_group_name) %>%
+      # restrict groups to those that have at least one type present in the data
+      filter(forest_group %in% (forest_type_codes %>%
+                                      filter(forest_type %in% forest_types_in_data) %>%
+                                      pull(forest_group) %>% unique())) %>%
+      arrange(forest_group_name)
+
+# Named choice vectors: labels shown to the user, integer codes stored as values.
+forest_type_choices <- setNames(
+      as.list(.ft_lookup$forest_type),
+      paste0(.ft_lookup$forest_type, " — ", .ft_lookup$forest_type_name)
+)
+forest_group_choices <- setNames(
+      as.list(.fg_lookup$forest_group),
+      paste0(.fg_lookup$forest_group, " — ", .fg_lookup$forest_group_name)
+)
+
+# Lookup helpers (vectorized; return NA for unknown codes)
+ft_name <- function(code) {
+      forest_type_codes$forest_type_name[match(code, forest_type_codes$forest_type)]
+}
+fg_name <- function(code) {
+      # use distinct group rows to avoid duplicate matches
+      g <- distinct(forest_type_codes, forest_group, forest_group_name)
+      g$forest_group_name[match(code, g$forest_group)]
+}
 
 cs_stat_names <- c("current flow", "current on target", "current loss", "current pinch points",
                    "current direction", "voltage", "conductance", "loss")
@@ -309,7 +366,7 @@ ui <- page_sidebar(
 
             accordion(
                   id = "sidebar_acc",
-                  open = "Intro",
+                  open = "Info",
                   multiple = FALSE,
 
                   accordion_panel(
@@ -328,9 +385,43 @@ ui <- page_sidebar(
                   ),
 
                   accordion_panel(
-                        "Region & species",
-                        selectizeInput("species", "Species", choices = spp, selected = "Pinus edulis") %>%
-                              tooltip("Select a focal species by scrolling or typing"),
+                        "FIA variable",
+                        selectInput("track", "Mode",
+                                    choices = c("Species", "Forest type", "Forest group", "All trees"),
+                                    selected = "Species") %>%
+                              tooltip(HTML("Choose the focal entity for the model.<br><br>
+                                          <dl style='margin:0;'>
+                                              <dt>Species</dt> <dd>Model presence or abundance of a single focal tree species.</dd>
+                                              <dt>Forest type</dt> <dd>Model probability that a site is classified as a focal FIA forest type (a fine-grained classification).</dd>
+                                              <dt>Forest group</dt> <dd>Model probability that a site is classified within a focal FIA forest type group (a coarser classification).</dd>
+                                              <dt>All trees</dt> <dd>Model community-wide forest properties (any-species presence or total basal area).</dd>
+                                          </dl>")),
+                        conditionalPanel(
+                              condition = "input.track == 'Species'",
+                              selectizeInput("species", "Species", choices = spp, selected = "Pinus edulis") %>%
+                                    tooltip("Select a focal species by scrolling or typing")
+                        ),
+                        conditionalPanel(
+                              condition = "input.track == 'Forest type'",
+                              selectizeInput("forest_type", "Forest type",
+                                             choices = forest_type_choices,
+                                             selected = forest_type_choices[[1]]) %>%
+                                    tooltip("Select a focal FIA forest type by scrolling or typing. Labels show the FORTYPCD followed by the type name.")
+                        ),
+                        conditionalPanel(
+                              condition = "input.track == 'Forest group'",
+                              selectizeInput("forest_group", "Forest group",
+                                             choices = forest_group_choices,
+                                             selected = forest_group_choices[[1]]) %>%
+                                    tooltip("Select a focal FIA forest type group by scrolling or typing.")
+                        ),
+                        selectInput("fia_var", "Variable",
+                                    c("presence probability", "proportion basal area", "total basal area")) %>%
+                              tooltip("Choose which focal variable gets interpolated and predicted.")
+                  ),
+
+                  accordion_panel(
+                        "Region",
                         sliderInput("bbox_x", "Longitude range",
                                     min = clim_bbox["xmin"], max = clim_bbox["xmax"],
                                     value = c(-116, -100)),
@@ -339,7 +430,7 @@ ui <- page_sidebar(
                                     value = c(29, 43)),
                         layout_column_wrap(
                               width = 1/2,
-                              actionButton("species_domain", "Snap to species range"),
+                              uiOutput("snap_focal_btn"),
                               actionButton("window_domain", "Snap to current view")
                         )
                   ),
@@ -358,8 +449,9 @@ ui <- page_sidebar(
                                           </dl>")),
                         sliderInput("clim_agg", "Raster grain size", 1, 10, value = 10, step = 1, post = " km") %>%
                               tooltip("Select the resolution of the modeling grid; larger values are faster but less precise."),
-                        selectInput("scenario", "Future climate scenario", "coming soon") %>%
-                              tooltip("Select a time period, emissions scenario, and climate model.")
+                        selectInput("scenario", "Future climate scenario", "2071-2100, SSP5-8.5") %>%
+                              tooltip("Select a time period, emissions scenario, and climate model.
+                                      (Historical climate data is always 1991-2010.)")
                   ),
 
                   accordion_panel(
@@ -375,9 +467,6 @@ ui <- page_sidebar(
                   accordion_panel(
                         "Model outputs",
                         helpText("Choose results to display or export"), hr(),
-                        selectInput("fia_var", "FIA variable",
-                                    c("presence probability", "proportion basal area", "total basal area", "total basal area ALL species")) %>%
-                              tooltip("Choose which focal variable gets interpolated and predicted."),
                         selectInput("summary_stat", "Summary statistic", c("weighted mean", "weighted sum")) %>%
                               tooltip(HTML("How to summarize the focal variable across analog FIA plots.<br><br>
                                         <dl style='margin:0;'>
@@ -403,7 +492,11 @@ ui <- page_sidebar(
                                           </dl>")),
                         selectInput("time", "Raster variable timeframe", c("historical", "future", "delta")) %>%
                               tooltip("Choose whether to display historical or future model predictions, or their difference.
-                                      Only relevant for `FIA varibale` and `ESS` raster variables."),
+                                      Only relevant for `FIA varibale` and `ESS` raster variables.")
+                  ),
+
+                  accordion_panel(
+                        "Cartography",
                         selectInput("vector", "Vector layer",
                                     c("occupied FIA plots", "all FIA plots", "focal site analogs", "current animation", "current field", "none")) %>%
                               tooltip("Select which point or line layer is displayed.") %>%
@@ -414,11 +507,7 @@ ui <- page_sidebar(
                                               <dt>Focal site analogs</dt> <dd>Plots within climatic and geographic range of the selected site</dd>
                                               <dt>Current animation</dt> <dd>Animation with particle movement showing direction and magnitude of mean current flow</dd>
                                               <dt>Current field</dt> <dd>Vector field showing showing direction and magnitude of mean current flow</dd>
-                                          </dl>"))
-                  ),
-
-                  accordion_panel(
-                        "Cartography",
+                                          </dl>")),
                         sliderInput("vector_scale", "Point/line size", -1, 1, 0, step = .1) %>%
                               tooltip("Use this slider to adjust the size of FIA plot markers, or the length of current lines"),
                         sliderInput("rast_opacity", "Raster opacity", 0, 1, .8, step = .01),
@@ -577,37 +666,79 @@ server <- function(input, output, session) {
 
       green <- "darkgreen"
 
-      var <- reactive({
-            switch(input$fia_var,
-                   "proportion basal area" = "baprop",
-                   "total basal area" = "batot",
-                   "presence probability" = "pres",
-                   "total basal area ALL species" = "baplot")
+      # Active focal identifier and human-readable label
+      focal_id <- reactive({
+            switch(input$track,
+                   "Species"      = input$species,
+                   "Forest type"  = input$forest_type,
+                   "Forest group" = input$forest_group,
+                   "All trees"    = "all_trees")
+      })
+
+      focal_label <- reactive({
+            switch(input$track,
+                   "Species"      = input$species,
+                   "Forest type"  = {
+                         nm <- ft_name(as.integer(input$forest_type))
+                         if (is.na(nm)) paste("Forest type", input$forest_type) else nm
+                   },
+                   "Forest group" = {
+                         nm <- fg_name(as.integer(input$forest_group))
+                         if (is.na(nm)) paste("Forest group", input$forest_group) else nm
+                   },
+                   "All trees"    = "All trees")
+      })
+
+      # TRUE if the active response is a 0/1 indicator (presence variables);
+      # FALSE if continuous (basal area variables).
+      response_is_binary <- reactive({
+            isTruthy(input$fia_var) && input$fia_var == "presence probability"
       })
 
 
       ## DATA SETUP -----------------------
 
-      # all plots within bbox
+      # Padded bbox: includes plots just outside the modeling domain so they
+      # can still serve as analogs for cells near the bbox edge.
+      # Pad tracks theta_geog * 3 (the hard cutoff used by analog_impact),
+      # converted from km to degrees with a conservative ratio. 1° lat ≈ 111 km;
+      # 1° lon at 50° N ≈ 71 km. Using /100 overestimates the pad by 10–30% at
+      # CONUS latitudes, which is harmless.
+      pool_bbox <- reactive({
+            pad_deg <- input$theta_geog * 3 / 100
+            list(x = c(input$bbox_x[1] - pad_deg, input$bbox_x[2] + pad_deg),
+                 y = c(input$bbox_y[1] - pad_deg, input$bbox_y[2] + pad_deg))
+      })
+
+      # all plots within padded bbox (the analog pool)
       fia_plots <- reactive({
+            pb <- pool_bbox()
             read_csv("data/fia.csv", show_col_types = FALSE) %>%
-                  select(x, y, aet1:tmaxwm2) %>%
+                  select(x, y) %>%
                   distinct() %>%
-                  filter(between(x, input$bbox_x[1], input$bbox_x[2]),
-                         between(y, input$bbox_y[1], input$bbox_y[2])) %>%
+                  filter(between(x, pb$x[1], pb$x[2]),
+                         between(y, pb$y[1], pb$y[2])) %>%
                   mutate(index = 1:nrow(.))
       })
 
       fia_plots_species_all <- reactive({
             read_csv("data/fia.csv", show_col_types = FALSE) %>%
+                  # Recode NA forest_type to the Non-forest sentinel (0) so
+                  # downstream filters and joins treat non-forest plots
+                  # uniformly with real forest types.
+                  mutate(forest_type = ifelse(is.na(forest_type), 0L, forest_type)) %>%
                   left_join(select(fia_plots(), x, y, index),
                             by = join_by(x, y))
       })
 
       plot_occ <- reactive({
+            pb <- pool_bbox()
+            # Plot-level type->group lookup (one row per forest_type code)
+            ft_to_fg <- distinct(forest_type_codes, forest_type, forest_group)
+
             fia_plots_species_all() %>%
-                  filter(between(x, input$bbox_x[1], input$bbox_x[2]),
-                         between(y, input$bbox_y[1], input$bbox_y[2])) %>%
+                  filter(between(x, pb$x[1], pb$x[2]),
+                         between(y, pb$y[1], pb$y[2])) %>%
                   mutate(focal = species == input$species & !is.na(species)) %>%
                   group_by(x, y) %>%
                   summarize(
@@ -616,8 +747,40 @@ server <- function(input, output, session) {
                         batot = sum(basal_area[focal]), # total focal species basal area
                         baprop = weighted.mean(focal, basal_area), #  proportion ba
                         baplot = sum(basal_area), # total plot ba, all species
+                        forest_type = dplyr::first(forest_type), # plot-level FORTYPCD
                         .groups = "drop") %>%
+                  left_join(ft_to_fg, by = "forest_type") %>%
                   mutate(baprop = ifelse(baplot == 0, 0, baprop))
+      })
+
+      # Single active response vector, aligned with plot_occ() rows.
+      # Computed from the (track, fia_var, focal_id) tuple.
+      response_values <- reactive({
+            po <- plot_occ()
+            req(isTruthy(input$track), isTruthy(input$fia_var))
+
+            v <- if (input$track == "Species") {
+                  switch(input$fia_var,
+                         "presence probability"  = po$pres,
+                         "proportion basal area" = po$baprop,
+                         "total basal area"      = po$batot)
+            } else if (input$track == "Forest type") {
+                  req(isTruthy(input$forest_type))
+                  as.integer(!is.na(po$forest_type) &
+                                   po$forest_type == as.integer(input$forest_type))
+            } else if (input$track == "Forest group") {
+                  req(isTruthy(input$forest_group))
+                  as.integer(!is.na(po$forest_group) &
+                                   po$forest_group == as.integer(input$forest_group))
+            } else if (input$track == "All trees") {
+                  switch(input$fia_var,
+                         "presence probability" = as.integer(po$baplot > 0),
+                         "total basal area"     = po$baplot)
+            }
+
+            # Guard against transient NULL during track/fia_var transitions
+            req(!is.null(v))
+            v
       })
 
       clim_scales <- readRDS("data/clim_scales.rds")
@@ -655,11 +818,52 @@ server <- function(input, output, session) {
 
       # REACTIVE UI COMPONENTS ---------------------------
 
-      ## Snap domain to species range
-      observeEvent(input$species_domain, {
+      ## Swap FIA variable choices when track changes
+      observeEvent(input$track, {
+            choices <- switch(input$track,
+                              "Species"      = c("presence probability",
+                                                 "proportion basal area",
+                                                 "total basal area"),
+                              "Forest type"  = c("presence probability"),
+                              "Forest group" = c("presence probability"),
+                              "All trees"    = c("presence probability",
+                                                 "total basal area"))
+            updateSelectInput(session, "fia_var",
+                              choices = choices,
+                              selected = choices[1])
+      }, ignoreInit = TRUE)
+
+      ## Dynamic snap-to-range button (label reflects focal entity)
+      output$snap_focal_btn <- renderUI({
+            switch(input$track,
+                   "Species"      = actionButton("focal_domain", "Snap to species range"),
+                   "Forest type"  = actionButton("focal_domain", "Snap to forest type range"),
+                   "Forest group" = actionButton("focal_domain", "Snap to forest group range"),
+                   "All trees"    = tags$button(class = "btn btn-default",
+                                                disabled = NA,
+                                                style = "opacity: 0.5; cursor: not-allowed;",
+                                                title = "No focal entity in this mode",
+                                                "Snap to focal range"))
+      })
+
+      ## Snap domain to focal species/forest-type/forest-group range
+      observeEvent(input$focal_domain, {
             pad <- 1
-            bb <- fia_plots_species_all() %>%
-                  filter(species == input$species) %>%
+            bb <- switch(input$track,
+                         "Species" = fia_plots_species_all() %>%
+                               filter(species == input$species),
+                         "Forest type" = fia_plots_species_all() %>%
+                               filter(forest_type == as.integer(input$forest_type)),
+                         "Forest group" = {
+                               ft_in_group <- forest_type_codes %>%
+                                     filter(forest_group == as.integer(input$forest_group)) %>%
+                                     pull(forest_type)
+                               fia_plots_species_all() %>%
+                                     filter(forest_type %in% ft_in_group)
+                         },
+                         NULL)
+            req(!is.null(bb), nrow(bb) > 0)
+            bb <- bb %>%
                   summarize(xmin = floor(min(x)) - pad,
                             xmax = ceiling(max(x)) + pad,
                             ymin = floor(min(y)) - pad,
@@ -682,9 +886,9 @@ server <- function(input, output, session) {
             }
       })
 
-      # Only show AUC option for presence-absence variable
+      # Only show AUC option for binary (presence-type) variables
       observe({
-            if(input$fia_var == "presence probability"){
+            if(isTruthy(input$fia_var) && input$fia_var == "presence probability"){
                   updateSelectInput(session, "eval_stat",
                                     choices = c("R-squared", "RMSE", "delta AIC", "AUC"),
                                     selected = "AUC")
@@ -751,13 +955,24 @@ server <- function(input, output, session) {
       pool <- reactive({
             req(plot_occ())
             xy <- plot_occ()[, c("x", "y")]
-            clim_hst <- extract(clim()$hst, xy, ID = FALSE, method = "bilinear")
-            clim_fut <- extract(clim()$fut, xy, ID = FALSE, method = "bilinear")
+            # Extract climate from the raw (uncropped, unaggregated) raster at
+            # each plot's actual location. This gives the climate the plot is
+            # actually experiencing rather than the spatial average over a
+            # coarsened cell, and means pool() doesn't depend on the modeling
+            # grid (input$clim_agg) or the bbox crop.
+            r <- rast("data/clim_quantized.tif")
+            clim_hst <- extract(r[[paste0(input$clim_vars, 1)]], xy,
+                                ID = FALSE, method = "bilinear")
+            clim_fut <- extract(r[[paste0(input$clim_vars, 2)]], xy,
+                                ID = FALSE, method = "bilinear")
             list(index_hst = build_analog_index(cbind(xy, clim_hst), coord_type = "lonlat", index_res = 8),
                  index_fut = build_analog_index(cbind(xy, clim_fut), coord_type = "lonlat", index_res = 8),
                  clim_hst = clim_hst,
                  clim_fut = clim_fut,
-                 values = plot_occ()[, c("pres", "batot", "baprop", "baplot", "samp_method_cd")])
+                 # Single active response column for AIM smoothing,
+                 # plus samp_method_cd carried through for plot styling.
+                 values = tibble::tibble(response = response_values(),
+                                         samp_method_cd = plot_occ()$samp_method_cd))
       })
 
       ### full raster -----------------------
@@ -766,7 +981,7 @@ server <- function(input, output, session) {
             stat <- gsub(" ", "_", input$summary_stat)
 
             aim_query <- function(x){
-                  suppressWarnings(analogs::analog_impact(
+                  suppressWarnings(analogs::analog_search(
                         x = x,
                         pool = pool()$index_hst,
                         max_clim = input$theta_clim * 3,
@@ -790,26 +1005,33 @@ server <- function(input, output, session) {
             req(site$x, site$y)
 
             xy <- t(as.matrix(c(x = site$x, y = site$y), nrow = 1))
-            hst <- cbind(xy, extract(clim()$hst, xy, method = "bilinear"))
-            fut <- cbind(xy, extract(clim()$fut, xy, method = "bilinear"))
+            # Extract from raw raster to match pool() (consistent scaling).
+            r <- rast("data/clim_quantized.tif")
+            hst <- cbind(xy, extract(r[[paste0(input$clim_vars, 1)]], xy, method = "bilinear"))
+            fut <- cbind(xy, extract(r[[paste0(input$clim_vars, 2)]], xy, method = "bilinear"))
 
             max_clim <- if(input$filter_clim) input$theta_clim * 3 else NULL
 
-            analog_query <- function(x, pool){
+            # Hoist the pool reactive's result so the inner function doesn't
+            # shadow it with its `index` argument.
+            pool_data <- pool()
+            pool_y <- cbind(pool_data$values, pool_data$clim_hst, pool_data$clim_fut)
+
+            analog_query <- function(x, index){
                   suppressWarnings(analogs::analog_search(
                         x = x,
-                        pool = pool,
+                        pool = index,
                         max_geog = input$theta_geog * 3,
                         max_clim = max_clim,
                         select = "all",
                         stat = NULL,
-                        y = cbind(pool()$values, pool()$clim_hst, pool()$clim_fut)
+                        y = pool_y
                   ))
             }
 
-            rev <- analog_query(fut, pool()$index_hst)
-            fwd <- analog_query(hst, pool()$index_fut)
-            bsl <- analog_query(hst, pool()$index_hst)
+            rev <- analog_query(fut, pool_data$index_hst)
+            fwd <- analog_query(hst, pool_data$index_fut)
+            bsl <- analog_query(hst, pool_data$index_hst)
 
             list(hst_site = hst,
                  fut_site = fut,
@@ -832,36 +1054,36 @@ server <- function(input, output, session) {
       ### Sources and targets ----------
       electrodes <- reactive({
             if(input$cs_sources == "grid cells"){
-                  sources <- aim()$bsl[[var()]]
+                  sources <- aim()$bsl$response
             }else if(input$cs_sources == "selected site" && !is.null(site$y)){
                   xy <- matrix(c(site$x, site$y), nrow = 1)
-                  sources <- aim()$bsl[[var()]]
+                  sources <- aim()$bsl$response
                   sources <- rasterize(xy, sources) # * extract(sources, xy)[1,1]
             }else{
                   # fia plots
                   v <- plot_occ()[, c("x", "y")]
-                  v$z <- plot_occ()[[var()]]
+                  v$z <- response_values()
                   v <- v[v$z > 0,]
                   v <- vect(v, geom = c("x", "y"))
-                  v <- rasterize(v, aim()$bsl[[var()]], field = "z")
+                  v <- rasterize(v, aim()$bsl$response, field = "z")
                   sources <- v
             }
             sources[is.na(sources[])] <- 0
             sources <- sources / global(sources, "sum")$sum
 
             if(input$cs_targets == "grid cells"){
-                  destinations <- aim()$fut[[var()]]
+                  destinations <- aim()$fut$response
             }else if(input$cs_targets == "selected site" && !is.null(site$y)){
                   xy <- matrix(c(site$x, site$y), nrow = 1)
-                  destinations <- aim()$fut[[var()]]
+                  destinations <- aim()$fut$response
                   destinations <- rasterize(xy, destinations)
             }else{
                   # fia plots
                   v <- plot_occ()[, c("x", "y")]
-                  v$z <- plot_occ()[[var()]]
+                  v$z <- response_values()
                   v <- v[v$z > 0,]
                   v <- vect(v, geom = c("x", "y"))
-                  v <- rasterize(v, aim()$fut[[var()]], field = "z")
+                  v <- rasterize(v, aim()$fut$response, field = "z")
                   destinations <- v
             }
             destinations[is.na(destinations[])] <- 0
@@ -872,7 +1094,7 @@ server <- function(input, output, session) {
       })
 
       suitability <- reactive({
-            suit <- sqrt(aim()$bsl[[var()]] * aim()$fut[[var()]])
+            suit <- sqrt(aim()$bsl$response * aim()$fut$response)
             suit[is.na(suit)] <- 0
             suit
       })
@@ -949,7 +1171,7 @@ server <- function(input, output, session) {
             # Return results
             c(current, voltage, curr_dest, curr_loss, curr_power,
               resistance()$conductance, leakage(), curr_dir) %>%
-                  mask(aim()$bsl[[var()]])
+                  mask(aim()$bsl$response)
       })
 
 
@@ -957,9 +1179,9 @@ server <- function(input, output, session) {
       # MAP LAYERS ---------------------------------------
 
       ### Basemap -----------------------------------------------
+      # No reactive dependencies — renders once at startup. All subsequent
+      # map updates go through leafletProxy in dedicated observers.
       output$map <- renderLeaflet({
-            req(fia_plots())
-
             leaflet(options = leafletOptions(preferCanvas = TRUE)) %>%
                   addProviderTiles(
                         providers$OpenTopoMap,
@@ -967,10 +1189,10 @@ server <- function(input, output, session) {
                   ) %>%
 
                   # zoom to FIA extent
-                  fitBounds(lng1 = min(fia_plots()$x),
-                            lat1 = min(fia_plots()$y),
-                            lng2 = max(fia_plots()$x),
-                            lat2 = max(fia_plots()$y)) %>%
+                  fitBounds(lng1 = fia_xy_bounds$xmin,
+                            lat1 = fia_xy_bounds$ymin,
+                            lng2 = fia_xy_bounds$xmax,
+                            lat2 = fia_xy_bounds$ymax) %>%
 
                   addScaleBar(
                         position = "bottomleft",
@@ -1046,7 +1268,7 @@ server <- function(input, output, session) {
 
       ### Raster -------------------------------
       display_layer <- reactive({
-            req(nzchar(input$species), aim())  # only run once we have data
+            req(focal_id(), aim())  # only run once we have data
 
             if(input$stat == "ESS"){
                   r <- switch(input$time,
@@ -1055,7 +1277,7 @@ server <- function(input, output, session) {
                               "future" = aim()$fut$ess)
             }else if(input$stat %in% c("current animation", "current field")){
                   # show FIA delta raster for these layers
-                  r <- aim()$fut[[var()]] - aim()$bsl[[var()]]
+                  r <- aim()$fut$response - aim()$bsl$response
             }else if(input$stat == "focal site similarity"){
                   r <- site_diff()
             }else if(input$stat %in% cs_stat_names){
@@ -1063,9 +1285,9 @@ server <- function(input, output, session) {
                   r <- connectivity()[[st]]
             }else{ # input$stat == "FIA variable"
                   r <- switch(input$time,
-                              "delta" = aim()$fut[[var()]] - aim()$bsl[[var()]],
-                              "historical" = aim()$bsl[[var()]],
-                              "future" = aim()$fut[[var()]])
+                              "delta" = aim()$fut$response - aim()$bsl$response,
+                              "historical" = aim()$bsl$response,
+                              "future" = aim()$fut$response)
             }
 
             r
@@ -1076,9 +1298,9 @@ server <- function(input, output, session) {
             if(input$stat == "ESS"){
                   title <- input$stat
             }else{
-                  pre <- if(input$fia_var == "total basal area ALL species") "" else paste0(input$species, "<br/>")
+                  pre <- paste0(focal_label(), "<br/>")
                   title <- paste0(pre, input$time, "<br/>", input$summary_stat, "<br/>", tolower(sub(" ", "<br/>", input$fia_var)))
-                  if(input$fia_var %in% c("total basal area", "total basal area ALL species") &&
+                  if(input$fia_var == "total basal area" &&
                      input$summary_stat == "weighted mean"){
                         title <- paste0(title, "<br/>(m2 BA / plot)")
                   }
@@ -1211,15 +1433,18 @@ server <- function(input, output, session) {
                                      "Forward analogs" = site_analogs()$fwd_analogs,
                                      "Contemporary analogs" = site_analogs()$bsl_analogs) %>%
                               mutate(x = analog_x, y = analog_y)
+                        pd$display <- pd$response
                   } else {
+                        # Show the full analog pool, including plots in the padded
+                        # ring just outside the modeling bbox — these are still
+                        # contributing as analogs to edge cells in the prediction.
                         pd <- plot_occ()
+                        pd$display <- response_values()
                   }
-
-                  pd$display <- pd[[var()]]
 
                   if(input$vector == "occupied FIA plots") pd <- filter(pd, display > 0)
 
-                  dom <- if(var() %in% c("batot", "baplot")) c(0, max(pd$display, na.rm = TRUE)) else 0:1
+                  dom <- if(!response_is_binary()) c(0, max(pd$display, na.rm = TRUE)) else 0:1
 
                   plot_pal <- colorNumeric(palette = c("gray90", green),
                                            domain = dom)
@@ -1349,7 +1574,7 @@ server <- function(input, output, session) {
             d$v1 <- d$v1 * scl1$sd + scl1$mean
             d$v2 <- d$v2 * scl2$sd + scl2$mean
 
-            d$value <- d[[var()]]
+            d$value <- d$response
             d <- arrange(d, value)
 
 
@@ -1362,7 +1587,7 @@ server <- function(input, output, session) {
                                         c(scl1$mean, scl2$mean), c(scl1$sd, scl2$sd)) %>%
                                   mutate(r = "a"))
 
-            dom <- if(var() %in% c("batot", "baplot")) c(0, max(d$value, na.rm = TRUE)) else 0:1
+            dom <- if(!response_is_binary()) c(0, max(d$value, na.rm = TRUE)) else 0:1
 
             p <- ggplot() +
                   geom_path(data = perims,
@@ -1421,10 +1646,10 @@ server <- function(input, output, session) {
                         "Reverse analogs" = site_analogs()$rev_analogs,
                         "Forward analogs" = site_analogs()$fwd_analogs,
                         "Contemporary analogs" = site_analogs()$bsl_analogs)
-            d$value <- d[[var()]]
+            d$value <- d$response
             d <- arrange(d, value)
 
-            dom <- if(var() %in% c("batot", "baplot")) c(0, max(d$value, na.rm = TRUE)) else 0:1
+            dom <- if(!response_is_binary()) c(0, max(d$value, na.rm = TRUE)) else 0:1
 
             ymax <- if(input$filter_clim) input$theta_clim * 3.3 else NA
             ggplot(d, aes(geog_dist, clim_dist, fill = value)) +
@@ -1450,58 +1675,162 @@ server <- function(input, output, session) {
 
       ### forest composition --------------------------------
       output$comp_plot <- renderPlot({
+            # Pool analog rows from the three analog directions with their weights.
             d <- bind_rows(site_analogs()$rev_analogs %>% mutate(type = "reverse"),
                            site_analogs()$fwd_analogs %>% mutate(type = "forward"),
                            site_analogs()$bsl_analogs %>% mutate(type = "contemporary")) %>%
-                  filter(clim_dist <= input$theta_clim * 3) # ensure only analogs are considered even if input$filter_clim = FALSE
+                  filter(clim_dist <= input$theta_clim * 3)
 
-            analogs <- plot_occ()[d$analog_index, ] %>%
-                  select(x, y) %>%
+            # Plot-level analog set: one row per (analog plot × analog direction),
+            # joined to plot_occ for plot-level attributes (forest_type, forest_group).
+            plot_analogs <- plot_occ()[d$analog_index, ] %>%
+                  select(x, y, forest_type, forest_group) %>%
                   bind_cols(select(d, clim_dist, geog_dist, type)) %>%
-                  mutate(weight = dnorm(clim_dist, sd = input$theta_clim) * dnorm(geog_dist, sd = input$theta_geog)) %>%
-                  left_join(fia_plots_species_all(), by = join_by(x, y), relationship = "many-to-many")
+                  mutate(weight = dnorm(clim_dist, sd = input$theta_clim) *
+                               dnorm(geog_dist, sd = input$theta_geog))
 
-            stat <- switch(input$summary_stat,
-                           "weighted mean" = weighted.mean,
-                           "weighted sum" = function(x, w) sum(x * w, na.rm = T))
+            # SPECIES MODE: per-species decomposition using tree-level data.
+            # Shows the selected response variable (presence / BA / BA proportion)
+            # broken down by species across analog plots.
+            if (input$track == "Species") {
 
-            a <- analogs %>%
-                  select(x, y, weight, species, type) %>%
-                  tidyr::expand(tidyr::nesting(x, y, weight, type), species) %>%
-                  left_join(analogs, by = join_by(x, y, weight, species, type)) %>%
-                  mutate(basal_area = ifelse(is.na(basal_area), 0, basal_area)) %>%
-                  group_by(x, y, type) %>%
-                  mutate(baplot = sum(basal_area),
-                         baprop = basal_area / sum(basal_area),
-                         baprop = ifelse(is.finite(baprop), baprop, 0)) %>%
-                  group_by(species, type) %>%
-                  summarize(
-                        pres = stat(basal_area > 0, weight),
-                        batot = stat(basal_area, weight),
-                        baprop = stat(baprop, weight),
-                        baplot = stat(baplot, weight),
-                        .groups = "drop"
-                  ) %>%
-                  filter(!is.na(species))
+                  analogs <- plot_analogs %>%
+                        select(x, y, weight, type) %>%
+                        left_join(fia_plots_species_all(), by = join_by(x, y),
+                                  relationship = "many-to-many")
 
-            v <- if(var() == "baplot") "batot" else var()
-            a$value <- a[[v]]
+                  stat <- switch(input$summary_stat,
+                                 "weighted mean" = weighted.mean,
+                                 "weighted sum" = function(x, w) sum(x * w, na.rm = T))
 
-            lab <- paste("historical", input$summary_stat, input$fia_var)
+                  a <- analogs %>%
+                        select(x, y, weight, species, type) %>%
+                        tidyr::expand(tidyr::nesting(x, y, weight, type), species) %>%
+                        left_join(analogs, by = join_by(x, y, weight, species, type)) %>%
+                        mutate(basal_area = ifelse(is.na(basal_area), 0, basal_area)) %>%
+                        group_by(x, y, type) %>%
+                        mutate(baplot = sum(basal_area),
+                               baprop = basal_area / sum(basal_area),
+                               baprop = ifelse(is.finite(baprop), baprop, 0)) %>%
+                        group_by(species, type) %>%
+                        summarize(
+                              pres = stat(basal_area > 0, weight),
+                              batot = stat(basal_area, weight),
+                              baprop = stat(baprop, weight),
+                              .groups = "drop"
+                        ) %>%
+                        filter(!is.na(species))
 
-            a %>%
-                  arrange(species) %>%
-                  mutate(y = as.integer(factor(species)),
-                         svalue = value / max(value)) %>%
-                  ggplot(aes(type, species, height = svalue, fill = value)) +
-                  geom_tile(width = .9, linewidth = 0) +
-                  scale_fill_gradientn(colors = c("gray90", green), guide = "legend") +
-                  scale_size_area(max_size = 20) +
-                  theme(panel.grid = element_blank(),
-                        axis.text.x = element_text(angle = 45, hjust = 1)) +
-                  labs(x = "analog type",
-                       y = NULL,
-                       fill = gsub(" ", "\n", lab))
+                  v <- switch(input$fia_var,
+                              "presence probability"  = "pres",
+                              "proportion basal area" = "baprop",
+                              "total basal area"      = "batot")
+                  a$value <- a[[v]]
+                  a$category <- a$species
+                  lab <- paste("historical", input$summary_stat, input$fia_var)
+
+            } else {
+                  # TYPE / GROUP / ALL-TREES MODES: weighted prevalence of the
+                  # relevant categorical unit (forest type, forest group, or
+                  # species) across the analog plots, computed per analog
+                  # direction.
+                  if (input$track == "Forest type") {
+                        a <- plot_analogs %>%
+                              group_by(type, category = forest_type) %>%
+                              summarize(value = sum(weight), .groups = "drop_last") %>%
+                              mutate(value = value / sum(value)) %>%   # normalize within analog direction
+                              ungroup() %>%
+                              mutate(category = ft_name(category))
+                  } else if (input$track == "Forest group") {
+                        a <- plot_analogs %>%
+                              group_by(type, category = forest_group) %>%
+                              summarize(value = sum(weight), .groups = "drop_last") %>%
+                              mutate(value = value / sum(value)) %>%
+                              ungroup() %>%
+                              mutate(category = fg_name(category))
+                  } else {
+                        # All trees: per-species prevalence (presence-weighted by analog weight)
+                        analogs <- plot_analogs %>%
+                              select(x, y, weight, type) %>%
+                              left_join(fia_plots_species_all(),
+                                        by = join_by(x, y),
+                                        relationship = "many-to-many") %>%
+                              filter(!is.na(species))
+                        # Total analog weight per direction (denominator)
+                        totals <- plot_analogs %>%
+                              group_by(type) %>%
+                              summarize(total_weight = sum(weight), .groups = "drop")
+                        # Weight of analog plots where each species is present
+                        a <- analogs %>%
+                              distinct(x, y, weight, type, species) %>%   # one row per (plot × species × direction)
+                              group_by(type, category = species) %>%
+                              summarize(value = sum(weight), .groups = "drop") %>%
+                              left_join(totals, by = "type") %>%
+                              mutate(value = value / total_weight) %>%
+                              select(-total_weight)
+                  }
+
+                  # Expand to every (category × analog direction) combination,
+                  # filling categories absent from a direction with 0. Without
+                  # this, missing combinations render as blank tiles rather
+                  # than explicit zeros.
+                  a <- a %>%
+                        tidyr::complete(category, type, fill = list(value = 0))
+
+                  # Drop categories with zero weighted prevalence everywhere
+                  a <- a %>%
+                        group_by(category) %>%
+                        filter(any(value > 0)) %>%
+                        ungroup()
+
+                  lab <- "historical weighted prevalence"
+            }
+
+            req(nrow(a) > 0)
+
+            a <- a %>%
+                  arrange(category) %>%
+                  mutate(svalue = value / max(value, na.rm = TRUE))
+
+            b <- a %>%
+                  select(type, category, value) %>%
+                  mutate(value = value / max(value),
+                         type = factor(type, levels = c("reverse", "contemporary", "forward")),
+                         itype = as.integer(type) - 0.4,
+                         itype2 = itype + 0.8,
+                         icat = as.integer(factor(category))) %>%
+                  group_by(type) %>%
+                  mutate(pad = .05,
+                         ymax = cumsum(value) + cumsum(pad) - pad,
+                         ymin = lag(ymax) + pad,
+                         ymin = ifelse(is.na(ymin), 0, ymin),
+                         y = ymin/2 + ymax/2) %>%
+                  tidyr::gather(rep, itype, itype, itype2)
+
+            labs <- b %>%
+                  group_by(category) %>%
+                  filter(value == max(value)) %>%
+                  summarize(itype = mean(itype),
+                            y = mean(y))
+
+            ggplot() +
+                  geom_ribbon(data = b,
+                              aes(itype, ymin = ymin, ymax = ymax,
+                                  group = category, fill = category, color = category),
+                              alpha = .7, linewidth = 0.05) +
+                  geom_rect(data = b %>% tidyr::spread(rep, itype),
+                              aes(xmin = itype, xmax = itype2, ymin = ymin, ymax = ymax,
+                                  group = category, fill = category, color = category)) +
+                  geom_text(data = labs,
+                            aes(itype, y, label = category),
+                            hjust = .5, vjust = .5, fontface = "bold.italic") +
+                  scale_x_continuous(breaks = 1:3,
+                                     labels = c("reverse\nanalogs", "contemporary\nanalogs", "forward\nanalogs")) +
+                  theme(legend.position = "none",
+                        panel.grid = element_blank(),
+                        axis.text.y = element_blank(),
+                        axis.ticks.y = element_blank()) +
+                  labs(y = "weighted composition of analog plots")
       })
 
 
@@ -1540,16 +1869,15 @@ server <- function(input, output, session) {
 
 
       eval_var_set <- function(clim_vars, vary_bandwidths = TRUE){
+            # Extract climate from raw raster at each pool plot, matching pool().
             r <- rast("data/clim_quantized.tif")
-            clim <- r[[paste0(clim_vars, 1)]] %>%
-                  crop(ext(c(input$bbox_x, input$bbox_y))) %>%
-                  aggregate(input$clim_agg, na.rm = TRUE)
+            clim_r <- r[[paste0(clim_vars, 1)]]
 
             po <- plot_occ()
             xy <- po[, c("x", "y")]
-            clim_hst <- extract(clim, xy, ID = FALSE, method = "bilinear")
+            clim_hst <- extract(clim_r, xy, ID = FALSE, method = "bilinear")
             d <- cbind(xy, clim_hst)
-            values <- po[[var()]]
+            values <- response_values()
 
             set.seed(123)
             train <- sample(c(TRUE, FALSE), nrow(xy), replace = T)
@@ -1570,7 +1898,7 @@ server <- function(input, output, session) {
                         max_clim = theta_clim * 3,
                         max_geog = theta_geog * 3,
                         stat = "weighted_mean",
-                        weight = "gaussian_joint",
+                        kernel = "gaussian_joint",
                         theta = c(theta_clim, theta_geog),
                         y = values_train)) %>%
                         rename(pred = weighted_mean) %>%
