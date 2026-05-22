@@ -19,6 +19,19 @@ library(circuitscaper)
 cs_setup()
 
 clim_vars <- function() c("tmean", "ppt", "aet", "cwd", "tmincm", "tmaxwm")
+
+# Native (un-standardized) units for each climate variable, used to label the
+# climate-model selector chart after deltas are back-converted from z-scores.
+# The stored climate rasters are standardized; a delta back-converts to native
+# units by multiplying the z-score delta by the variable's SD (the mean
+# cancels in a difference). NOTE: ppt is log10-transformed before standardizing,
+# so its delta is in log10-space, not mm -- labelled accordingly.
+clim_units <- c(tmean  = "\u00b0C",
+                tmincm = "\u00b0C",
+                tmaxwm = "\u00b0C",
+                aet    = "mm",
+                cwd    = "mm",
+                ppt    = "log10 mm")
 bbox_res <- 1
 clim_bbox <- as.vector(ext(rast("data/clim_historical.tif")))
 clim_bbox <- c(floor(clim_bbox[c(1, 3)] / bbox_res) * bbox_res, ceiling(clim_bbox[c(2, 4)] / bbox_res) * bbox_res)
@@ -390,7 +403,7 @@ ui <- page_sidebar(
       "))
       ),
 
-      theme = bs_theme(version = 5, bootswatch = "sandstone"),
+      theme = bs_theme(version = 5, bootswatch = "flatly"),
 
       fillable = TRUE,   # lets the page body fill the browser height
 
@@ -410,17 +423,18 @@ ui <- page_sidebar(
 
                   accordion_panel(
                         "Info",
-                        p("This tool uses 'analog impact models' to interpolate FIA variables across
-                          a spatial grid, based on geographic proximity and climatic similarity to
-                          FIA plots, optionally accounting for pedicted future climate change.
+                        helpText("This tool interpolates FIA variables across a spatial grid based on geographic proximity
+                          and climatic similarity to FIA plots, optionally accounting for pedicted future climate change.
                           Use it to assess potential shifts in species distributions and other forest characteristics,
                           model connectivity between current and potential future distributions,
-                          and explore properties of plots that are analogs to your focal sites.",
-                          style = "font-size: 14px; color: #555;"),
+                          and explore properties of plots that are analogs to your locations of interest."),
                         br(),
-                        p("NOTE: This tool is a prototype and is still under development.
-                          Please contact matthew.kling@umontana.edu with questions or bug reports.",
-                          style = "font-size: 14px; color: #555;")
+                        helpText("In this lefthand sidebar, you'll find core controls for setting model parameters and
+                                 choosing display variables. The righthand sidebar houses modules with their own
+                                 dedicated controls and plots."),
+                        br(),
+                        helpText("NOTE: This tool is a prototype and is still under development.
+                          Please contact matthew.kling@umontana.edu with questions or bug reports.")
                   ),
 
                   accordion_panel(
@@ -478,6 +492,7 @@ ui <- page_sidebar(
 
                   accordion_panel(
                         "Climate data",
+                        helpText("Select climate variables and future scenarios."), hr(),
                         selectInput("clim_vars", "Climate variables", clim_vars(), selected = c("cwd", "aet"), multiple = TRUE) %>%
                               tooltip(HTML("Choose one or more variables for measuring multivariate climate similarity:<br><br>
                                           <dl style='margin:0;'>
@@ -496,17 +511,19 @@ ui <- page_sidebar(
                                     choices = period_choices,
                                     selected = default_period) %>%
                               tooltip("Future time period."),
-                        selectInput("scenario_model", "Climate model",
-                                    choices = model_choices,
-                                    selected = default_model) %>%
-                              tooltip("Global climate model (GCM).")
+                        selectizeInput("scenario_model", "Climate model(s)",
+                                       choices = model_choices,
+                                       selected = default_model,
+                                       multiple = TRUE,
+                                       options = list(plugins = list("remove_button"))) %>%
+                              tooltip("Select one or more global climate models (GCMs). When multiple are selected, climate layers are averaged across the model ensemble.
+                                      See the 'Climate models' panel in the right sidebar for help comparing GCMs and choosing among them.")
                   ),
 
                   accordion_panel(
                         "Interpolation",
-                        helpText("Analogs are weighted using Gaussian kernels based on climatic and geographic distances from a site.
-                                 Bandwidths specify the standard deviations of these kernels. Plots farther than 3 stdevs
-                                 are considered non-analog and excluded."), hr(),
+                        helpText("Analog FIA plots are weighted using Gaussian kernels based on climatic and geographic distances from a site.
+                                 Bandwidths specify the standard deviations of these kernels. Plots farther than 3 stdevs are considered non-analog and excluded."), hr(),
                         sliderInput("theta_geog", "Geographic bandwidth (km)", 5, 100, value = 30),
                         sliderInput("theta_clim", "Climate bandwidth (z)", .05, .5, value = .1) %>%
                               tooltip("Climate bandwidth units are in standard deviations relative to climate variation across all FIA plots in the contiguous US"),
@@ -522,9 +539,8 @@ ui <- page_sidebar(
 
                   accordion_panel(
                         "Connectivity",
-                        helpText("Settings for circuit-based connectivity modeling between historical (source)
-                                 and future (target) FIA surfaces. To view connectivity results, select
-                                 'connectivity' as the raster variable under 'Map layer'."), hr(),
+                        helpText("Settings for circuit-based landscape connectivity modeling between historical (source) and future (target) FIA surfaces.
+                                 To view connectivity results, select 'connectivity' as the raster variable under 'Map layer'."), hr(),
                         selectInput("cs_sources", "Origin electrodes (sources)", c("grid cells", "FIA plots", "selected site")) %>%
                               tooltip("Sites where current is injected. If `grid cells` or `FIA plots` is selected, current is injected
                                       in proportion to modeled or observed (respectively) values of the selected FIA variable.
@@ -574,8 +590,7 @@ ui <- page_sidebar(
                         selectInput("time", "Raster variable timeframe", c("historical", "future", "delta")) %>%
                               tooltip("Choose whether to display historical or future model predictions, or their difference.
                                       Only relevant for `FIA variable` and `ESS` raster variables."),
-                        hr(),
-                        selectInput("vector", "Vector layer",
+                        selectInput("vector", "Vector variable",
                                     c("occupied FIA plots", "all FIA plots", "focal site analogs", "current animation", "current field", "none")) %>%
                               tooltip(HTML("Select which point or line layer is displayed:<br><br>
                                           <dl style='margin:0;'>
@@ -589,6 +604,7 @@ ui <- page_sidebar(
 
                   accordion_panel(
                         "Cartography",
+                        helpText("Adjust the styling of the map."), hr(),
                         sliderInput("vector_scale", "Vector point/line size", -1, 1, 0, step = .1) %>%
                               tooltip("Use this slider to adjust the size of FIA plot markers or the length of current lines"),
                         sliderInput("rast_opacity", "Raster opacity", 0, 1, .8, step = .01),
@@ -718,6 +734,47 @@ ui <- page_sidebar(
                                     ),
 
                                     plotOutput("eval_heatmap", height = "600px")
+                              ),
+
+                              accordion_panel(
+                                    "Climate models",
+                                    helpText("This module helps you choose among climate models. For every
+                                             available scenario and GCM, it plots the projected climate change
+                                             (future minus historical) as a trajectory across time periods, so
+                                             you can see which models are hot/dry, warm/wet, and so on, and how
+                                             the spread fans out over eras and emissions scenarios. Deltas are
+                                             shown in each variable's native units. Models in your current
+                                             ensemble selection (set in the left sidebar) are drawn at full
+                                             opacity, others faded. The x and y variables can be changed
+                                             without re-clicking Update."), hr(),
+                                    layout_column_wrap(
+                                          width = 1/2,
+                                          selectInput("model_delta_region", "Summarize over",
+                                                      choices = c("Modeling domain" = "domain",
+                                                                  "Focal site"      = "site",
+                                                                  "Study area"      = "polygon"),
+                                                      selected = "domain") %>%
+                                                tooltip("Region over which deltas are summarized. 'Modeling domain'
+                                                        averages over the current bounding box; 'Focal site' samples
+                                                        at the clicked site; 'Study area' averages over the uploaded
+                                                        polygon."),
+                                          div(style = "padding-top: 1.9rem;",
+                                              actionButton("model_delta_update", "Update chart") %>%
+                                                    tooltip("Recompute the chart for the current axis variables and
+                                                            summary region. The chart does not update automatically,
+                                                            since computing deltas across the full model ensemble is
+                                                            slow."))
+                                    ),
+                                    plotOutput("model_delta_plot"),
+                                    layout_column_wrap(
+                                          width = 1/2,
+                                          selectInput("model_delta_x", "X variable",
+                                                      choices = clim_vars()) %>%
+                                                tooltip("Climate variable for the x-axis (delta = future - historical)."),
+                                          selectInput("model_delta_y", "Y variable",
+                                                      choices = clim_vars()) %>%
+                                                tooltip("Climate variable for the y-axis (delta = future - historical).")
+                                    )
                               )
                         )
 
@@ -991,6 +1048,24 @@ server <- function(input, output, session) {
                               selected = choices[1])
       }, ignoreInit = TRUE)
 
+      ## Seed the climate-model chart's x/y axis variables from the user's
+      ## left-sidebar climate-variable selection. Done once, on the first
+      ## populated value of input$clim_vars, so it provides a sensible default
+      ## (the first two analog variables) without clobbering a deliberate axis
+      ## choice the user makes later. The dropdowns still offer all six
+      ## variables -- only the initial default tracks the sidebar.
+      .model_delta_axes_seeded <- reactiveVal(FALSE)
+      observeEvent(input$clim_vars, {
+            if (isTRUE(.model_delta_axes_seeded())) return()
+            cv <- input$clim_vars
+            req(length(cv) >= 1)
+            vx <- cv[1]
+            vy <- if (length(cv) >= 2) cv[2] else cv[1]
+            updateSelectInput(session, "model_delta_x", selected = vx)
+            updateSelectInput(session, "model_delta_y", selected = vy)
+            .model_delta_axes_seeded(TRUE)
+      })
+
       ## Dynamic snap-to-range button (label reflects focal entity)
       output$snap_focal_btn <- renderUI({
             switch(input$track,
@@ -1117,11 +1192,15 @@ server <- function(input, output, session) {
       # scenarios. Used as the source for both the modeling grid (via clim())
       # and for plot-level climate extraction (in pool(), site_analogs(), and
       # eval_var_set()).
-      # Active scenario filename, reconstructed from the three scenario inputs.
-      # If the corresponding file doesn't exist on disk (partial factorial),
-      # surfaces a user-visible message via validate() rather than silently
-      # failing — downstream outputs (the map, the focal-site plots, etc.)
-      # will display this message instead of erroring.
+
+      # Active scenario filename(s), reconstructed from the three scenario
+      # inputs. scenario_model may hold multiple GCMs; this returns one path
+      # per selected model (the future raster is later averaged across them
+      # to form a model ensemble). Strict: if ANY selected combination is
+      # missing a file on disk, surfaces a user-visible message via validate()
+      # naming the missing models, rather than silently averaging a subset.
+      # Downstream outputs (the map, the focal-site plots, etc.) display the
+      # message instead of erroring.
       scenario_file <- reactive({
             req(isTruthy(input$scenario_ssp),
                 isTruthy(input$scenario_period),
@@ -1129,20 +1208,40 @@ server <- function(input, output, session) {
             f <- paste0(input$scenario_ssp, "_",
                         input$scenario_period, "_",
                         input$scenario_model, ".tif")
-            path <- file.path("data/clim_future", f)
-            shiny::validate(need(file.exists(path),
-                                 "Selected scenario combination is not available. Try a different emissions pathway, era, or climate model."))
-            path
+            paths <- file.path("data/clim_future", f)
+            exists <- file.exists(paths)
+
+            shiny::validate(need(
+                  all(exists),
+                  if (length(paths) == 1) {
+                        "Selected scenario combination is not available. Try a different emissions pathway, era, or climate model."
+                  } else {
+                        paste0("No data for these model(s) at the selected pathway/era: ",
+                               paste(toupper(input$scenario_model[!exists]), collapse = ", "),
+                               ". Deselect them or choose a different pathway/era.")
+                  }))
+            paths
       })
 
       clim_pool <- reactive({
-            # Resolve scenario_file() at the top level so a req() short-circuit
-            # (e.g., user selected a (ssp, period, model) combination whose
-            # file doesn't exist) propagates as a clean reactive cancellation
+            # Resolve scenario_file() at the top level so a req()/validate()
+            # short-circuit (e.g., no selected (ssp, period, model) combination
+            # exists on disk) propagates as a clean reactive cancellation
             # rather than an rast() argument-evaluation error.
             sf <- scenario_file()
             r_hst <- rast("data/clim_historical.tif")[[input$clim_vars]]
-            r_fut <- rast(sf)[[input$clim_vars]]
+
+            # scenario_file() may return multiple paths (one per selected GCM).
+            # Read each, subset to the active climate variables, and average
+            # layer-wise to form a model ensemble. Subsetting *before* the sum
+            # guarantees layers align by position == name across models, since
+            # raster addition is positional. Reduce() (vs. do.call("+", ...))
+            # is used so the single-model case is a clean no-op rather than an
+            # error from calling `+` with one argument.
+            fut_list <- lapply(sf, function(p) rast(p)[[input$clim_vars]])
+            r_fut <- Reduce(`+`, fut_list) / length(fut_list)
+            names(r_fut) <- input$clim_vars   # Reduce()/`+` can drop layer names
+
             list(hst = r_hst, fut = r_fut)
       })
 
@@ -1159,6 +1258,196 @@ server <- function(input, output, session) {
       })
 
 
+      ## CLIMATE MODEL SELECTOR -------------------------------------
+
+      # Per-(scenario x era x model) climate deltas (future - historical) for
+      # the model-chooser module. Independent of input$clim_vars, the scenario
+      # selection, and the AIM pipeline: reads ALL climate variables straight
+      # from the raw rasters for *every* future file on disk, so the chart
+      # shows the full ensemble as time trajectories rather than a single
+      # selection snapshot. Extracting every variable (rather than just the
+      # current axis pair) lets the user re-pick chart axes with no recompute.
+      #
+      # Deltas are back-converted from standardized (z-score) units -- how the
+      # rasters are stored -- to native climate units by multiplying by each
+      # variable's SD; see clim_units / clim_scales.
+      #
+      # The region over which each delta is summarized is user-controlled
+      # (input$model_delta_region): the modeling-domain bbox, the focal site,
+      # or the uploaded study-area polygon.
+      #
+      # Cost: one raw future-raster read per future file -- the full ensemble,
+      # so this is heavy. It is therefore gated behind the "Update chart"
+      # button via bindEvent(): nothing recomputes until the user asks, even
+      # if the summary region changes in the meantime. Axis-variable changes
+      # never recompute -- all variables are already extracted, so the plot
+      # just reselects columns. bindCache() underneath still earns its place:
+      # re-clicking Update after returning to a previously-seen region is a
+      # cache hit rather than a re-read. (reactive + bindCache + bindEvent is
+      # the composable equivalent of an eventReactive that also caches.)
+
+      # Label used for the synthetic zero-delta "historical" anchor that roots
+      # every model trajectory at the origin.
+      .hist_era_label <- "1991-2010 (historical)"
+
+      model_deltas <- reactive({
+            region <- input$model_delta_region
+            req(isTruthy(region))
+
+            shiny::validate(need(nrow(scenario_meta) > 0,
+                                 "No future climate files found in data/clim_future/."))
+
+            if (region == "site") {
+                  shiny::validate(need(!is.null(site$x) && !is.null(site$y),
+                                       "Click the map to select a focal site, or choose a different summary region."))
+            } else if (region == "polygon") {
+                  shiny::validate(need(isTruthy(polygon_upload_active()),
+                                       "Upload a study-area polygon, or choose a different summary region."))
+            }
+
+            # Extract ALL climate variables (not just the current axis pair),
+            # so the user can re-pick chart axes without triggering a recompute
+            # -- the plot just reselects columns from the cached result. One
+            # extra cost is reading 6 raster layers per file instead of 2,
+            # which is minor next to the per-file I/O.
+            all_vars <- clim_vars()
+            hst <- rast("data/clim_historical.tif")[[all_vars]]
+
+            # Region geometry resolved once, outside the per-file loop.
+            bb_ext <- ext(c(input$bbox_x, input$bbox_y))
+            poly_vect <- if (region == "polygon") {
+                  terra::vect(st_transform(user_polygon(), crs(hst)))
+            } else NULL
+
+            # Summarize a (future - historical) delta SpatRaster to a named
+            # numeric vector, one value per climate variable.
+            summarize_delta <- function(delta) {
+                  if (region == "site") {
+                        v <- terra::extract(delta, cbind(site$x, site$y),
+                                            method = "bilinear")
+                        stats::setNames(as.numeric(v[1, ]), names(delta))
+                  } else if (region == "polygon") {
+                        v <- terra::extract(delta, poly_vect, fun = "mean",
+                                            na.rm = TRUE, ID = FALSE)
+                        stats::setNames(as.numeric(v[1, ]), names(delta))
+                  } else {
+                        terra::global(terra::crop(delta, bb_ext), "mean",
+                                      na.rm = TRUE)[, 1] %>%
+                              stats::setNames(names(delta))
+                  }
+            }
+
+            # Per-variable SD for back-converting standardized deltas to native
+            # units. mean cancels in a difference, so only SD is needed. A
+            # missing scale entry falls back to 1 (delta stays standardized).
+            var_sd <- vapply(all_vars, function(v) {
+                  s <- clim_scales[[v]]$sd
+                  if (is.null(s) || !is.finite(s)) 1 else s
+            }, numeric(1))
+
+            rows <- lapply(seq_len(nrow(scenario_meta)), function(i) {
+                  m <- scenario_meta[i, ]
+                  fut <- rast(file.path("data/clim_future", m$file))[[all_vars]]
+                  d <- summarize_delta(fut - hst)
+                  # Back-convert each delta from z-score units to native units.
+                  d <- d[all_vars] * var_sd
+                  tibble::tibble(scenario = m$ssp, scenario_label = m$ssp_label,
+                                 era = m$period, model = m$model,
+                                 model_label = m$model_label) %>%
+                        bind_cols(tibble::as_tibble(as.list(d)))
+            })
+            futures <- dplyr::bind_rows(rows)
+
+            # Synthetic historical anchor: one zero-delta row per
+            # (scenario x model) trajectory, so every path starts at the
+            # origin. Era label is the constant defined above.
+            zero_delta <- stats::setNames(as.list(rep(0, length(all_vars))),
+                                          all_vars)
+            anchors <- futures %>%
+                  distinct(scenario, scenario_label, model, model_label) %>%
+                  mutate(era = .hist_era_label) %>%
+                  bind_cols(tibble::as_tibble(zero_delta)[rep(1, nrow(.)), ])
+
+            bind_rows(anchors, futures) %>%
+                  # Era ordering: synthetic historical first, then future
+                  # periods chronologically (string sort works for "YYYY-YYYY").
+                  mutate(era = factor(era,
+                                      levels = c(.hist_era_label,
+                                                 sort(unique(futures$era)))))
+      }) %>%
+            bindCache(input$model_delta_region,
+                      input$bbox_x, input$bbox_y,
+                      site$x, site$y,
+                      polygon_upload_active()) %>%
+            bindEvent(input$model_delta_update)
+
+      output$model_delta_plot <- renderPlot({
+            d <- model_deltas()
+
+            # Before the first "Update chart" click, model_deltas() is NULL
+            # (bindEvent gate). Show an instruction rather than a blank panel.
+            if (is.null(d) || nrow(d) == 0) {
+                  return(
+                        ggplot() +
+                              annotate("text", x = 0, y = 0,
+                                       label = "Choose a summary region, then click \u201cUpdate chart\u201d.",
+                                       color = "gray40", size = 5) +
+                              theme_void()
+                  )
+            }
+
+            # Axes: the per-variable delta columns selected by the dropdowns.
+            # Changing axes re-renders from the cached data with no recompute.
+            vx <- input$model_delta_x
+            vy <- input$model_delta_y
+            req(vx %in% names(d), vy %in% names(d))
+            d$dx <- d[[vx]]
+            d$dy <- d[[vy]]
+
+            # Axis labels in native units (deltas are back-converted from
+            # z-scores in model_deltas). Fall back to "(standardized)" if a
+            # variable has no unit entry.
+            unit_lab <- function(v) {
+                  u <- unname(clim_units[v])
+                  if (is.null(u) || is.na(u)) "standardized" else u
+            }
+
+            # Selected models (current GCM ensemble) are drawn at full opacity;
+            # non-selected trajectories are faded to 0.5 so the active ensemble
+            # stands out without needing in-plot text labels.
+            d$selected <- d$model %in% input$scenario_model
+
+            # Shape palette: one glyph per era, generated to fit however many
+            # eras exist (filled square / diamond / circle / triangle, then
+            # cycling) rather than a hardcoded 4-value scale.
+            eras <- levels(d$era)
+            shape_vals <- stats::setNames(
+                  rep(c(15, 18, 16, 17), length.out = length(eras)), eras)
+
+            ggplot(d, aes(dx, dy,
+                          color = model_label,
+                          group = interaction(scenario, model))) +
+                  geom_hline(yintercept = 0, color = "gray70", linewidth = .3) +
+                  geom_vline(xintercept = 0, color = "gray70", linewidth = .3) +
+                  geom_path(aes(alpha = selected)) +
+                  geom_point(aes(shape = era, size = era, alpha = selected)) +
+                  facet_wrap(~ scenario_label) +
+                  scale_shape_manual(values = shape_vals) +
+                  scale_size_manual(values = stats::setNames(
+                        seq(1.5, 3.5, length.out = length(eras)), eras)) +
+                  scale_alpha_manual(values = c(`TRUE` = 1, `FALSE` = 0.5),
+                                     guide = "none") +
+                  coord_cartesian(clip = "off") +
+                  theme(legend.position = "top",
+                        legend.direction = "vertical",
+                        strip.text = element_text(color = "white"),
+                        strip.background = element_rect(fill = "black", color = "black")) +
+                  labs(x = paste0("\u0394 ", vx, " (", unit_lab(vx), ")"),
+                       y = paste0("\u0394 ", vy, " (", unit_lab(vy), ")"),
+                       color = "Climate model", shape = "Era", size = "Era")
+      })
+
+
       pool <- reactive({
             req(plot_occ())
             xy <- plot_occ()[, c("x", "y")]
@@ -1168,8 +1457,8 @@ server <- function(input, output, session) {
             # coarsened cell, and means pool() doesn't depend on the modeling
             # grid (input$clim_agg) or the bbox crop.
             cp <- clim_pool()
-            clim_hst <- extract(cp$hst, xy, ID = FALSE, method = "bilinear")
-            clim_fut <- extract(cp$fut, xy, ID = FALSE, method = "bilinear")
+            clim_hst <- terra::extract(cp$hst, xy, ID = FALSE, method = "bilinear")
+            clim_fut <- terra::extract(cp$fut, xy, ID = FALSE, method = "bilinear")
             list(index_hst = build_analog_index(cbind(xy, clim_hst), coord_type = "lonlat", index_res = 8),
                  index_fut = build_analog_index(cbind(xy, clim_fut), coord_type = "lonlat", index_res = 8),
                  clim_hst = clim_hst,
@@ -1212,8 +1501,8 @@ server <- function(input, output, session) {
             xy <- t(as.matrix(c(x = site$x, y = site$y), nrow = 1))
             # Extract from raw rasters to match pool() (consistent scaling).
             cp <- clim_pool()
-            hst <- cbind(xy, extract(cp$hst, xy, method = "bilinear"))
-            fut <- cbind(xy, extract(cp$fut, xy, method = "bilinear"))
+            hst <- cbind(xy, terra::extract(cp$hst, xy, method = "bilinear"))
+            fut <- cbind(xy, terra::extract(cp$fut, xy, method = "bilinear"))
 
             max_clim <- if(input$filter_clim) input$theta_clim * 3 else NULL
 
@@ -2297,7 +2586,7 @@ server <- function(input, output, session) {
 
             po <- plot_occ()
             xy <- po[, c("x", "y")]
-            clim_hst <- extract(clim_r, xy, ID = FALSE, method = "bilinear")
+            clim_hst <- terra::extract(clim_r, xy, ID = FALSE, method = "bilinear")
             d <- cbind(xy, clim_hst)
             values <- response_values()
 
