@@ -11,7 +11,7 @@ library(shinybusy)
 library(leaflet.extras2)
 library(sf)
 library(leafgl)
-library(circuitscaper) # renv::install("matthewkling/circuitscaper")
+library(circuitscaper)
 
 
 ## global setup ##
@@ -503,18 +503,13 @@ ui <- page_sidebar(
                   ),
 
                   accordion_panel(
-                        "Analog bandwidths",
+                        "Analog settings",
                         helpText("Analogs are weighted using Gaussian kernels based on climatic and geographic distances from a site.
                                  Bandwidths specify the standard deviations of these kernels. Plots farther than 3 stdevs
                                  are considered non-analog and excluded."), hr(),
                         sliderInput("theta_geog", "Geographic bandwidth (km)", 5, 100, value = 30),
                         sliderInput("theta_clim", "Climate bandwidth (z)", .05, .5, value = .1) %>%
-                              tooltip("Climate bandwidth units are in standard deviations relative to climate variation across all FIA plots in the contiguous US")
-                  ),
-
-                  accordion_panel(
-                        "Model outputs",
-                        helpText("Choose results to display or export"), hr(),
+                              tooltip("Climate bandwidth units are in standard deviations relative to climate variation across all FIA plots in the contiguous US"),
                         selectInput("summary_stat", "Summary statistic", c("weighted mean", "weighted sum")) %>%
                               tooltip(HTML("How to summarize the focal variable across analog FIA plots.<br><br>
                                         <dl style='margin:0;'>
@@ -522,13 +517,50 @@ ui <- page_sidebar(
                                             <dd>Expected conditions given climate and location. Can be high even when analogs are few and distant.</dd>
                                             <dt>Weighted sum</dt>
                                             <dd>Propagule pressure potential: suitability weighted by accessibility to currently-occupied analog plots.</dd>
-                                        </dl>")),
+                                        </dl>"))
+                  ),
+
+                  accordion_panel(
+                        "Connectivity",
+                        helpText("Settings for circuit-based connectivity modeling between historical (source)
+                                 and future (target) FIA surfaces. To view connectivity results, select
+                                 'connectivity' as the raster variable under 'Map layer'."), hr(),
+                        selectInput("cs_sources", "Origin electrodes (sources)", c("grid cells", "FIA plots", "selected site")) %>%
+                              tooltip("Sites where current is injected. If `grid cells` or `FIA plots` is selected, current is injected
+                                      in proportion to modeled or observed (respectively) values of the selected FIA variable.
+                                      If `selected site` is chosen, current is injected only at the focal site."),
+                        selectInput("cs_targets", "Destination electrodes (target grounds)", c("grid cells", "FIA plots", "selected site")) %>%
+                              tooltip("Grounding sites that 'pull' current and allow it to exit the circuit.
+                                      If `grid cells` or `FIA plots` is selected, ground conductance is proportional to modeled values
+                                      of the selected FIA variable. If `selected site` is chosen, the focal site."),
+                        selectInput("cs_conductance_layer", "Horizontal conductance", c("suitability", "wind", "suitability * wind", "uniform")) %>%
+                              tooltip("The inverse of landscape resistance, horizontal conductance determines how easily current can flow across a site.
+                                      `Suitability` models conductance proportional to the mean of historical and future FIA raster values.
+                                      `Wind` models conductance proportional to the frequency and speed with which wind blows toward targets."),
+                        selectInput("cs_loss_layer", "Loss (non-target grounds)", c("none", "uniform", "suitability" = "mean suitability")) %>%
+                              tooltip("Choose whether and how to model current 'leakage' representing dispersers that are removed from the pool
+                                      (via mortality or permanent settlement) before reaching target grounds."),
+                        sliderInput("cs_conductance_scale", "log10 conductance scale", -2, 2, value = 0, step = .1) %>%
+                              tooltip("Relative strength of horizontal conductance, compared to source, target, and loss components."),
+                        sliderInput("cs_loss_scale", "log10 loss scale", -3, 2, value = -1, step = .1) %>%
+                              tooltip("Relative strength of loss conductance, compared to source, target, and horizontal components.")
+                  ),
+
+                  accordion_panel(
+                        "Map layer",
+                        helpText("Choose which model results are drawn on the map."), hr(),
                         selectInput("stat", "Raster variable", c("FIA variable", "effective sample size" = "ESS",
-                                                                 "focal site similarity", cs_stat_names)) %>%
+                                                                 "focal site similarity", "connectivity")) %>%
                               tooltip(HTML("<dl style='margin:0;'>
                                               <dt>FIA variable</dt> <dd>Interpolated values for the plot variable selected above</dd>
                                               <dt>Effective sample size</dt> <dd>Effective number of FIA plots within climatic and geographic range, accounting for weights</dd>
                                               <dt>Focal site similarity</dt> <dd>Climatic distance to the site selected on map, based on the selected analog direction</dd>
+                                              <dt>Connectivity</dt> <dd>Circuit-based connectivity outputs between historical and future surfaces; choose the specific connectivity variable below</dd>
+                                          </dl>")),
+                        conditionalPanel(
+                              condition = "input.stat == 'connectivity'",
+                              selectInput("cs_stat", "Connectivity variable", cs_stat_names) %>%
+                                    tooltip(HTML("<dl style='margin:0;'>
                                               <dt>Current flow</dt> <dd>Total current passing through each cell; high values indicate important range shift corridors</dd>
                                               <dt>Current on target</dt> <dd>Current delivered to destination grounds; shows where dispersers successfully reach future-suitable habitat</dd>
                                               <dt>Current loss</dt> <dd>Current lost to non-target grounds; represents dispersers removed via mortality or settlement before reaching destinations</dd>
@@ -537,17 +569,14 @@ ui <- page_sidebar(
                                               <dt>Voltage</dt> <dd>How connected each cell is to source populations; high values indicate greater accessibility for dispersers</dd>
                                               <dt>Conductance</dt> <dd>Model input: ease of movement across the landscape (inverse of resistance)</dd>
                                               <dt>Loss</dt> <dd>Model input: rate at which dispersers are removed from the migrating pool at each cell</dd>
-                                          </dl>")),
+                                          </dl>"))
+                        ),
                         selectInput("time", "Raster variable timeframe", c("historical", "future", "delta")) %>%
                               tooltip("Choose whether to display historical or future model predictions, or their difference.
-                                      Only relevant for `FIA varibale` and `ESS` raster variables.")
-                  ),
-
-                  accordion_panel(
-                        "Cartography",
+                                      Only relevant for `FIA variable` and `ESS` raster variables."),
+                        hr(),
                         selectInput("vector", "Vector layer",
                                     c("occupied FIA plots", "all FIA plots", "focal site analogs", "current animation", "current field", "none")) %>%
-                              tooltip("Select which point or line layer is displayed.") %>%
                               tooltip(HTML("Select which point or line layer is displayed:<br><br>
                                           <dl style='margin:0;'>
                                               <dt>Occupied FIA plots</dt> <dd>Plots where the selected species was recorded</dd>
@@ -555,7 +584,11 @@ ui <- page_sidebar(
                                               <dt>Focal site analogs</dt> <dd>Plots within climatic and geographic range of the selected site</dd>
                                               <dt>Current animation</dt> <dd>Animation with particle movement showing direction and magnitude of mean current flow</dd>
                                               <dt>Current field</dt> <dd>Vector field showing showing direction and magnitude of mean current flow</dd>
-                                          </dl>")),
+                                          </dl>"))
+                  ),
+
+                  accordion_panel(
+                        "Cartography",
                         sliderInput("vector_scale", "Point/line size", -1, 1, 0, step = .1) %>%
                               tooltip("Use this slider to adjust the size of FIA plot markers, or the length of current lines"),
                         sliderInput("rast_opacity", "Raster opacity", 0, 1, .8, step = .01),
@@ -566,8 +599,9 @@ ui <- page_sidebar(
                                     choices = c("default", "viridis", "magma", "plasma", "inferno",
                                                 "RdYlBu", "Spectral", "RdBu", "BrBG"),
                                     selected = "default") %>%
-                              tooltip("Override the default palette for the current raster variable"),
-                        input_switch("show_site", "Show focal site", TRUE)
+                              tooltip("Override the default palette for the current raster variable. When the raster shows the historical or future FIA variable, the FIA plot markers and focal-site scatterplots adopt the same palette."),
+                        input_switch("show_site", "Show focal site", TRUE),
+                        input_switch("show_polygon", "Show study area polygon", TRUE)
                   ),
 
                   accordion_panel(
@@ -663,34 +697,6 @@ ui <- page_sidebar(
                               ),
 
                               accordion_panel(
-                                    "Landscape connectivity",
-                                    helpText("This tool models circuit-based connectivity between historical (source) and future (target) FIA surfaces."), hr(),
-
-                                    layout_column_wrap(
-                                          width = 1/2,
-                                          selectInput("cs_sources", "Origin electrodes (sources)", c("grid cells", "FIA plots", "selected site")) %>%
-                                                tooltip("Sites where current is injected. If `grid cells` or `FIA plots` is selected, current is injected
-                                                        in proportion to modeled or observed (respectively) values of the selected FIA variable.
-                                                        If `selected site` is chosen, current is injected only at the focal site."),
-                                          selectInput("cs_targets", "Destination electrodes (target grounds)", c("grid cells", "FIA plots", "selected site")) %>%
-                                                tooltip("Grounding sites that 'pull' current and allow it to exit the circuit.
-                                                        If `grid cells` or `FIA plots` is selected, ground conductance is proportional to modeled values
-                                                        of the selected FIA variable. If `selected site` is chosen, the focal site."),
-                                          selectInput("cs_conductance_layer", "Horizontal conductance", c("suitability", "wind", "suitability * wind", "uniform")) %>%
-                                                tooltip("The inverse of landscape resistance, horizontal conductance determines how easily current can flow across a site.
-                                                        `Suitability` models conductance proportional to the mean of historical and future FIA raster values.
-                                                        `Wind` models conductance proportional to the frequency and speed with which wind blows toward targets."),
-                                          selectInput("cs_loss_layer", "Loss (non-target grounds)", c("none", "uniform", "suitability" = "mean suitability")) %>%
-                                                tooltip("Choose whether and how to model current 'leakage' representing dispersers that are removed from the pool
-                                                        (via mortality or permanent settlement) before reaching target grounds."),
-                                          sliderInput("cs_conductance_scale", "log10 conductance scale", -2, 2, value = 0, step = .1) %>%
-                                                tooltip("Relative strength of horizontal conductance, compared to source, target, and loss components."),
-                                          sliderInput("cs_loss_scale", "log10 loss scale", -3, 2, value = -1, step = .1) %>%
-                                                tooltip("Relative strength of loss conductance, compared to source, target, and horizontal components.")
-                                    )
-                              ),
-
-                              accordion_panel(
                                     "Model evaluation",
                                     helpText("This module uses cross-validation to assess the accuracy of contemporary AIM predictions for the selected species and FIA variable.
                                              The first plot shows predicted versus observed values for the currently-selected model parameters."), br(),
@@ -772,14 +778,13 @@ server <- function(input, output, session) {
                   c(0, Inf)
             } else if (input$stat == "focal site similarity") {
                   c(0, Inf)
-            } else if (input$stat == "current direction") {
-                  c(0, 360)
-            } else if (input$stat %in% cs_stat_names) {
-                  # other connectivity stats: non-negative magnitudes
-                  c(0, Inf)
-            } else if (input$stat %in% c("current animation", "current field")) {
-                  # delta of FIA variable — real-valued
-                  c(-Inf, Inf)
+            } else if (input$stat == "connectivity") {
+                  if (input$cs_stat == "current direction") {
+                        c(0, 360)
+                  } else {
+                        # other connectivity stats: non-negative magnitudes
+                        c(0, Inf)
+                  }
             } else if (input$stat == "FIA variable") {
                   if (input$time == "delta") {
                         c(-Inf, Inf)
@@ -792,6 +797,42 @@ server <- function(input, output, session) {
                   c(-Inf, Inf)
             }
       })
+
+      # TRUE when the FIA-plot markers (map and focal-site scatterplots) should
+      # adopt the raster's palette. The markers always show historical FIA
+      # response on a [0, max] sequential scale; they're commensurable with the
+      # raster only when the raster is also showing FIA response on a
+      # sequential scale -- i.e. stat == "FIA variable" and time is historical
+      # or future (delta flips the raster to a diverging zero-centered scale).
+      # In all other cases the markers keep their own canonical gray90 -> green
+      # ramp. See palette discussion: this preserves the raster/marker
+      # alignment that holds by default without ever giving the markers an
+      # inappropriate scale.
+      marker_follows_raster_palette <- reactive({
+            input$stat == "FIA variable" && input$time != "delta"
+      })
+
+      # ggplot fill-scale equivalent of the leaflet choose_palette() logic.
+      # rast_palette values are heterogeneous: "default" -> the canonical
+      # gray90 -> green gradient; "viridis"/"magma"/"plasma"/"inferno" ->
+      # viridis options; the rest ("RdYlBu"/"Spectral"/"RdBu"/"BrBG") ->
+      # RColorBrewer palettes via scale_fill_distiller. `limits` is passed
+      # through so the scale matches the marker domain; `guide` defaults to
+      # "none" since the focal-site plots don't show a fill legend.
+      marker_fill_scale <- function(limits, guide = "none") {
+            p <- input$rast_palette
+            if (p == "default" || !marker_follows_raster_palette()) {
+                  ggplot2::scale_fill_gradientn(colors = c("gray90", green),
+                                                limits = limits, guide = guide)
+            } else if (p %in% c("viridis", "magma", "plasma", "inferno")) {
+                  ggplot2::scale_fill_viridis_c(option = p,
+                                                limits = limits, guide = guide)
+            } else {
+                  # RColorBrewer diverging/sequential palettes
+                  ggplot2::scale_fill_distiller(palette = p,
+                                                limits = limits, guide = guide)
+            }
+      }
 
 
       ## DATA SETUP -----------------------
@@ -998,7 +1039,7 @@ server <- function(input, output, session) {
 
       # for circuitscape rasters, time period must be "delta"
       observe({
-            if(input$stat %in% cs_stat_names){
+            if(input$stat == "connectivity"){
                   updateSelectInput(session, "time", selected = "delta")
             }
       })
@@ -1038,6 +1079,11 @@ server <- function(input, output, session) {
 
             # Re-draw after any raster change by taking dependency on display_layer
             display_layer()
+
+            # Visibility toggle (Cartography panel). When off, the group is
+            # already cleared above; req() stops before redrawing. Toggling
+            # back on re-fires this observer and redraws. Mirrors show_site.
+            req(input$show_polygon)
 
             req(user_polygon())
             poly <- user_polygon()
@@ -1325,7 +1371,11 @@ server <- function(input, output, session) {
                               resistance_is = "resistances", ground_is = "conductances")
 
             # Derived variables
-            current <- cs$cumulative_current %>% setNames("current_flow")
+            # cs_advanced() returns a SpatRaster with layers 'current' and
+            # 'voltage'. (Advanced mode solves a single circuit, so there is
+            # no 'cumulative_current' layer -- that name applies only to the
+            # multi-focal-node modes.)
+            current <- cs$current %>% setNames("current_flow")
             voltage <- cs$voltage
             curr_ground <- grounds %>% "*"(voltage) %>% setNames("current_ground")
             curr_dest <- electrodes()$destinations %>% "*"(voltage) %>% setNames("current_destinations")
@@ -1448,13 +1498,10 @@ server <- function(input, output, session) {
                               "delta" = 2 / (1/aim()$fut$ess + 1/aim()$bsl$ess), # harmonic mean
                               "historical" = aim()$bsl$ess,
                               "future" = aim()$fut$ess)
-            }else if(input$stat %in% c("current animation", "current field")){
-                  # show FIA delta raster for these layers
-                  r <- aim()$fut$response - aim()$bsl$response
             }else if(input$stat == "focal site similarity"){
                   r <- site_diff()
-            }else if(input$stat %in% cs_stat_names){
-                  st <- cs_stats[cs_stat_names == input$stat]
+            }else if(input$stat == "connectivity"){
+                  st <- cs_stats[cs_stat_names == input$cs_stat]
                   r <- connectivity()[[st]]
             }else{ # input$stat == "FIA variable"
                   r <- switch(input$time,
@@ -1477,8 +1524,8 @@ server <- function(input, output, session) {
                      input$summary_stat == "weighted mean"){
                         title <- paste0(title, "<br/>(m2 BA / plot)")
                   }
-                  if(input$stat %in% cs_stat_names){
-                        title <- paste0(title, " --<br/>", input$stat)
+                  if(input$stat == "connectivity"){
+                        title <- paste0(title, " --<br/>", input$cs_stat)
                   }
                   if(input$stat == "focal site similarity"){
                         title <- paste0(gsub(" analogs", "", input$analog_direction), "<br>climate distance<br>from focal site")
@@ -1511,8 +1558,7 @@ server <- function(input, output, session) {
 
             choose_palette <- function(x) if(input$rast_palette == "default") x else input$rast_palette
 
-            if(input$time == "delta" && input$stat == "FIA variable" |
-               input$stat %in% c("current animation", "current field")){
+            if(input$time == "delta" && input$stat == "FIA variable"){
                   # units are deltas
                   r <- display_layer()
                   r[is.na(r[])] <- 0 # fill non-analog NAs
@@ -1537,7 +1583,7 @@ server <- function(input, output, session) {
                         domain = dom,
                         na.color = "transparent"
                   )
-            } else if(input$stat == "current direction") {
+            } else if(input$stat == "connectivity" && input$cs_stat == "current direction") {
                   proj_method <- "ngb" # because bilinear interpolation breaks for a circular variable
                   dom <- if(input$rast_transform == "identity") c(0, 360) else mm
                   rast_pal <- colorNumeric(
@@ -1619,7 +1665,18 @@ server <- function(input, output, session) {
 
                   dom <- if(!response_is_binary()) c(0, max(pd$display, na.rm = TRUE)) else 0:1
 
-                  plot_pal <- colorNumeric(palette = c("gray90", green),
+                  # Markers follow the raster palette only when the raster is
+                  # itself showing FIA response on a sequential scale (see
+                  # marker_follows_raster_palette); otherwise the canonical
+                  # gray90 -> green ramp. colorNumeric accepts either a color
+                  # vector or a named-palette string.
+                  marker_palette <- if(input$rast_palette != "default" &&
+                                       marker_follows_raster_palette()){
+                        input$rast_palette
+                  } else {
+                        c("gray90", green)
+                  }
+                  plot_pal <- colorNumeric(palette = marker_palette,
                                            domain = dom)
                   breaks <- pretty(seq(dom[1], dom[2], length.out = 100), n = 5)
 
@@ -1776,7 +1833,7 @@ server <- function(input, output, session) {
                                  y = s[[v2]] * scl2$sd + scl2$mean),
                              shape = 22,
                              color = "#4c32a8", fill = "#4c32a8", size = 4, alpha = .5) +
-                  scale_fill_gradientn(colors = c("gray90", green), limits = dom, guide = "none") +
+                  marker_fill_scale(limits = dom) +
                   scale_shape_manual(values = 21) +
                   scale_linetype(guide = "none") +
                   facet_wrap(~ panel) +
@@ -1845,7 +1902,7 @@ server <- function(input, output, session) {
                              color = "#4c32a8", fill = "#4c32a8",
                              size = 10, alpha = .5, inherit.aes = FALSE) +
 
-                  scale_fill_gradientn(colors = c("gray90", green), limits = dom, guide = "none") +
+                  marker_fill_scale(limits = dom) +
                   scale_shape_manual(values = 22) +
                   facet_wrap(~ panel) +
                   theme(legend.position = "top",
@@ -2422,7 +2479,7 @@ server <- function(input, output, session) {
                   for(p in params){
                         out <- c(out, paste(p, input[[p]], sep = ": "))
                   }
-                  if(!input$stat %in% c("current flow", "voltage", "destination current")){
+                  if(input$stat != "connectivity"){
                         out <- out[!grepl("cs_", params)]
                   }
                   writeLines(out, file)
