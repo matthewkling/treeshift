@@ -503,7 +503,7 @@ ui <- page_sidebar(
                   ),
 
                   accordion_panel(
-                        "Analog settings",
+                        "Interpolation",
                         helpText("Analogs are weighted using Gaussian kernels based on climatic and geographic distances from a site.
                                  Bandwidths specify the standard deviations of these kernels. Plots farther than 3 stdevs
                                  are considered non-analog and excluded."), hr(),
@@ -547,7 +547,7 @@ ui <- page_sidebar(
                   ),
 
                   accordion_panel(
-                        "Map layer",
+                        "Map layers",
                         helpText("Choose which model results are drawn on the map."), hr(),
                         selectInput("stat", "Raster variable", c("FIA variable", "effective sample size" = "ESS",
                                                                  "focal site similarity", "connectivity")) %>%
@@ -589,8 +589,8 @@ ui <- page_sidebar(
 
                   accordion_panel(
                         "Cartography",
-                        sliderInput("vector_scale", "Point/line size", -1, 1, 0, step = .1) %>%
-                              tooltip("Use this slider to adjust the size of FIA plot markers, or the length of current lines"),
+                        sliderInput("vector_scale", "Vector point/line size", -1, 1, 0, step = .1) %>%
+                              tooltip("Use this slider to adjust the size of FIA plot markers or the length of current lines"),
                         sliderInput("rast_opacity", "Raster opacity", 0, 1, .8, step = .01),
                         selectInput("rast_transform", "Scale transformation",
                                     choices = c("identity", "log10", "sqrt", "uniform")) %>%
