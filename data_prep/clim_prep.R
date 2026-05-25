@@ -97,7 +97,7 @@ saveRDS(scales, "data/clim_scales.rds")
 
 for(era in c("2011_2040", "2041_2070", "2071_2100")){
       for(scenario in c("ssp126", "ssp370", "ssp585")){
-            for(model in c("gfdl-esm4")){
+            for(model in c("gfdl-esm4", "ipsl-cm6a-lr", "mpi-esm1-2-hr", "mri-esm2-0", "ukesm1-0-ll")){
                   message(paste(era, scenario, model))
 
                   outfile <- paste0("data/clim_future/",

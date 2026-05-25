@@ -18,6 +18,113 @@ library(circuitscaper)
 
 cs_setup()
 
+# Ensure the climate rasters are present locally, fetching them from the
+# GitHub release if missing. The bulky climate .tif files are not committed
+# to git; they are distributed as piggyback release assets (see README).
+#
+# Layout reconciliation: pb_download() writes every release asset by its
+# (flat) asset name into a single directory. The app, however, expects
+#   data/clim_historical.tif
+#   data/wind_quantized.tif
+#   data/clim_future/<ssp>_<period>_<model>.tif   (many files)
+# To bridge the flat release namespace and this nested layout, all assets are
+# downloaded into a temp staging dir, then sorted: the named top-level rasters
+# go to data/, and every other .tif is treated as a future-scenario raster and
+# moved to data/clim_future/. New scenario rasters therefore need no code
+# change here; only a new *non-scenario* raster would require updating
+# `top_level_rasters` below.
+ensure_climate_data <- function(repo = "matthewkling/TreeShift",
+                                tag  = "data-v1",
+                                data_dir = "data") {
+
+      future_dir <- file.path(data_dir, "clim_future")
+
+      # Top-level (non-scenario) rasters, by asset name. Anything else with a
+      # .tif extension is assumed to be a future-scenario raster.
+      top_level_rasters <- c("clim_historical.tif", "wind_quantized.tif")
+
+      # Presence test: all named top-level rasters exist, and clim_future/
+      # exists and is non-empty. (The scenario set is variable, so "non-empty
+      # directory" is the test rather than enumerating every file.)
+      have_top_level <- all(file.exists(file.path(data_dir, top_level_rasters)))
+      have_future    <- dir.exists(future_dir) &&
+            length(list.files(future_dir, pattern = "\\.tif$")) > 0
+
+      if (have_top_level && have_future) {
+            return(invisible(FALSE))   # data already present; nothing to do
+      }
+
+      message("Climate rasters missing; downloading from ", repo,
+              " release '", tag, "'. This may take several minutes...")
+
+      if (!requireNamespace("piggyback", quietly = TRUE)) {
+            stop("Package 'piggyback' is required to fetch climate data. ",
+                 "Install it with install.packages('piggyback').")
+      }
+
+      # Stage the download in a temp dir so the sort into final locations is
+      # the only step that touches data/. The staging dir is removed on exit
+      # (success or error) so a failed run leaves no partial mess behind.
+      staging <- tempfile("treeshift_climdata_")
+      dir.create(staging)
+      on.exit(unlink(staging, recursive = TRUE), add = TRUE)
+
+      # pb_download() with no `file` argument pulls every asset on the release.
+      piggyback::pb_download(repo = repo, tag = tag, dest = staging)
+
+      dir.create(future_dir, recursive = TRUE, showWarnings = FALSE)
+
+      staged <- list.files(staging, pattern = "\\.tif$", full.names = TRUE)
+      if (length(staged) == 0) {
+            stop("No .tif assets found on release '", tag, "' of ", repo, ". ",
+                 "Check the release tag and asset names at ",
+                 "https://github.com/", repo, "/releases/tag/", tag)
+      }
+
+      # Sort each staged raster to its destination: named top-level rasters to
+      # data/, everything else to data/clim_future/.
+      for (src in staged) {
+            nm   <- basename(src)
+            dest <- if (nm %in% top_level_rasters) {
+                  file.path(data_dir, nm)
+            } else {
+                  file.path(future_dir, nm)
+            }
+            if (!file.rename(src, dest)) {
+                  # file.rename() fails across filesystems (temp dir may be on
+                  # a different mount); fall back to copy-then-remove.
+                  ok <- file.copy(src, dest, overwrite = TRUE)
+                  if (!ok) stop("Failed to place climate raster: ", nm)
+                  file.remove(src)
+            }
+      }
+
+      # Verify the sort produced what the app needs, so a partial or
+      # mis-named download surfaces here rather than as a cryptic rast() error
+      # further down in global setup.
+      missing_top <- top_level_rasters[
+            !file.exists(file.path(data_dir, top_level_rasters))]
+      if (length(missing_top) > 0) {
+            stop("Climate data download is missing expected top-level raster(s): ",
+                 paste(missing_top, collapse = ", "), ". ",
+                 "Check the asset names on the release.")
+      }
+      if (length(list.files(future_dir, pattern = "\\.tif$")) == 0) {
+            stop("Climate data download produced no future-scenario rasters in ",
+                 future_dir, ".")
+      }
+
+      message("Climate rasters ready.")
+      invisible(TRUE)
+}
+
+# Fetch climate data if absent. Runs once at app process startup, before any
+# rast("data/...") call below. On the production shiny-server deployment,
+# prefer running this once as an explicit provisioning step (from an R
+# console) so app startup stays fast; this in-app call then just confirms
+# presence and returns immediately.
+ensure_climate_data()
+
 clim_vars <- function() c("tmean", "ppt", "aet", "cwd", "tmincm", "tmaxwm")
 
 # Native (un-standardized) units for each climate variable, used to label the
@@ -140,6 +247,13 @@ cs_stats <- c("current_flow", "current_destinations", "current_loss", "current_p
               "current_direction", "voltage", "conductance", "loss")
 
 theme_set(theme_bw(base_size = 16))
+
+# House style for facet strips: white text on a black background. Defined
+# once here and added to every faceted plot via `+ strip_style`. It is a
+# partial theme() (only the two strip properties), so each plot keeps its
+# own legend / axis theme settings and simply layers this on top.
+strip_style <- theme(strip.text = element_text(color = "white"),
+                     strip.background = element_rect(fill = "black", color = "black"))
 
 
 # HELPER FUNCTIONS ------------------------------------
@@ -347,11 +461,6 @@ make_spokes <- function(mag, dir, subsample = 10, arrow_scale = 0.5) {
 aggregate <- function(x, fact, ...){
       if(fact == 1) return(x)
       terra::aggregate(x, fact = fact, ...)
-}
-
-auc <- function(obs, pred){
-      if(!all(obs %in% 0:1)) return(NA)
-      as.vector(pROC::roc(obs, pred, quiet = TRUE)$auc)
 }
 
 tooltip <- function(x, ...) bslib::tooltip(x, ..., options = list(delay = list(show = 2000, hide = 100)))
@@ -727,7 +836,7 @@ ui <- page_sidebar(
                                           checkboxGroupInput("eval_params", NULL,
                                                              choiceNames = c("Test geographic bandwidths", "Test climate bandwidths", "Test climate variables"),
                                                              choiceValues = c("geog", "clim", "vars")),
-                                          selectInput("eval_stat", "Evaluation statistic",  c("R-squared", "RMSE", "delta AIC", "AUC")),
+                                          selectInput("eval_stat", "Evaluation statistic",  c("AUC", "TSS", "Brier", "R-squared", "RMSE")),
                                           sliderInput("eval_n_vars", "Max n climate vars", 1, 6, value = c(1, 2), step = 1),
                                           actionButton("optimal_params", "Apply optimal parameters"),
                                           actionButton("run_eval", "Run evaluations")
@@ -765,7 +874,6 @@ ui <- page_sidebar(
                                                             since computing deltas across the full model ensemble is
                                                             slow."))
                                     ),
-                                    plotOutput("model_delta_plot"),
                                     layout_column_wrap(
                                           width = 1/2,
                                           selectInput("model_delta_x", "X variable",
@@ -774,7 +882,8 @@ ui <- page_sidebar(
                                           selectInput("model_delta_y", "Y variable",
                                                       choices = clim_vars()) %>%
                                                 tooltip("Climate variable for the y-axis (delta = future - historical).")
-                                    )
+                                    ),
+                                    plotOutput("model_delta_plot")
                               )
                         )
 
@@ -1119,15 +1228,18 @@ server <- function(input, output, session) {
             }
       })
 
-      # Only show AUC option for binary (presence-type) variables
+      # Swap eval_stat choices to the metric set cv_performance() produces
+      # for the current response type. Binary (presence-type) responses get
+      # ranking/threshold metrics; continuous responses get error metrics.
       observe({
             if(isTruthy(input$fia_var) && input$fia_var == "presence probability"){
                   updateSelectInput(session, "eval_stat",
-                                    choices = c("R-squared", "RMSE", "delta AIC", "AUC"),
+                                    choices = c("AUC", "TSS", "Brier"),
                                     selected = "AUC")
             }else{
                   updateSelectInput(session, "eval_stat",
-                                    choices = c("R-squared", "RMSE", "delta AIC"))
+                                    choices = c("R-squared", "RMSE"),
+                                    selected = "R-squared")
             }
       })
 
@@ -1439,9 +1551,8 @@ server <- function(input, output, session) {
                                      guide = "none") +
                   coord_cartesian(clip = "off") +
                   theme(legend.position = "top",
-                        legend.direction = "vertical",
-                        strip.text = element_text(color = "white"),
-                        strip.background = element_rect(fill = "black", color = "black")) +
+                        legend.direction = "vertical") +
+                  strip_style +
                   labs(x = paste0("\u0394 ", vx, " (", unit_lab(vx), ")"),
                        y = paste0("\u0394 ", vy, " (", unit_lab(vy), ")"),
                        color = "Climate model", shape = "Era", size = "Era")
@@ -2126,9 +2237,8 @@ server <- function(input, output, session) {
                   scale_shape_manual(values = 21) +
                   scale_linetype(guide = "none") +
                   facet_wrap(~ panel) +
-                  theme(legend.position = "top",
-                        strip.text = element_text(color = "white"),
-                        strip.background = element_rect(fill = "black", color = "black")) +
+                  theme(legend.position = "top") +
+                  strip_style +
                   labs(y = v1,
                        x = v2,
                        shape = NULL)
@@ -2194,9 +2304,8 @@ server <- function(input, output, session) {
                   marker_fill_scale(limits = dom) +
                   scale_shape_manual(values = 22) +
                   facet_wrap(~ panel) +
-                  theme(legend.position = "top",
-                        strip.text = element_text(color = "white"),
-                        strip.background = element_rect(fill = "black", color = "black")) +
+                  theme(legend.position = "top") +
+                  strip_style +
                   labs(y = "Climate difference from focal site (z-score)",
                        x = "Geographic distance to focal site (km)",
                        shape = NULL)
@@ -2544,9 +2653,8 @@ server <- function(input, output, session) {
                                      breaks = legend_breaks) +
                   scale_linetype_manual(values = ltypes,
                                         breaks = legend_breaks) +
-                  theme(legend.position = "top",
-                        strip.text = element_text(color = "white"),
-                        strip.background = element_rect(fill = "black", color = "black")) +
+                  theme(legend.position = "top") +
+                  strip_style +
                   labs(x = x_lab,
                        y = NULL,
                        fill = NULL, color = NULL, linetype = NULL)
@@ -2584,50 +2692,84 @@ server <- function(input, output, session) {
             # matching pool().
             clim_r <- rast("data/clim_historical.tif")[[clim_vars]]
 
+            # Build pool (x/y + climate) and response from a SINGLE plot_occ()
+            # snapshot so the two are row-aligned. Capture plot_occ() once and
+            # derive the response from that same object rather than calling
+            # response_values() (which re-derives from plot_occ() and could,
+            # in principle, see a different value).
             po <- plot_occ()
-            xy <- po[, c("x", "y")]
+            xy <- as.data.frame(po[, c("x", "y")])
             clim_hst <- terra::extract(clim_r, xy, ID = FALSE, method = "bilinear")
             d <- cbind(xy, clim_hst)
             values <- response_values()
 
-            set.seed(123)
-            train <- sample(c(TRUE, FALSE), nrow(xy), replace = T)
+            # analog_cv() coerces `pool` internally and requires `y` to have
+            # exactly nrow(pool) rows. bilinear extraction yields NA climate
+            # for plots off the raster's edge; drop those rows from BOTH pool
+            # and response together so the row counts stay locked. (The old
+            # two-fold path tolerated mismatches because build_analog_index()
+            # never row-checked y; analog_cv() checks immediately.)
+            complete <- stats::complete.cases(d) & !is.na(values)
+            d <- d[complete, , drop = FALSE]
+            values <- values[complete]
+            stopifnot(nrow(d) == length(values))
 
-            aicc <- function(observed, predicted, k) {
-                  # note: k should be n_clim_vars + n_bandwidth_params
-                  n <- length(observed)
-                  sse <- sum((observed - predicted)^2)
-                  aic <- n * log(sse / n) + 2 * k # Basic AIC
-                  aicc <- aic + (2 * k^2 + 2 * k) / (n - k - 1) # Corrected AICc
-                  return(aicc)
-            }
+            # Single-configuration evaluation: leave-one-out CV via the
+            # analogs package's native analog_cv(), with performance metrics
+            # from cv_performance(). analog_cv() predicts each plot from a
+            # neighborhood excluding its own pool row (exclude_self, handled
+            # internally); cv_performance() then computes held-out metrics
+            # from the obs/residual columns.
+            #
+            # Note on cost: analog_cv() rebuilds the analog index internally
+            # on every call (it rejects pre-built indices by design), so the
+            # bandwidth grid below incurs one index build per cell. A direct
+            # analog_impact() call with a hoisted index cannot avoid this --
+            # exclude_self requires raw pool data, which forces an internal
+            # rebuild regardless. analog_cv() is retained here for clarity and
+            # correctness; the per-cell rebuild is an accepted cost.
+            #
+            # cv_performance() auto-classifies the response as binary
+            # (obs all in {0,1}, both classes present) or continuous and
+            # returns the corresponding metric set in long format
+            # (columns: variable, type, metric, value):
+            #   continuous -> n, rmse, mae, bias, r2
+            #   binary     -> n, auc, tss, tss_threshold, brier
+            # `r2` is out-of-sample R-squared (1 - SS_res/SS_tot), which can
+            # be negative -- unlike the old cor(pred,obs)^2. There is no AIC
+            # equivalent: AIC is an in-sample criterion and cv_performance()
+            # is a held-out CV tool, so `delta AIC` was dropped from the UI.
+            eval <- function(theta_clim, theta_geog, summarize = TRUE){
+                  cv <- suppressWarnings(analogs::analog_cv(
+                        fun       = analogs::analog_impact,
+                        pool      = d,
+                        y         = values,
+                        cv_method = "loo",
+                        max_clim  = theta_clim * 3,
+                        max_geog  = theta_geog * 3,
+                        stat      = "weighted_mean",
+                        kernel    = "gaussian_joint",
+                        theta     = c(theta_clim, theta_geog)))
 
-            eval <- function(theta_clim, theta_geog, x, index, values_train, values_test, summarize = TRUE){
-                  aim <- suppressWarnings(analogs::analog_impact(
-                        x = x,
-                        pool = index,
-                        max_clim = theta_clim * 3,
-                        max_geog = theta_geog * 3,
-                        stat = "weighted_mean",
-                        kernel = "gaussian_joint",
-                        theta = c(theta_clim, theta_geog),
-                        y = values_train)) %>%
-                        rename(pred = weighted_mean) %>%
-                        mutate(obs = values_test) %>%
-                        na.omit()
-                  if(summarize){
-                        aim <- aim  %>%
-                              summarize(rsq = cor(pred, obs)^2,
-                                        rmse = sqrt(mean((obs - pred)^2)),
-                                        daicc = aicc(obs, pred, length(clim_vars) + 2),
-                                        auc = auc(obs, pred)) %>%
-                              mutate(theta_clim = theta_clim,
-                                     theta_geog = theta_geog)
+                  if(!summarize){
+                        # Scatterplot path: return per-plot obs/pred. cv$obs
+                        # and cv$residual are one row per pool plot; held-out
+                        # prediction is obs - residual.
+                        return(tibble::tibble(obs  = cv$obs,
+                                              pred = cv$obs - cv$residual) %>%
+                                     na.omit())
                   }
-                  return(aim)
-            }
 
-            index <- build_analog_index(d[train,], coord_type = "lonlat", index_res = 8)
+                  # Heatmap path: native CV performance metrics. Rename
+                  # `metric` -> `stat` so downstream consumers (eval_heatmap,
+                  # optimal_params) keep their existing column vocabulary,
+                  # and tag with the bandwidth coordinates for this cell.
+                  analogs::cv_performance(cv) %>%
+                        dplyr::rename(stat = metric) %>%
+                        dplyr::select(stat, value) %>%
+                        dplyr::mutate(theta_clim = theta_clim,
+                                      theta_geog = theta_geog)
+            }
 
             if(vary_bandwidths){
                   mult <- c(.25, .5, 1, 2, 4)
@@ -2636,17 +2778,11 @@ server <- function(input, output, session) {
                   params <- tidyr::expand_grid(theta_clim = input$theta_clim * clim_mult,
                                                theta_geog = input$theta_geog * geog_mult)
 
-                  e <- purrr::pmap(params, eval,
-                                   x = d[!train,], index = index,
-                                   values_train = values[train], values_test = values[!train]) %>%
+                  e <- purrr::pmap(params, eval) %>%
                         purrr::list_rbind() %>%
-                        mutate(daicc = daicc - min(daicc)) %>% # convert AIC to delta AIC
-                        tidyr::gather(stat, value, rsq, rmse, daicc, auc) %>%
                         mutate(clim_vars = paste(clim_vars, collapse = "_"))
             }else{
                   e <- eval(input$theta_clim, input$theta_geog,
-                            x = d[!train,], index = index,
-                            values_train = values[train], values_test = values[!train],
                             summarize = FALSE)
             }
 
@@ -2674,13 +2810,17 @@ server <- function(input, output, session) {
 
             metric <- switch(input$eval_stat,
                              "RMSE" = "rmse",
-                             "R-squared" = "rsq",
-                             "delta AIC" = "daicc",
-                             "AUC" = "auc")
+                             "R-squared" = "r2",
+                             "AUC" = "auc",
+                             "TSS" = "tss",
+                             "Brier" = "brier")
+
+            # Metrics where larger is better; the rest are minimized.
+            higher_better <- c("r2", "auc", "tss")
 
             opt <- model_eval$comparison %>% ungroup() %>%
                   filter(stat == metric) %>%
-                  mutate(value = ifelse(stat %in% c("rsq", "auc"), value, -value)) %>%
+                  mutate(value = ifelse(stat %in% higher_better, value, -value)) %>%
                   filter(value == max(value))
 
             updateSliderInput(session, "theta_geog", value = opt$theta_geog)
@@ -2693,11 +2833,13 @@ server <- function(input, output, session) {
 
             metric <- switch(input$eval_stat,
                              "RMSE" = "rmse",
-                             "R-squared" = "rsq",
-                             "delta AIC" = "daicc",
-                             "AUC" = "auc")
+                             "R-squared" = "r2",
+                             "AUC" = "auc",
+                             "TSS" = "tss",
+                             "Brier" = "brier")
 
-            opt <- if(metric %in% c("rsq", "auc")) 1 else -1
+            # Metrics where larger is better; the rest are minimized.
+            opt <- if(metric %in% c("r2", "auc", "tss")) 1 else -1
 
             e <- model_eval$comparison %>% ungroup() %>%
                   filter(stat == metric) %>%
@@ -2718,6 +2860,7 @@ server <- function(input, output, session) {
                   scale_fill_viridis_c() +
                   guides(fill = guide_colorbar(barwidth = 12)) +
                   theme(legend.position = "bottom") +
+                  strip_style +
                   labs(y = "climate bandwidth (z)",
                        x = "geographic bandwidth (km)",
                        fill = paste0(input$eval_stat, " (", input$fia_var, ")"))

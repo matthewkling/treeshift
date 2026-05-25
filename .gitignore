@@ -7,3 +7,6 @@ notes
 .DS_Store
 treeshift.Rproj
 sandbox
+data/clim_future
+data/clim_historical.tif
+data/wind_quantized.tif
