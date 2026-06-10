@@ -33,7 +33,7 @@ cs_setup()
 # moved to data/clim_future/. New scenario rasters therefore need no code
 # change here; only a new *non-scenario* raster would require updating
 # `top_level_rasters` below.
-ensure_climate_data <- function(repo = "matthewkling/TreeShift",
+ensure_climate_data <- function(repo = "matthewkling/treeshift",
                                 tag  = "data-v1",
                                 data_dir = "data") {
 
@@ -648,7 +648,7 @@ ui <- page_sidebar(
 
                   accordion_panel(
                         "Connectivity",
-                        helpText("Settings for circuit-based landscape connectivity modeling between historical (source) and future (target) FIA surfaces.
+                        helpText("Settings for optional circuit-based landscape connectivity modeling between historical (source) and future (target) FIA surfaces.
                                  To view connectivity results, select 'connectivity' as the raster variable under 'Map layer'."), hr(),
                         selectInput("cs_sources", "Origin electrodes (sources)", c("grid cells", "FIA plots", "selected site")) %>%
                               tooltip("Sites where current is injected. If `grid cells` or `FIA plots` is selected, current is injected
@@ -851,9 +851,8 @@ ui <- page_sidebar(
                                              available scenario and GCM, it plots the projected climate change
                                              (future minus historical) as a trajectory across time periods, so
                                              you can see which models are hot/dry, warm/wet, and so on, and how
-                                             the spread fans out over eras and emissions scenarios. Deltas are
-                                             shown in each variable's native units. Models in your current
-                                             ensemble selection (set in the left sidebar) are drawn at full
+                                             the spread fans out over eras and emissions scenarios. Models in your
+                                             current ensemble selection (set in the left sidebar) are drawn at full
                                              opacity, others faded. The x and y variables can be changed
                                              without re-clicking Update."), hr(),
                                     layout_column_wrap(
@@ -874,6 +873,7 @@ ui <- page_sidebar(
                                                             since computing deltas across the full model ensemble is
                                                             slow."))
                                     ),
+                                    plotOutput("model_delta_plot"),
                                     layout_column_wrap(
                                           width = 1/2,
                                           selectInput("model_delta_x", "X variable",
@@ -882,8 +882,7 @@ ui <- page_sidebar(
                                           selectInput("model_delta_y", "Y variable",
                                                       choices = clim_vars()) %>%
                                                 tooltip("Climate variable for the y-axis (delta = future - historical).")
-                                    ),
-                                    plotOutput("model_delta_plot")
+                                    )
                               )
                         )
 
