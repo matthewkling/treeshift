@@ -205,17 +205,16 @@ default_ssp    <- .pick_default("ssp585",    .ssp_meta$ssp)
 default_period <- .pick_default("2041-2070", .period_meta$period)
 default_model  <- .pick_default("gfdl-esm4", .model_meta$model)
 
-.fia_global <- read_csv("data/fia.csv", show_col_types = FALSE)
-spp <- sort(unique(.fia_global$species))
-forest_types_in_data <- sort(unique(na.omit(.fia_global$forest_type)))
+fia_all <- read_csv("data/fia.csv", show_col_types = FALSE)
+spp <- sort(unique(fia_all$species))
+forest_types_in_data <- sort(unique(na.omit(fia_all$forest_type)))
 # Initial map bounds: bounding box of all FIA plots
 fia_xy_bounds <- list(
-      xmin = min(.fia_global$x, na.rm = TRUE),
-      xmax = max(.fia_global$x, na.rm = TRUE),
-      ymin = min(.fia_global$y, na.rm = TRUE),
-      ymax = max(.fia_global$y, na.rm = TRUE)
+      xmin = min(fia_all$x, na.rm = TRUE),
+      xmax = max(fia_all$x, na.rm = TRUE),
+      ymin = min(fia_all$y, na.rm = TRUE),
+      ymax = max(fia_all$y, na.rm = TRUE)
 )
-rm(.fia_global)
 
 # Forest type / group lookup table (FIA FORTYPCD)
 forest_type_codes <- read_csv("data/forest_type_codes.csv", show_col_types = FALSE) %>%
@@ -1040,7 +1039,7 @@ server <- function(input, output, session) {
       # all plots within padded bbox (the analog pool)
       fia_plots <- reactive({
             pb <- pool_bbox()
-            read_csv("data/fia.csv", show_col_types = FALSE) %>%
+            fia_all %>%
                   select(x, y) %>%
                   distinct() %>%
                   filter(between(x, pb$x[1], pb$x[2]),
@@ -1049,7 +1048,7 @@ server <- function(input, output, session) {
       })
 
       fia_plots_species_all <- reactive({
-            read_csv("data/fia.csv", show_col_types = FALSE) %>%
+            fia_all %>%
                   # Recode NA forest_type to the Non-forest sentinel (0) so
                   # downstream filters and joins treat non-forest plots
                   # uniformly with real forest types.
