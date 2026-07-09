@@ -538,7 +538,7 @@ ui <- page_sidebar(
 
       fillable = TRUE,   # lets the page body fill the browser height
 
-      title = "TreeShift",
+      title = "TreeShift [beta]",
 
 
       ## LEFT SIDEBAR ------------------------------------
@@ -565,7 +565,7 @@ ui <- page_sidebar(
                                  dedicated controls and plots."),
                         br(),
                         helpText("NOTE: This tool is a prototype and is still under development.
-                          Please contact matthew.kling@umontana.edu with questions or bug reports.")
+                          Please contact matthew.kling@umontana.edu with questions, suggestions, or bug reports.")
                   ),
 
                   accordion_panel(
@@ -600,7 +600,8 @@ ui <- page_sidebar(
                                     tooltip("Select a focal FIA forest type group by scrolling or typing.")
                         ),
                         selectInput("fia_var", "Variable",
-                                    c("presence probability", "proportion basal area", "total basal area")) %>%
+                                    c("presence probability", "proportion basal area", "total basal area",
+                                      "number of trees", "number of seedlings")) %>%
                               tooltip("Choose which focal variable gets interpolated and predicted.")
                   ),
 
@@ -1073,6 +1074,10 @@ server <- function(input, output, session) {
                         batot = sum(basal_area[focal]), # total focal species basal area
                         baprop = weighted.mean(focal, basal_area), #  proportion ba
                         baplot = sum(basal_area), # total plot ba, all species
+                        nttot = sum(n_trees[focal]), # focal species tree count
+                        ntplot = sum(n_trees), # total plot tree count, all species
+                        nstot = sum(n_seedlings[focal]), # focal species seedling count
+                        nsplot = sum(n_seedlings), # total plot seedling count, all species
                         forest_type = dplyr::first(forest_type), # plot-level FORTYPCD
                         .groups = "drop") %>%
                   left_join(ft_to_fg, by = "forest_type") %>%
@@ -1089,7 +1094,9 @@ server <- function(input, output, session) {
                   switch(input$fia_var,
                          "presence probability"  = po$pres,
                          "proportion basal area" = po$baprop,
-                         "total basal area"      = po$batot)
+                         "total basal area"      = po$batot,
+                         "number of trees"       = po$nttot,
+                         "number of seedlings"   = po$nstot)
             } else if (input$track == "Forest type") {
                   req(isTruthy(input$forest_type))
                   as.integer(!is.na(po$forest_type) &
@@ -1101,7 +1108,9 @@ server <- function(input, output, session) {
             } else if (input$track == "All trees") {
                   switch(input$fia_var,
                          "presence probability" = as.integer(po$baplot > 0),
-                         "total basal area"     = po$baplot)
+                         "total basal area"     = po$baplot,
+                         "number of trees"      = po$ntplot,
+                         "number of seedlings"  = po$nsplot)
             }
 
             # Guard against transient NULL during track/fia_var transitions
@@ -1168,11 +1177,15 @@ server <- function(input, output, session) {
             choices <- switch(input$track,
                               "Species"      = c("presence probability",
                                                  "proportion basal area",
-                                                 "total basal area"),
+                                                 "total basal area",
+                                                 "number of trees",
+                                                 "number of seedlings"),
                               "Forest type"  = c("presence probability"),
                               "Forest group" = c("presence probability"),
                               "All trees"    = c("presence probability",
-                                                 "total basal area"))
+                                                 "total basal area",
+                                                 "number of trees",
+                                                 "number of seedlings"))
             updateSelectInput(session, "fia_var",
                               choices = choices,
                               selected = choices[1])
@@ -1317,7 +1330,7 @@ server <- function(input, output, session) {
       })
 
 
-      ## ANALOG IMPACT MODEL -----------------------------------------
+      ## CLIMATE DATA -----------------------------------------
 
       # Raw (uncropped, unaggregated) historical and future climate rasters,
       # restricted to the selected climate variables. The future raster depends
@@ -1591,8 +1604,17 @@ server <- function(input, output, session) {
             cp <- clim_pool()
             clim_hst <- terra::extract(cp$hst, xy, ID = FALSE, method = "bilinear")
             clim_fut <- terra::extract(cp$fut, xy, ID = FALSE, method = "bilinear")
-            list(index_hst = build_analog_index(cbind(xy, clim_hst), coord_type = "lonlat", index_res = 8),
-                 index_fut = build_analog_index(cbind(xy, clim_fut), coord_type = "lonlat", index_res = 8),
+
+            # # code used interactively during dev to determine optimal index res
+            # tune_index_res(x = cbind(xy, clim_fut), pool = cbind(xy, clim_hst),
+            #                env = kernel("gaussian", input$theta_clim, input$theta_clim*3),
+            #                geog = kernel("gaussian", input$theta_geog, input$theta_geog*3),
+            #                stat = "sum_weights")
+
+            list(index_hst = build_analog_index(cbind(xy, clim_hst), coord_type = "lonlat",
+                                                geog_res_adj = 4),
+                 index_fut = build_analog_index(cbind(xy, clim_fut), coord_type = "lonlat",
+                                                geog_res_adj = 4),
                  clim_hst = clim_hst,
                  clim_fut = clim_fut,
                  # Single active response column for AIM smoothing,
@@ -1600,6 +1622,9 @@ server <- function(input, output, session) {
                  values = tibble::tibble(response = response_values(),
                                          samp_method_cd = plot_occ()$samp_method_cd))
       })
+
+
+      ## ANALOG IMPACT MODEL -----------------------------------------
 
       ### full raster -----------------------
       aim <- reactive({
@@ -1610,11 +1635,9 @@ server <- function(input, output, session) {
                   suppressWarnings(analogs::analog_impact(
                         x = x,
                         pool = pool()$index_hst,
-                        max_clim = input$theta_clim * 3,
-                        max_geog = input$theta_geog * 3,
+                        env =  analogs::kernel(max = input$theta_clim * 3, weight = "gaussian", theta = input$theta_clim),
+                        geog = analogs::kernel(max = input$theta_geog * 3, weight = "gaussian", theta = input$theta_geog),
                         stat = c("count", "sum_weights", stat, "ess"),
-                        kernel = "gaussian_joint",
-                        theta = c(input$theta_clim, input$theta_geog),
                         y = pool()$values))
             }
 
@@ -1655,8 +1678,9 @@ server <- function(input, output, session) {
                   suppressWarnings(analogs::analog_search(
                         x = x,
                         pool = index,
-                        max_geog = input$theta_geog * 3,
-                        max_clim = max_clim,
+
+                        geog = analogs::kernel(max = input$theta_geog * 3),
+                        env  = analogs::kernel(max = max_clim),
                         select = "all",
                         stat = NULL,
                         y = pool_y
@@ -1793,8 +1817,16 @@ server <- function(input, output, session) {
             grounds <- (electrodes()$destinations + leakage()) %>% setNames("grounds")
 
             # Run circuitscape
-            cs <- cs_advanced(resistance()$resistance, electrodes()$sources, grounds,
-                              resistance_is = "resistances", ground_is = "conductances")
+            fit_cs <- function(correction = 1e-12){
+                  cs_advanced(resistance()$resistance, electrodes()$sources,
+                              grounds + correction, # add numerical stability for cholmod solver
+                              resistance_is = "resistances", ground_is = "conductances",
+                              solver = "cholmod") # cholmod is way faster than default
+            }
+            for(corr in seq(-12, -6)){ # larger factors are safer but introduce more spurious grounds, so start optimistic
+                  cs <- try(fit_cs(10 ^ corr))
+                  if(class(cs) != "try-error") break
+            }
 
             # Derived variables
             # cs_advanced() returns a SpatRaster with layers 'current' and
@@ -1949,6 +1981,14 @@ server <- function(input, output, session) {
                   if(input$fia_var == "total basal area" &&
                      input$summary_stat == "weighted mean"){
                         title <- paste0(title, "<br/>(m2 BA / plot)")
+                  }
+                  if(input$fia_var == "number of trees" &&
+                     input$summary_stat == "weighted mean"){
+                        title <- paste0(title, "<br/>(trees / plot)")
+                  }
+                  if(input$fia_var == "number of seedlings" &&
+                     input$summary_stat == "weighted mean"){
+                        title <- paste0(title, "<br/>(seedlings / plot)")
                   }
                   if(input$stat == "connectivity"){
                         title <- paste0(title, " --<br/>", input$cs_stat)
@@ -2371,7 +2411,9 @@ server <- function(input, output, session) {
                         select(x, y, weight, species, type) %>%
                         tidyr::expand(tidyr::nesting(x, y, weight, type), species) %>%
                         left_join(analogs, by = join_by(x, y, weight, species, type)) %>%
-                        mutate(basal_area = ifelse(is.na(basal_area), 0, basal_area)) %>%
+                        mutate(basal_area = ifelse(is.na(basal_area), 0, basal_area),
+                               n_trees = ifelse(is.na(n_trees), 0, n_trees),
+                               n_seedlings = ifelse(is.na(n_seedlings), 0, n_seedlings)) %>%
                         group_by(x, y, type) %>%
                         mutate(baplot = sum(basal_area),
                                baprop = basal_area / sum(basal_area),
@@ -2381,6 +2423,8 @@ server <- function(input, output, session) {
                               pres = stat(basal_area > 0, weight),
                               batot = stat(basal_area, weight),
                               baprop = stat(baprop, weight),
+                              nttot = stat(n_trees, weight),
+                              nstot = stat(n_seedlings, weight),
                               .groups = "drop"
                         ) %>%
                         filter(!is.na(species))
@@ -2388,7 +2432,9 @@ server <- function(input, output, session) {
                   v <- switch(input$fia_var,
                               "presence probability"  = "pres",
                               "proportion basal area" = "baprop",
-                              "total basal area"      = "batot")
+                              "total basal area"      = "batot",
+                              "number of trees"       = "nttot",
+                              "number of seedlings"   = "nstot")
                   a$value <- a[[v]]
                   a$category <- a$species
                   lab <- paste("historical", input$summary_stat, input$fia_var)
@@ -2771,11 +2817,9 @@ server <- function(input, output, session) {
                         pool      = d,
                         y         = values,
                         cv_method = "loo",
-                        max_clim  = theta_clim * 3,
-                        max_geog  = theta_geog * 3,
-                        stat      = "weighted_mean",
-                        kernel    = "gaussian_joint",
-                        theta     = c(theta_clim, theta_geog)))
+                        env = analogs::kernel(max = theta_clim * 3, weight = "gaussian", theta = theta_clim),
+                        geog = analogs::kernel(max = theta_geog * 3, weight = "gaussian", theta = theta_geog),
+                        stat      = "weighted_mean"))
 
                   if(!summarize){
                         # Scatterplot path: return per-plot obs/pred. cv$obs

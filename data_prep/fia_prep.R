@@ -26,7 +26,8 @@ subplot <- fread(paste0(dir, "/CSV_FIADB_ENTIRE/ENTIRE_SUBPLOT.csv"), stringsAsF
                  colClasses = c(CN = "character", PLT_CN = "character")) %>%
       select(PLT_CN, SUBP, SUBP_CN = CN, PREV_SBP_CN,
              SUBP_STATUS_CD, POINT_NONSAMPLE_REASN_CD,
-             SLOPE, ASPECT) %>% as_tibble()
+             SLOPE, ASPECT) %>%
+      as_tibble()
 
 # TREE table
 # primary key: CN
@@ -39,11 +40,20 @@ tree <- fread(paste0(dir, "/CSV_FIADB_ENTIRE/ENTIRE_TREE.csv"),
                          "DIA", "DIAHTCD", "STATUSCD", "DIACHECK",
                          "RECONCILECD"
               ),
-              colClasses = c(PLT_CN = "character", DIST = "numeric")) %>% as_tibble()
+              colClasses = c(PLT_CN = "character", DIST = "numeric")) %>%
+      as_tibble()
+
+# SEEDLING table
+# foreign key: PLT_CN (links to CN from plot table)
+seedling <- fread(paste0(dir, "/CSV_FIADB_ENTIRE/ENTIRE_SEEDLING.csv"), stringsAsFactors = F,
+                  colClasses = c(CN = "character", PLT_CN = "character")) %>%
+      select(PLT_CN, SUBP, SPCD, n_seedlings = TREECOUNT) %>%
+      as_tibble()
 
 # SPECIES table
 species <- fread(paste0(dir, "/FIADB_REFERENCE/REF_SPECIES.csv"), stringsAsFactors = F) %>%
-      select(SPCD, COMMON_NAME, GENUS, SPECIES) %>% as_tibble()
+      select(SPCD, COMMON_NAME, GENUS, SPECIES) %>%
+      as_tibble()
 
 # CONDITION table (used to identify and exclude planted plots, and for forest type)
 # primary key: CN
@@ -52,7 +62,8 @@ cond <- fread(paste0(dir, "/CSV_FIADB_ENTIRE/ENTIRE_COND.csv"), stringsAsFactors
               colClasses = c(CN = "character", PLT_CN = "character")) %>%
       select(PLT_CN, CONDID, PROP_BASIS, STDORGCD, PHYSCLCD, COND_STATUS_CD, CONDPROP_UNADJ,
              INVYR, FORTYPCD, FLDTYPCD, CONDPROP_UNADJ,
-             SLOPE_COND = SLOPE, ASPECT_COND = ASPECT) %>% as_tibble()
+             SLOPE_COND = SLOPE, ASPECT_COND = ASPECT) %>%
+      as_tibble()
 planted <- cond %>%
       filter(STDORGCD == 1) %>%
       select(PLT_CN) %>%
@@ -99,6 +110,7 @@ d <- plot %>%
       left_join(forest_type) %>%
       left_join(subplot) %>%
       left_join(tree) %>%
+      full_join(seedling) %>%
       left_join(species) %>%
       mutate(PLOT_ID = paste(STATECD, UNITCD, COUNTYCD, PLOT),
              SUBPLOT_ID = paste(PLOT_ID, SUBP)) %>%
@@ -135,6 +147,7 @@ d <- d %>%
       group_by(lon, lat, forest_type, species, samp_method_cd) %>%
       summarize(basal_area = sum(pi*(dia/2)^2 / 1550, na.rm = T), # sq in to sq m
                 n_trees = sum(!is.na(statuscd)),
+                n_seedlings = sum(n_seedlings, na.rm = T),
                 # northness = mean(northness, na.rm = TRUE),
                 # eastness = mean(eastness, na.rm = TRUE),
                 .groups = "drop")
@@ -145,6 +158,8 @@ d <- d %>%
 
 # add topographic variables for nonforest plots ---------------------------------------------
 
+# note: skipping topo for now
+
 # # topography variables
 # lf_slope_deg <- rast("/Volumes/T7/landfire/LF2020_SlpD_CONUS/Tif/LF2020_SlpD_CONUS.tif")
 # lf_aspect_deg <- rast("/Volumes/T7/landfire/LF2020_Asp_CONUS/Tif/LF2020_Asp_CONUS.tif")
@@ -153,7 +168,7 @@ d <- d %>%
 #
 # # plot locations for extraction
 dp <- vect(select(d, lon, lat))
-crs(dp) <- crs(rast("data/clim_quantized.tif"))
+crs(dp) <- crs(rast("data/clim_historical.tif"))
 # dp <- project(dp, crs(lf_slope_deg))
 #
 # # extract and munge
@@ -182,7 +197,7 @@ crs(dp) <- crs(rast("data/clim_quantized.tif"))
 veg <- rast("/Volumes/T7/landfire/LF2020_BPS_220_CONUS/Tif/LC20_BPS_220.tif") # load raster
 dp <- project(dp, crs(veg))
 if(crs(veg) != crs(dp)) stop()
-veg <- extract(veg, dp)
+veg <- raster::extract(veg, dp)
 
 # filter on veg
 nonforest_veg <- c("Barren-Rock/Sand/Clay", "Grassland", "Perennial Ice/Snow", "Riparian",
@@ -210,17 +225,17 @@ dc <- d %>%
 
 # filter to plots with non-missing climate data
 dc <- cbind(dc, terra::extract(climate, dc[,1:2]))
-dc <- filter(dc, is.finite(tmean1))
+dc <- filter(dc, is.finite(tmean))
 
 # drop climate columns (they're re-extracted in app)
-d <- dc %>% select(d_small, x:n_trees)
+d <- dc %>% select(x:n_seedlings)
 
 
 # export -------------------------------------------
 
 # round to reduce size on disk
 d_small <- d %>%
-      select(-ID) %>%
+      # select(-ID) %>%
       mutate(across(
             where(is.double),
             ~ round(.x, 3)
