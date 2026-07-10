@@ -1,4 +1,3 @@
-
 library(data.table)
 library(tidyverse)
 library(janitor)
@@ -12,7 +11,7 @@ dir <- "/Volumes/T7/FIA/2025_06_27"
 
 plot <- fread(paste0(dir, "/CSV_FIADB_ENTIRE/ENTIRE_PLOT.csv"), stringsAsFactors = F,
               colClasses = c(CN = "character")) %>%
-      select(PLT_CN = CN, MANUAL, DESIGNCD, PLOT_STATUS_CD, SAMP_METHOD_CD, MACRO_BREAKPOINT_DIA,
+      select(PLT_CN = CN, MANUAL, DESIGNCD, PLOT_STATUS_CD, SAMP_METHOD_CD,
              STATECD, INVYR, MEASYEAR, UNITCD, COUNTYCD, PLOT,
              LAT, LON, ELEV) %>% as_tibble()
 
@@ -38,7 +37,7 @@ tree <- fread(paste0(dir, "/CSV_FIADB_ENTIRE/ENTIRE_TREE.csv"),
               select = c("PLT_CN", "PLOT", "SUBP", "INVYR", "TREE", "SPCD",
                          "PREVCOND", "CONDID",
                          "DIA", "DIAHTCD", "STATUSCD", "DIACHECK",
-                         "RECONCILECD"
+                         "RECONCILECD", "TPA_UNADJ"
               ),
               colClasses = c(PLT_CN = "character", DIST = "numeric")) %>%
       as_tibble()
@@ -47,12 +46,16 @@ tree <- fread(paste0(dir, "/CSV_FIADB_ENTIRE/ENTIRE_TREE.csv"),
 # foreign key: PLT_CN (links to CN from plot table)
 seedling <- fread(paste0(dir, "/CSV_FIADB_ENTIRE/ENTIRE_SEEDLING.csv"), stringsAsFactors = F,
                   colClasses = c(CN = "character", PLT_CN = "character")) %>%
-      select(PLT_CN, SUBP, SPCD, n_seedlings = TREECOUNT) %>%
-      as_tibble()
+      select(PLT_CN, SUBP, SPCD, seed_tpa = TPA_UNADJ) %>%
+      as_tibble() %>%
+      # SEEDLING can carry multiple rows per subplot-species (one per condition);
+      # collapse to one row so the join below doesn't multiply seedling density.
+      group_by(PLT_CN, SUBP, SPCD) %>%
+      summarize(seed_tpa = sum(seed_tpa, na.rm = TRUE), .groups = "drop")
 
-# SPECIES table
+# SPECIES table (WOODLAND flag = species measured at diameter-at-root-collar, not DBH)
 species <- fread(paste0(dir, "/FIADB_REFERENCE/REF_SPECIES.csv"), stringsAsFactors = F) %>%
-      select(SPCD, COMMON_NAME, GENUS, SPECIES) %>%
+      select(SPCD, COMMON_NAME, GENUS, SPECIES, WOODLAND) %>%
       as_tibble()
 
 # CONDITION table (used to identify and exclude planted plots, and for forest type)
@@ -76,10 +79,9 @@ planted <- cond %>%
 forest_type <- cond %>%
       group_by(PLT_CN) %>%
       filter(INVYR == max(INVYR)) %>% # latest survey only
-      filter(CONDPROP_UNADJ == max(CONDPROP_UNADJ)) %>% # dominant condition only
+      slice_max(CONDPROP_UNADJ, n = 1, with_ties = FALSE) %>% # dominant condition only (deterministic on ties -> one row per plot)
       ungroup() %>%
-      select(PLT_CN, forest_type = FORTYPCD) %>%
-      distinct()
+      select(PLT_CN, forest_type = FORTYPCD)
 type_group <- read_csv(paste0(dir, "/FIADB_REFERENCE/REF_FOREST_TYPE_GROUP.csv")) %>%
       select(forest_group = VALUE, forest_group_name = MEANING, forest_group_abbr = ABBR)
 type <- read_csv(paste0(dir, "/FIADB_REFERENCE/REF_FOREST_TYPE.csv")) %>%
@@ -116,6 +118,7 @@ d <- plot %>%
              SUBPLOT_ID = paste(PLOT_ID, SUBP)) %>%
 
       filter(is.na(planted),
+             PLOT_STATUS_CD %in% 1:2, # keep sampled plots (forest or nonforest); drop non-sampled (status 3)
              DESIGNCD %in% c(1, 111:118, 230:242, 311:323, 328, 501:506), # 4-subplot design
              SUBP <= 4) %>%
 
@@ -126,9 +129,6 @@ d <- plot %>%
       mutate(tree_id = paste(subplot_id, designcd, tree)) %>%
       filter(manual >= 2.0,
              is.finite(lon), is.finite(lat)) %>%
-
-      rename(macro_bpd = macro_breakpoint_dia) %>%
-      mutate(macroplot = is.finite(macro_bpd)) %>%
 
       mutate(yr = measyear) %>% # measurement year (not invyr) is the correct sampling date
       select(-invyr, -measyear)
@@ -142,12 +142,36 @@ d <- d %>%
       filter(yr == max(yr),
              statuscd == 1 | is.na(statuscd) # live trees, or no trees
       ) %>%
-      mutate(species = paste(genus, species),
-             species = ifelse(species == "NA NA", NA, species)) %>%
+      # Build a clean binomial; NA-out records that aren't identified to species
+      # (missing genus/epithet, or genus-level / unknown codes like "spp.") so
+      # they don't surface as fake species -- their stems still count in all-trees.
+      mutate(species = ifelse(is.na(genus) | genus == "" |
+                                    is.na(species) | species == "" |
+                                    tolower(species) %in% c("spp.", "spp", "unknown"),
+                              NA_character_, paste(genus, species))) %>%
+      # Woodland species are measured at DRC, not DBH.
+      # Convert DRC -> DBH (inches) via Chojnacky & Rogers 1999. Their
+      # equations are fit for pinyon, Gambel oak, and Utah juniper; we extend
+      # them by genus, and use the juniper equation for all other woodland genera.
+      # Juniper is the fallback because the genera (mesquite, mountain-mahogany, etc.)
+      # share its low-branching, multi-stemmed growth form mroe than pinyon or oak forms.
+      # stm assumed multi-stem (0); floored at 0 where the linear model goes negative for
+      # small stems. Used for BA only -- the sapling/tree split below stays on
+      # the field-measured diameter.
+      mutate(is_woodland = !is.na(woodland) & toupper(woodland) == "Y",
+             dia_ba = case_when(
+                   !is_woodland       ~ dia,
+                   genus == "Pinus"   ~ pmax(-1.9374 + 0.9823 * dia, 0), # pinyons
+                   genus == "Quercus" ~ pmax(-1.4599 + 0.9533 * dia, 0), # dryland/scrub oaks
+                   TRUE               ~ pmax(-2.6843 + 1.0222 * dia, 0))) %>% # junipers + other woodland
       group_by(lon, lat, forest_type, species, samp_method_cd) %>%
-      summarize(basal_area = sum(pi*(dia/2)^2 / 1550, na.rm = T), # sq in to sq m
-                n_trees = sum(!is.na(statuscd)),
-                n_seedlings = sum(n_seedlings, na.rm = T),
+      summarize(basal_area = sum(0.0054542 * dia_ba^2 * tpa_unadj, na.rm = T), # ft2/acre, all live stems (DBH basis; woodland DRC->DBH converted)
+                n_saplings = sum(tpa_unadj[dia < 5], na.rm = T),  # stems/acre, saplings 1.0-4.9" DBH (microplot)
+                n_trees = sum(tpa_unadj[dia >= 5], na.rm = T),    # stems/acre, trees >=5.0" DBH (subplot/macroplot)
+                # seed_tpa is one value per subplot-species but the tree join
+                # replicates it across each of that species' tree rows, so count
+                # each subplot-species once.
+                n_seedlings = sum(seed_tpa[!duplicated(paste(subp, spcd))], na.rm = T), # stems/acre, seedlings <1" DBH (microplot)
                 # northness = mean(northness, na.rm = TRUE),
                 # eastness = mean(eastness, na.rm = TRUE),
                 .groups = "drop")

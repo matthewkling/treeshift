@@ -570,7 +570,7 @@ ui <- page_sidebar(
 
                   accordion_panel(
                         "FIA variable",
-                        selectInput("track", "Mode",
+                        selectInput("track", "Focal entity",
                                     choices = c("Species", "Forest type", "Forest group", "All trees"),
                                     selected = "Species") %>%
                               tooltip(HTML("Choose the focal entity for the model.<br><br>
@@ -599,10 +599,44 @@ ui <- page_sidebar(
                                              selected = forest_group_choices[[1]]) %>%
                                     tooltip("Select a focal FIA forest type group by scrolling or typing.")
                         ),
-                        selectInput("fia_var", "Variable",
-                                    c("presence probability", "proportion basal area", "total basal area",
-                                      "number of trees", "number of seedlings")) %>%
-                              tooltip("Choose which focal variable gets interpolated and predicted.")
+                        selectInput("metric", "Variable",
+                                    c("occurrence", "abundance", "basal area",
+                                      "proportion basal area", "regeneration fraction")) %>%
+                              tooltip(HTML("Choose the quantity to model.<br><br>
+                                          <dl style='margin:0;'>
+                                              <dt>Occurrence</dt> <dd>Probability the focal entity is present within a single FIA plot footprint (~0.07 ha) randomly located within the grid cell.</dd>
+                                              <dt>Abundance</dt> <dd>Population density of the selected life stage, in stems per acre.</dd>
+                                              <dt>Basal area</dt> <dd>Live tree and sapling basal area, in ft&sup2; per acre.</dd>
+                                              <dt>Proportion basal area</dt> <dd>The focal species' share of total stand basal area, multiplied by the probability that stand basal area is nonzero.</dd>
+                                              <dt>Regeneration fraction</dt> <dd>The focal population's regeneration share [selected stage / (selected stage + adults)], multiplied by species occurrence probability. Low where the species is adult-dominated or absent; high where regeneration dominates.</dd>
+                                          </dl>")),
+                        ## Life stage: shown only for metrics/tracks that have one
+                        ## (occurrence / abundance / regeneration fraction on the
+                        ## Species and All trees tracks). Basal-area metrics and the
+                        ## forest type/group tracks have no stage.
+                        conditionalPanel(
+                              condition = "(input.track == 'Species' || input.track == 'All trees') && (input.metric == 'occurrence' || input.metric == 'abundance' || input.metric == 'regeneration fraction')",
+                              selectInput("stage", "Life stage",
+                                          c("seedling", "sapling", "adult", "any"),
+                                          selected = "any") %>%
+                                    tooltip(HTML("Choose the life stage (size class).<br><br>
+                                                <dl style='margin:0;'>
+                                                    <dt>Seedling</dt> <dd>&lt; 1 in. DBH/DRC.</dd>
+                                                    <dt>Sapling</dt> <dd>1.0&ndash;4.9 in. DBH/DRC.</dd>
+                                                    <dt>Adult</dt> <dd>&ge; 5.0 in. DBH/DRC.</dd>
+                                                    <dt>Any</dt> <dd>All life stages combined.</dd>
+                                                </dl>"))
+                        ),
+                        ## Canonical variable resolved from (track, metric, stage);
+                        ## hidden because all downstream logic switches on input$fia_var.
+                        tags$div(style = "display: none;",
+                                 selectInput("fia_var", NULL,
+                                             c("presence probability", "seedling presence",
+                                               "sapling presence", "tree presence",
+                                               "proportion basal area", "total basal area",
+                                               "number of trees", "number of saplings",
+                                               "number of seedlings",
+                                               "seedling fraction", "sapling fraction")))
                   ),
 
                   accordion_panel(
@@ -951,11 +985,21 @@ server <- function(input, output, session) {
                    "All trees"    = "All trees")
       })
 
-      # TRUE if the active response is a 0/1 indicator (presence variables);
-      # FALSE if continuous (basal area variables).
+      # TRUE if the active response is a 0/1 indicator (any presence variable:
+      # "presence probability", "seedling presence", and the forest type/group
+      # classification probabilities); FALSE if continuous (basal area / counts).
       response_is_binary <- reactive({
-            isTruthy(input$fia_var) && input$fia_var == "presence probability"
+            isTruthy(input$fia_var) && grepl("presence", input$fia_var)
       })
+
+      # Sequential color domain c(0, max) for markers/points, robust to the case
+      # where the values are all NA or all 0 (e.g. a fraction variable for a
+      # species absent from the current view) -- an empty/degenerate range makes
+      # colorNumeric error, so fall back to c(0, 1).
+      seq_domain <- function(x) {
+            mx <- suppressWarnings(max(x, na.rm = TRUE))
+            c(0, if (is.finite(mx) && mx > 0) mx else 1)
+      }
 
       # Lower/upper bounds for the currently-displayed raster. Used by the
       # density plot to keep KDE mass from leaking past natural limits (e.g.,
@@ -978,6 +1022,8 @@ server <- function(input, output, session) {
                         c(-Inf, Inf)
                   } else if (response_is_binary()) {
                         c(0, 1)
+                  } else if (grepl("fraction", input$fia_var)) {
+                        c(0, 1)  # regeneration fractions are bounded [0, 1]
                   } else {
                         c(0, Inf)
                   }
@@ -1070,18 +1116,28 @@ server <- function(input, output, session) {
                   group_by(x, y) %>%
                   summarize(
                         samp_method_cd = mean(samp_method_cd),
-                        pres = as.integer(any(focal)), # focal species presence/absence
+                        pres = as.integer(any(focal)), # focal species presence/absence (any life stage)
+                        pres_seed = as.integer(any(focal & n_seedlings > 0)), # focal species seedling presence
+                        pres_sap = as.integer(any(focal & n_saplings > 0)), # focal species sapling presence
+                        pres_tree = as.integer(any(focal & n_trees > 0)), # focal species adult (tree) presence
                         batot = sum(basal_area[focal]), # total focal species basal area
                         baprop = weighted.mean(focal, basal_area), #  proportion ba
                         baplot = sum(basal_area), # total plot ba, all species
                         nttot = sum(n_trees[focal]), # focal species tree count
                         ntplot = sum(n_trees), # total plot tree count, all species
+                        satot = sum(n_saplings[focal]), # focal species sapling count
+                        saplot = sum(n_saplings), # total plot sapling count, all species
                         nstot = sum(n_seedlings[focal]), # focal species seedling count
                         nsplot = sum(n_seedlings), # total plot seedling count, all species
                         forest_type = dplyr::first(forest_type), # plot-level FORTYPCD
                         .groups = "drop") %>%
                   left_join(ft_to_fg, by = "forest_type") %>%
-                  mutate(baprop = ifelse(baplot == 0, 0, baprop))
+                  mutate(baprop = ifelse(baplot == 0, 0, baprop),
+                         # Regeneration fractions (focal species): stage relative to
+                         # adults, in [0,1]. NA where the species is absent as those
+                         # stages+adults (conditional on presence). mean-of-ratios v1.
+                         seed_frac = ifelse((nstot + nttot) > 0, nstot / (nstot + nttot), NA_real_),
+                         sap_frac  = ifelse((satot + nttot) > 0, satot / (satot + nttot), NA_real_))
       })
 
       # Single active response vector, aligned with plot_occ() rows.
@@ -1093,10 +1149,16 @@ server <- function(input, output, session) {
             v <- if (input$track == "Species") {
                   switch(input$fia_var,
                          "presence probability"  = po$pres,
+                         "seedling presence"      = po$pres_seed,
+                         "sapling presence"       = po$pres_sap,
+                         "tree presence"          = po$pres_tree,
                          "proportion basal area" = po$baprop,
                          "total basal area"      = po$batot,
                          "number of trees"       = po$nttot,
-                         "number of seedlings"   = po$nstot)
+                         "number of saplings"    = po$satot,
+                         "number of seedlings"   = po$nstot,
+                         "seedling fraction"      = po$seed_frac,
+                         "sapling fraction"       = po$sap_frac)
             } else if (input$track == "Forest type") {
                   req(isTruthy(input$forest_type))
                   as.integer(!is.na(po$forest_type) &
@@ -1107,15 +1169,44 @@ server <- function(input, output, session) {
                                    po$forest_group == as.integer(input$forest_group))
             } else if (input$track == "All trees") {
                   switch(input$fia_var,
-                         "presence probability" = as.integer(po$baplot > 0),
+                         "presence probability" = as.integer((po$ntplot + po$saplot) > 0 | po$nsplot > 0),
+                         "seedling presence"    = as.integer(po$nsplot > 0),
+                         "sapling presence"     = as.integer(po$saplot > 0),
+                         "tree presence"        = as.integer(po$ntplot > 0),
                          "total basal area"     = po$baplot,
                          "number of trees"      = po$ntplot,
-                         "number of seedlings"  = po$nsplot)
+                         "number of saplings"   = po$saplot,
+                         "number of seedlings"  = po$nsplot,
+                         "seedling fraction"    = ifelse((po$nsplot + po$ntplot) > 0, po$nsplot / (po$nsplot + po$ntplot), NA_real_),
+                         "sapling fraction"     = ifelse((po$saplot + po$ntplot) > 0, po$saplot / (po$saplot + po$ntplot), NA_real_))
             }
 
             # Guard against transient NULL during track/fia_var transitions
             req(!is.null(v))
             v
+      })
+
+      # Pooled-ratio variables (proportion basal area, seedling/sapling fraction)
+      # are interpolated as a ratio-of-means rather than a mean-of-ratios: we
+      # interpolate the numerator and denominator separately and divide the
+      # surfaces (then gate by occurrence in aim()). This returns the per-plot
+      # numerator/denominator for those variables, or NULL for everything else
+      # (which uses the single-response path). Occurrence is denom > 0.
+      ratio_pieces <- reactive({
+            req(isTruthy(input$track), isTruthy(input$fia_var))
+            po <- plot_occ()
+            if (input$track == "Species") {
+                  switch(input$fia_var,
+                         "proportion basal area" = list(num = po$batot, denom = po$baplot),
+                         "seedling fraction"     = list(num = po$nstot, denom = po$nstot + po$nttot),
+                         "sapling fraction"      = list(num = po$satot, denom = po$satot + po$nttot),
+                         NULL)
+            } else if (input$track == "All trees") {
+                  switch(input$fia_var,
+                         "seedling fraction" = list(num = po$nsplot, denom = po$nsplot + po$ntplot),
+                         "sapling fraction"  = list(num = po$saplot, denom = po$saplot + po$ntplot),
+                         NULL)
+            } else NULL
       })
 
       clim_scales <- readRDS("data/clim_scales.rds")
@@ -1172,24 +1263,67 @@ server <- function(input, output, session) {
 
       # REACTIVE UI COMPONENTS ---------------------------
 
-      ## Swap FIA variable choices when track changes
+      ## Variable selection is a (track x metric x stage) cascade that resolves to
+      ## a single canonical `fia_var` string, which the rest of the app switches
+      ## on. These helpers define the valid choices and the resolution.
+      metric_choices <- function(track) {
+            switch(track,
+                   "Species"      = c("occurrence", "abundance", "basal area",
+                                      "proportion basal area", "regeneration fraction"),
+                   "All trees"    = c("occurrence", "abundance", "basal area",
+                                      "regeneration fraction"),
+                   "Forest type"  = c("occurrence"),
+                   "Forest group" = c("occurrence"))
+      }
+      stage_choices <- function(track, metric) {
+            if (track %in% c("Forest type", "Forest group")) return(character(0))
+            switch(metric,
+                   "occurrence"            = c("seedling", "sapling", "adult", "any"),
+                   "abundance"             = c("seedling", "sapling", "adult"),
+                   "regeneration fraction" = c("seedling", "sapling"),
+                   character(0))  # basal area / proportion basal area: no stage
+      }
+      resolve_var <- function(track, metric, stage) {
+            if (track %in% c("Forest type", "Forest group")) return("presence probability")
+            switch(metric,
+                   "occurrence" = switch(stage,
+                                         "seedling" = "seedling presence",
+                                         "sapling"  = "sapling presence",
+                                         "adult"    = "tree presence",
+                                         "any"      = "presence probability"),
+                   "abundance" = switch(stage,
+                                        "seedling" = "number of seedlings",
+                                        "sapling"  = "number of saplings",
+                                        "adult"    = "number of trees"),
+                   "basal area"            = "total basal area",
+                   "proportion basal area" = "proportion basal area",
+                   "regeneration fraction" = switch(stage,
+                                                    "seedling" = "seedling fraction",
+                                                    "sapling"  = "sapling fraction"))
+      }
+
+      ## Repopulate metric choices when the track changes.
       observeEvent(input$track, {
-            choices <- switch(input$track,
-                              "Species"      = c("presence probability",
-                                                 "proportion basal area",
-                                                 "total basal area",
-                                                 "number of trees",
-                                                 "number of seedlings"),
-                              "Forest type"  = c("presence probability"),
-                              "Forest group" = c("presence probability"),
-                              "All trees"    = c("presence probability",
-                                                 "total basal area",
-                                                 "number of trees",
-                                                 "number of seedlings"))
-            updateSelectInput(session, "fia_var",
-                              choices = choices,
-                              selected = choices[1])
+            mc <- metric_choices(input$track)
+            updateSelectInput(session, "metric", choices = mc, selected = mc[1])
       }, ignoreInit = TRUE)
+
+      ## Repopulate stage choices when track or metric changes (staged metrics only).
+      observeEvent(list(input$track, input$metric), {
+            req(input$metric)
+            sc <- stage_choices(input$track, input$metric)
+            if (length(sc) > 0) {
+                  updateSelectInput(session, "stage", choices = sc, selected = sc[1])
+            }
+      }, ignoreInit = TRUE)
+
+      ## Resolve (track, metric, stage) -> hidden canonical fia_var.
+      observeEvent(list(input$track, input$metric, input$stage), {
+            req(input$metric)
+            v <- resolve_var(input$track, input$metric, input$stage)
+            req(!is.null(v))
+            updateSelectInput(session, "fia_var", selected = v)
+      })
 
       ## Seed the climate-model chart's x/y axis variables from the user's
       ## left-sidebar climate-variable selection. Done once, on the first
@@ -1266,7 +1400,7 @@ server <- function(input, output, session) {
       # for the current response type. Binary (presence-type) responses get
       # ranking/threshold metrics; continuous responses get error metrics.
       observe({
-            if(isTruthy(input$fia_var) && input$fia_var == "presence probability"){
+            if(isTruthy(input$fia_var) && grepl("presence", input$fia_var)){
                   updateSelectInput(session, "eval_stat",
                                     choices = c("AUC", "TSS", "Brier"),
                                     selected = "AUC")
@@ -1611,16 +1745,30 @@ server <- function(input, output, session) {
             #                geog = kernel("gaussian", input$theta_geog, input$theta_geog*3),
             #                stat = "sum_weights")
 
+            # Response(s) for AIM smoothing. Pooled-ratio variables pack the
+            # numerator/denominator/occurrence pieces so aim() can form the
+            # surface as occurrence-gated ratio-of-means; everything else uses a
+            # single response column.
+            rp <- ratio_pieces()
+            vals <- if (is.null(rp)) {
+                  tibble::tibble(response = response_values(),
+                                 samp_method_cd = plot_occ()$samp_method_cd)
+            } else {
+                  tibble::tibble(occ = as.integer(rp$denom > 0),
+                                 num = rp$num,
+                                 denom = rp$denom,
+                                 samp_method_cd = plot_occ()$samp_method_cd)
+            }
+
             list(index_hst = build_analog_index(cbind(xy, clim_hst), coord_type = "lonlat",
                                                 geog_res_adj = 4),
                  index_fut = build_analog_index(cbind(xy, clim_fut), coord_type = "lonlat",
                                                 geog_res_adj = 4),
                  clim_hst = clim_hst,
                  clim_fut = clim_fut,
-                 # Single active response column for AIM smoothing,
+                 # Active response(s) for AIM smoothing (built as `vals` above),
                  # plus samp_method_cd carried through for plot styling.
-                 values = tibble::tibble(response = response_values(),
-                                         samp_method_cd = plot_occ()$samp_method_cd))
+                 values = vals)
       })
 
 
@@ -1629,7 +1777,10 @@ server <- function(input, output, session) {
       ### full raster -----------------------
       aim <- reactive({
 
-            stat <- gsub(" ", "_", input$summary_stat)
+            # Pooled-ratio variables are always a mean-based combine, so the
+            # "weighted sum" summary-stat toggle doesn't apply to them.
+            is_ratio <- !is.null(ratio_pieces())
+            stat <- if (is_ratio) "weighted_mean" else gsub(" ", "_", input$summary_stat)
 
             aim_query <- function(x){
                   suppressWarnings(analogs::analog_impact(
@@ -1644,6 +1795,20 @@ server <- function(input, output, session) {
             aim_bsl <- aim_query(clim()$hst)
             aim_fut <- aim_query(clim()$fut)
             names(aim_bsl) <- names(aim_fut) <- gsub("weighted_mean_|weighted_sum_", "", names(aim_fut))
+
+            # Pooled-ratio surface: occurrence-gated ratio-of-means. The pieces
+            # come back as weighted_mean layers occ/num/denom; combine them into
+            # the standard `response` layer so all downstream code is unchanged.
+            if (is_ratio) {
+                  combine_ratio <- function(r){
+                        resp <- r[["occ"]] * r[["num"]] / r[["denom"]]
+                        resp[!is.finite(resp[])] <- 0  # denom == 0 (no stems in range) -> 0
+                        names(resp) <- "response"
+                        c(r, resp)
+                  }
+                  aim_bsl <- combine_ratio(aim_bsl)
+                  aim_fut <- combine_ratio(aim_fut)
+            }
 
             list(fut = aim_fut,
                  bsl = aim_bsl)
@@ -1980,15 +2145,19 @@ server <- function(input, output, session) {
                   title <- paste0(pre, input$time, "<br/>", input$summary_stat, "<br/>", tolower(sub(" ", "<br/>", input$fia_var)))
                   if(input$fia_var == "total basal area" &&
                      input$summary_stat == "weighted mean"){
-                        title <- paste0(title, "<br/>(m2 BA / plot)")
+                        title <- paste0(title, "<br/>(ft2 BA / acre)")
                   }
                   if(input$fia_var == "number of trees" &&
                      input$summary_stat == "weighted mean"){
-                        title <- paste0(title, "<br/>(trees / plot)")
+                        title <- paste0(title, "<br/>(trees / acre)")
+                  }
+                  if(input$fia_var == "number of saplings" &&
+                     input$summary_stat == "weighted mean"){
+                        title <- paste0(title, "<br/>(saplings / acre)")
                   }
                   if(input$fia_var == "number of seedlings" &&
                      input$summary_stat == "weighted mean"){
-                        title <- paste0(title, "<br/>(seedlings / plot)")
+                        title <- paste0(title, "<br/>(seedlings / acre)")
                   }
                   if(input$stat == "connectivity"){
                         title <- paste0(title, " --<br/>", input$cs_stat)
@@ -2129,7 +2298,7 @@ server <- function(input, output, session) {
 
                   if(input$vector == "occupied FIA plots") pd <- filter(pd, display > 0)
 
-                  dom <- if(!response_is_binary()) c(0, max(pd$display, na.rm = TRUE)) else 0:1
+                  dom <- if(!response_is_binary()) seq_domain(pd$display) else 0:1
 
                   # Markers follow the raster palette only when the raster is
                   # itself showing FIA response on a sequential scale (see
@@ -2282,7 +2451,7 @@ server <- function(input, output, session) {
                                         c(scl1$mean, scl2$mean), c(scl1$sd, scl2$sd)) %>%
                                   mutate(r = "a"))
 
-            dom <- if(!response_is_binary()) c(0, max(d$value, na.rm = TRUE)) else 0:1
+            dom <- if(!response_is_binary()) seq_domain(d$value) else 0:1
 
             p <- ggplot() +
                   geom_path(data = perims,
@@ -2346,7 +2515,7 @@ server <- function(input, output, session) {
             d$value <- d$response
             d <- arrange(d, value) %>% mutate(panel = "Distance space")
 
-            dom <- if(!response_is_binary()) c(0, max(d$value, na.rm = TRUE)) else 0:1
+            dom <- if(!response_is_binary()) seq_domain(d$value) else 0:1
 
             ymax <- if(input$filter_clim) input$theta_clim * 3.3 else NA
             ggplot(d, aes(geog_dist, clim_dist, fill = value)) +
@@ -2413,6 +2582,7 @@ server <- function(input, output, session) {
                         left_join(analogs, by = join_by(x, y, weight, species, type)) %>%
                         mutate(basal_area = ifelse(is.na(basal_area), 0, basal_area),
                                n_trees = ifelse(is.na(n_trees), 0, n_trees),
+                               n_saplings = ifelse(is.na(n_saplings), 0, n_saplings),
                                n_seedlings = ifelse(is.na(n_seedlings), 0, n_seedlings)) %>%
                         group_by(x, y, type) %>%
                         mutate(baplot = sum(basal_area),
@@ -2420,21 +2590,34 @@ server <- function(input, output, session) {
                                baprop = ifelse(is.finite(baprop), baprop, 0)) %>%
                         group_by(species, type) %>%
                         summarize(
-                              pres = stat(basal_area > 0, weight),
+                              pres = stat((n_trees + n_saplings) > 0 | n_seedlings > 0, weight), # any life stage
+                              pres_seed = stat(n_seedlings > 0, weight),
+                              pres_sap = stat(n_saplings > 0, weight),
+                              pres_tree = stat(n_trees > 0, weight),
                               batot = stat(basal_area, weight),
                               baprop = stat(baprop, weight),
                               nttot = stat(n_trees, weight),
+                              satot = stat(n_saplings, weight),
                               nstot = stat(n_seedlings, weight),
                               .groups = "drop"
                         ) %>%
-                        filter(!is.na(species))
+                        filter(!is.na(species)) %>%
+                        # Per-species regeneration fractions (mean-of-ratios v1).
+                        mutate(seed_frac = ifelse((nstot + nttot) > 0, nstot / (nstot + nttot), NA_real_),
+                               sap_frac  = ifelse((satot + nttot) > 0, satot / (satot + nttot), NA_real_))
 
                   v <- switch(input$fia_var,
                               "presence probability"  = "pres",
+                              "seedling presence"      = "pres_seed",
+                              "sapling presence"       = "pres_sap",
+                              "tree presence"          = "pres_tree",
                               "proportion basal area" = "baprop",
                               "total basal area"      = "batot",
                               "number of trees"       = "nttot",
-                              "number of seedlings"   = "nstot")
+                              "number of saplings"    = "satot",
+                              "number of seedlings"   = "nstot",
+                              "seedling fraction"      = "seed_frac",
+                              "sapling fraction"       = "sap_frac")
                   a$value <- a[[v]]
                   a$category <- a$species
                   lab <- paste("historical", input$summary_stat, input$fia_var)
