@@ -692,15 +692,7 @@ ui <- page_sidebar(
                                  Bandwidths specify the standard deviations of these kernels. Plots farther than 3 stdevs are considered non-analog and excluded."), hr(),
                         sliderInput("theta_geog", "Geographic bandwidth (km)", 5, 100, value = 30),
                         sliderInput("theta_clim", "Climate bandwidth (z)", .05, .5, value = .1) %>%
-                              tooltip("Climate bandwidth units are in standard deviations relative to climate variation across all FIA plots in the contiguous US"),
-                        selectInput("summary_stat", "Summary statistic", c("weighted mean", "weighted sum")) %>%
-                              tooltip(HTML("How to summarize the focal variable across analog FIA plots.<br><br>
-                                        <dl style='margin:0;'>
-                                            <dt>Weighted mean</dt>
-                                            <dd>Expected conditions given climate and location. Can be high even when analogs are few and distant.</dd>
-                                            <dt>Weighted sum</dt>
-                                            <dd>Propagule pressure potential: suitability weighted by accessibility to currently-occupied analog plots.</dd>
-                                        </dl>"))
+                              tooltip("Climate bandwidth units are in standard deviations relative to climate variation across all FIA plots in the contiguous US")
                   ),
 
                   accordion_panel(
@@ -754,7 +746,7 @@ ui <- page_sidebar(
                                           </dl>"))
                         ),
                         selectInput("time", "Raster variable timeframe", c("historical", "future", "delta")) %>%
-                              tooltip("Choose whether to display historical or future model predictions, or their difference.
+                              tooltip("Choose whether to display historical (2000-2025) or future (scenario selected above) model predictions, or their difference (delta).
                                       Only relevant for `FIA variable` and `ESS` raster variables."),
                         selectInput("vector", "Vector variable",
                                     c("occupied FIA plots", "all FIA plots", "focal site analogs", "current animation", "current field", "none")) %>%
@@ -1777,10 +1769,8 @@ server <- function(input, output, session) {
       ### full raster -----------------------
       aim <- reactive({
 
-            # Pooled-ratio variables are always a mean-based combine, so the
-            # "weighted sum" summary-stat toggle doesn't apply to them.
             is_ratio <- !is.null(ratio_pieces())
-            stat <- if (is_ratio) "weighted_mean" else gsub(" ", "_", input$summary_stat)
+            stat <- "weighted_mean"
 
             aim_query <- function(x){
                   suppressWarnings(analogs::analog_impact(
@@ -2142,21 +2132,17 @@ server <- function(input, output, session) {
                   title <- input$stat
             }else{
                   pre <- paste0(focal_label(), "<br/>")
-                  title <- paste0(pre, input$time, "<br/>", input$summary_stat, "<br/>", tolower(sub(" ", "<br/>", input$fia_var)))
-                  if(input$fia_var == "total basal area" &&
-                     input$summary_stat == "weighted mean"){
+                  title <- paste0(pre, input$time, "<br/>", tolower(sub(" ", "<br/>", input$fia_var)))
+                  if(input$fia_var == "total basal area"){
                         title <- paste0(title, "<br/>(ft2 BA / acre)")
                   }
-                  if(input$fia_var == "number of trees" &&
-                     input$summary_stat == "weighted mean"){
+                  if(input$fia_var == "number of trees"){
                         title <- paste0(title, "<br/>(trees / acre)")
                   }
-                  if(input$fia_var == "number of saplings" &&
-                     input$summary_stat == "weighted mean"){
+                  if(input$fia_var == "number of saplings"){
                         title <- paste0(title, "<br/>(saplings / acre)")
                   }
-                  if(input$fia_var == "number of seedlings" &&
-                     input$summary_stat == "weighted mean"){
+                  if(input$fia_var == "number of seedlings"){
                         title <- paste0(title, "<br/>(seedlings / acre)")
                   }
                   if(input$stat == "connectivity"){
@@ -2572,9 +2558,7 @@ server <- function(input, output, session) {
                         left_join(fia_plots_species_all(), by = join_by(x, y),
                                   relationship = "many-to-many")
 
-                  stat <- switch(input$summary_stat,
-                                 "weighted mean" = weighted.mean,
-                                 "weighted sum" = function(x, w) sum(x * w, na.rm = T))
+                  stat <- weighted.mean
 
                   a <- analogs %>%
                         select(x, y, weight, species, type) %>%
@@ -2620,7 +2604,7 @@ server <- function(input, output, session) {
                               "sapling fraction"       = "sap_frac")
                   a$value <- a[[v]]
                   a$category <- a$species
-                  lab <- paste("historical", input$summary_stat, input$fia_var)
+                  lab <- paste("historical", input$fia_var)
 
             } else {
                   # TYPE / GROUP / ALL-TREES MODES: weighted prevalence of the
