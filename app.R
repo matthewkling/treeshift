@@ -2,6 +2,7 @@ library(jsonlite)
 library(shiny)
 library(leaflet)
 library(ggplot2)
+library(patchwork)
 library(terra)
 library(analogs) # renv::install("matthewkling/analogs")
 library(dplyr)
@@ -162,6 +163,15 @@ clim_units <- c(tmean  = "\u00b0C",
                 aet    = "mm",
                 cwd    = "mm",
                 ppt    = "log10 mm")
+
+# Native-unit label for a climate variable. Climate rasters are stored in
+# standardized (z-score) units, so any plot showing native units must first
+# back-convert via clim_scales (z * sd + mean). Falls back to "standardized"
+# for a variable with no unit entry.
+unit_lab <- function(v) {
+      u <- unname(clim_units[v])
+      if (is.null(u) || is.na(u)) "standardized" else u
+}
 bbox_res <- 1
 clim_bbox <- as.vector(ext(rast("data/clim_historical.tif")))
 clim_bbox <- c(floor(clim_bbox[c(1, 3)] / bbox_res) * bbox_res, ceiling(clim_bbox[c(2, 4)] / bbox_res) * bbox_res)
@@ -871,6 +881,28 @@ ui <- page_sidebar(
                               ),
 
                               accordion_panel(
+                                    "Climate relationships",
+                                    helpText("Use this module to visualize how your selected FIA variable varies across climate gradients.
+                                             The plot shows smoothed relationships, based on either FIA plot data or interpolated grid cell values."), hr(),
+
+                                    layout_column_wrap(
+                                          width = 1/3,
+                                          # cr_v1 / cr_v2 choices are populated dynamically from the
+                                          # selected climate variables (see observeEvent(input$clim_vars));
+                                          # these initial values are just placeholders.
+                                          selectInput("cr_v1", "Variable 1 (x-axis)", c("cwd", "aet")),
+                                          selectInput("cr_clim", "Climate timeframe", c("historical", "future")) %>%
+                                                tooltip("Which climate the x-axis and grouping variable are drawn from. Use 'future' to pair a future prediction with the future climate that produced it. FIA plot observations are historical, so pairing them with future climate relates an observed response to a climate the plot has not experienced."),
+                                          selectInput("cr_data", "Dataset", c("modeled grid cells", "FIA plots")),
+                                          selectInput("cr_v2", "Variable 2 (levels)", c("aet", "cwd")),
+                                          sliderInput("cr_n", "Number of levels for variable 2", 1, 6, 3, step = 1)
+                                    ),
+
+
+                                    plotOutput("climate_response", height = "600px")
+                              ),
+
+                              accordion_panel(
                                     "Model evaluation",
                                     helpText("This module uses cross-validation to assess the accuracy of contemporary AIM predictions for the selected species and FIA variable.
                                              The first plot shows predicted versus observed values for the currently-selected model parameters."), br(),
@@ -1335,6 +1367,21 @@ server <- function(input, output, session) {
             .model_delta_axes_seeded(TRUE)
       })
 
+      ## Keep the climate-relationships module's variable menus in sync with the
+      ## climate variables selected in the left sidebar. Its plot indexes into
+      ## clim()$hst, which only holds the selected variables, so the options must
+      ## be exactly that set. Preserve the current pick when it's still available,
+      ## otherwise fall back to the first (v1) / second (v2) selected variable.
+      observeEvent(input$clim_vars, {
+            cv <- input$clim_vars
+            req(length(cv) >= 1)
+            keep <- function(cur, default) if (isTruthy(cur) && cur %in% cv) cur else default
+            updateSelectInput(session, "cr_v1", choices = cv,
+                              selected = keep(input$cr_v1, cv[1]))
+            updateSelectInput(session, "cr_v2", choices = cv,
+                              selected = keep(input$cr_v2, if (length(cv) >= 2) cv[2] else cv[1]))
+      })
+
       ## Dynamic snap-to-range button (label reflects focal entity)
       output$snap_focal_btn <- renderUI({
             switch(input$track,
@@ -1676,13 +1723,8 @@ server <- function(input, output, session) {
             d$dx <- d[[vx]]
             d$dy <- d[[vy]]
 
-            # Axis labels in native units (deltas are back-converted from
-            # z-scores in model_deltas). Fall back to "(standardized)" if a
-            # variable has no unit entry.
-            unit_lab <- function(v) {
-                  u <- unname(clim_units[v])
-                  if (is.null(u) || is.na(u)) "standardized" else u
-            }
+            # Axis labels use the shared unit_lab() helper; deltas are already
+            # back-converted from z-scores in model_deltas.
 
             # Selected models (current GCM ensemble) are drawn at full opacity;
             # non-selected trajectories are faded to 0.5 so the active ensemble
@@ -3124,6 +3166,136 @@ server <- function(input, output, session) {
                   theme_bw() +
                   labs(x = paste0("observed ", input$fia_var),
                        y = paste0("predicted ", input$fia_var))
+      })
+
+
+      # CLIMATE RESPONSE PLOT --------------------------------
+      output$climate_response <- renderPlot({
+            req(display_layer(), clim())
+
+            # cr_v1/cr_v2 track input$clim_vars via an observer; guard against the
+            # brief flush after a climate-variable change where the previous pick
+            # isn't yet in the layer set.
+            req(input$cr_v1 %in% input$clim_vars, input$cr_v2 %in% input$clim_vars)
+
+            v1 <- input$cr_v1
+            v2 <- input$cr_v2
+            n_groups <- input$cr_n
+
+
+            # Climate for the x-axis and grouping variable. Historical by default;
+            # 'future' lets you pair a future prediction with the future climate
+            # that produced it, rather than reading it against current climate.
+            use_fut <- isTRUE(input$cr_clim == "future")
+
+            if(input$cr_data == "modeled grid cells"){
+                  cr <- if (use_fut) clim()$fut else clim()$hst
+                  d <- rast(c(y = display_layer(),
+                              clim1 = cr[[v1]],
+                              clim2 = cr[[v2]])) %>%
+                        as.data.frame()
+            }
+
+            if(input$cr_data == "FIA plots"){
+                  # response_values() is the per-plot value for every variable
+                  # (including the pooled-ratio variables, whose pool()$values
+                  # carries occ/num/denom rather than a `response` column). It is
+                  # the raw historical plot observation.
+                  cp <- if (use_fut) pool()$clim_fut else pool()$clim_hst
+                  d <- data.frame(y = response_values(),
+                                  clim1 = cp[[v1]],
+                                  clim2 = cp[[v2]])
+            }
+
+            # Climate rasters are stored standardized, so back-convert to native
+            # units (z * sd + mean) before grouping and plotting -- this puts both
+            # the x-axis and the legend's interval labels in mm / degrees C. Falls
+            # back to leaving a variable standardized if it has no scale entry.
+            back_transform <- function(x, v) {
+                  s <- clim_scales[[v]]
+                  if (is.null(s) || !is.finite(s$sd)) return(x)
+                  x * s$sd + s$mean
+            }
+            d$clim1 <- back_transform(d$clim1, v1)
+            d$clim2 <- back_transform(d$clim2, v2)
+
+            # Group clim2 into equal-COUNT (quantile) bins rather than equal-width
+            # bins: skewed climate variables leave equal-width tail bins too sparse
+            # (or empty) to fit a smooth, which drops groups from the plot. Fall
+            # back to equal-width if the data can't support n distinct quantiles.
+            if(n_groups > 1) d$group <- tryCatch(cut_number(d$clim2, n_groups),
+                                                 error = function(e) cut(d$clim2, n_groups))
+            if(n_groups == 1) d$group <- "All values"
+
+            # Smooth on a link scale so fitted curves respect each variable's
+            # natural bounds: logit for [0, 1] variables, log for non-negative
+            # variables, identity for differences. Uses a GLM with a natural-spline
+            # basis; quasi-families accept the continuous grid-cell values without
+            # integer/proportion warnings. The FIA-plots dataset is the raw
+            # historical per-plot variable, so its family depends on the variable
+            # alone; only the modeled-grid dataset honors the raster stat and time.
+            bounded01 <- grepl("presence|fraction", input$fia_var) ||
+                  input$fia_var == "proportion basal area"
+            fam <- if (input$cr_data == "FIA plots") {
+                  if (bounded01) quasibinomial() else quasipoisson()
+            } else if (input$stat == "connectivity" &&
+                       isTRUE(input$cs_stat == "current direction")) {
+                  gaussian()                      # circular (0-360 deg): a log link is meaningless
+            } else if (input$stat != "FIA variable") {
+                  quasipoisson()                  # ESS / similarity / connectivity magnitudes: non-negative
+            } else if (input$time == "delta") {
+                  gaussian()                      # future - historical difference (can be negative)
+            } else if (bounded01) {
+                  quasibinomial()                 # bounded [0, 1]
+            } else {
+                  quasipoisson()                  # counts / basal area: non-negative
+            }
+
+            # Base the y-axis on the fitted lines, not the SE ribbons -- the
+            # ribbons can blow up where a group's smooth extrapolates into a
+            # sparse tail. Refit the same per-group smooth, take the range of the
+            # fitted values, and clip the display there with coord_cartesian (the
+            # geom_smooth fit itself still uses all the data; only the view is
+            # bounded).
+            dd <- d[is.finite(d$y) & is.finite(d$clim1), ]
+            fits <- unlist(lapply(split(dd, dd$group), function(g) {
+                  tryCatch(fitted(glm(y ~ splines::ns(clim1, 4), family = fam, data = g)),
+                           error = function(e) numeric(0))
+            }))
+            ylim <- if (length(fits)) range(fits, na.rm = TRUE) else NULL
+
+            p_main <- ggplot(d, aes(clim1, y, color = group, fill = group)) +
+                  geom_smooth(method = "glm",
+                              formula = y ~ splines::ns(x, 4),
+                              method.args = list(family = fam)) +
+                  scale_fill_viridis_d() +
+                  scale_color_viridis_d() +
+                  coord_cartesian(ylim = ylim) +
+                  # Label the climate axes with their timeframe (so historical vs
+                  # future is never ambiguous) and their native units.
+                  labs(x = paste0(input$cr_clim, " ", v1, " (", unit_lab(v1), ")"),
+                       fill = paste0(input$cr_clim, "\n", v2, " (", unit_lab(v2), ")"),
+                       color = paste0(input$cr_clim, "\n", v2, " (", unit_lab(v2), ")"),
+                       # FIA-plots data is raw historical observation, so label it
+                       # by the variable rather than the (stat/time-aware) raster title.
+                       y = if (input$cr_data == "FIA plots") paste("observed", input$fia_var)
+                       else gsub("<br/>", " ", raster_title()))
+
+            # Marginal density of the x variable, split by group. This shows each
+            # clim2 bin's coverage along clim1, which is what explains sparse-tail
+            # extrapolation in the smooths below. It carries its own y-scale, so it
+            # doesn't interact with the fitted-line ylim on the main panel.
+            p_dens <- ggplot(d, aes(clim1, fill = group, color = group)) +
+                  geom_density(alpha = .3, linewidth = .3, position = "stack") +
+                  scale_fill_viridis_d() +
+                  scale_color_viridis_d() +
+                  theme_void() +
+                  theme(legend.position = "none")
+
+            # patchwork aligns the two panels on a shared x-axis (both are built
+            # from the same clim1), and collects the single legend from p_main.
+            p_dens / p_main +
+                  plot_layout(heights = c(1, 8), guides = "collect")
       })
 
 
