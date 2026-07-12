@@ -2315,7 +2315,11 @@ server <- function(input, output, session) {
                                      "Forward analogs" = site_analogs()$fwd_analogs,
                                      "Contemporary analogs" = site_analogs()$bsl_analogs) %>%
                               mutate(x = analog_x, y = analog_y)
-                        pd$display <- pd$response
+                        # Index the per-plot response by analog_index rather than
+                        # reading a `response` y-column: pool()$values carries
+                        # occ/num/denom (not `response`) for the pooled-ratio
+                        # variables, so response_values() is the uniform source.
+                        pd$display <- response_values()[pd$analog_index]
                   } else {
                         # Show the full analog pool, including plots in the padded
                         # ring just outside the modeling bbox — these are still
@@ -2467,7 +2471,10 @@ server <- function(input, output, session) {
             d$v1 <- d$v1 * scl1$sd + scl1$mean
             d$v2 <- d$v2 * scl2$sd + scl2$mean
 
-            d$value <- d$response
+            # See note in the FIA-plot marker layer: pool()$values has no
+            # `response` column for the pooled-ratio variables, so take the
+            # per-plot value from response_values() via analog_index.
+            d$value <- response_values()[d$analog_index]
             d <- arrange(d, value) %>% mutate(panel = "Climate space")
 
 
@@ -2519,7 +2526,7 @@ server <- function(input, output, session) {
                                  color = "#4c32a8", alpha = .5)
             }
 
-            if(nrow(filter(d, clim_dist <= input$theta_clim * 3)) == 0){
+            if(nrow(filter(d, env_dist <= input$theta_clim * 3)) == 0){
                   p <- p +
                         annotate(geom = "text", color = "red",
                                  label = "No FIA plots found\nwithin geographic & climatic range\nof focal site",
@@ -2540,13 +2547,13 @@ server <- function(input, output, session) {
                         "Reverse analogs" = site_analogs()$rev_analogs,
                         "Forward analogs" = site_analogs()$fwd_analogs,
                         "Contemporary analogs" = site_analogs()$bsl_analogs)
-            d$value <- d$response
+            d$value <- response_values()[d$analog_index]
             d <- arrange(d, value) %>% mutate(panel = "Distance space")
 
             dom <- if(!response_is_binary()) seq_domain(d$value) else 0:1
 
             ymax <- if(input$filter_clim) input$theta_clim * 3.3 else NA
-            ggplot(d, aes(geog_dist, clim_dist, fill = value)) +
+            ggplot(d, aes(geog_dist, env_dist, fill = value)) +
                   geom_vline(xintercept = input$theta_geog, linetype = "longdash", color = "#4c32a8", alpha = .5) +
                   geom_vline(xintercept = input$theta_geog * 3, color = "#4c32a8", alpha = .5) +
                   geom_hline(yintercept = input$theta_clim, linetype = "longdash", color = "#4c32a8", alpha = .5) +
@@ -2557,10 +2564,10 @@ server <- function(input, output, session) {
                   geom_point(data = filter(d, samp_method_cd == 2), color = "gray70", size = 1.5) +
                   geom_point(data = filter(d, samp_method_cd == 1), shape = 21, color = "black", size = 3) +
 
-                  geom_point(data = tibble::tibble(geog_dist = 0, clim_dist = 0,
+                  geom_point(data = tibble::tibble(geog_dist = 0, env_dist = 0,
                                                    shape_label = paste0("selected site,\n",
                                                                         eras()[2], " climate")),
-                             aes(x = geog_dist, y = clim_dist, shape = shape_label),
+                             aes(x = geog_dist, y = env_dist, shape = shape_label),
                              color = "#4c32a8", fill = "#4c32a8",
                              size = 10, alpha = .5, inherit.aes = FALSE) +
 
@@ -2580,14 +2587,14 @@ server <- function(input, output, session) {
             d <- bind_rows(site_analogs()$rev_analogs %>% mutate(type = "reverse"),
                            site_analogs()$fwd_analogs %>% mutate(type = "forward"),
                            site_analogs()$bsl_analogs %>% mutate(type = "contemporary")) %>%
-                  filter(clim_dist <= input$theta_clim * 3)
+                  filter(env_dist <= input$theta_clim * 3)
 
             # Plot-level analog set: one row per (analog plot × analog direction),
             # joined to plot_occ for plot-level attributes (forest_type, forest_group).
             plot_analogs <- plot_occ()[d$analog_index, ] %>%
                   select(x, y, forest_type, forest_group) %>%
-                  bind_cols(select(d, clim_dist, geog_dist, type)) %>%
-                  mutate(weight = dnorm(clim_dist, sd = input$theta_clim) *
+                  bind_cols(select(d, env_dist, geog_dist, type)) %>%
+                  mutate(weight = dnorm(env_dist, sd = input$theta_clim) *
                                dnorm(geog_dist, sd = input$theta_geog))
 
             # SPECIES MODE: per-species decomposition using tree-level data.
