@@ -7,7 +7,7 @@ select <- dplyr::select
 
 # load FIA tables -------------------------------
 
-dir <- "/Volumes/T7/FIA/2025_06_27"
+dir <- "/Volumes/ultramarine/FIA/2025_06_27"
 
 plot <- fread(paste0(dir, "/CSV_FIADB_ENTIRE/ENTIRE_PLOT.csv"), stringsAsFactors = F,
               colClasses = c(CN = "character")) %>%
@@ -107,76 +107,124 @@ write_csv(type, "data/forest_type_codes.csv")
 
 # join tables -----------------------------------------
 
-d <- plot %>%
-      left_join(planted) %>%
-      left_join(forest_type) %>%
-      left_join(subplot) %>%
-      left_join(tree) %>%
-      full_join(seedling) %>%
-      left_join(species) %>%
-      mutate(PLOT_ID = paste(STATECD, UNITCD, COUNTYCD, PLOT),
-             SUBPLOT_ID = paste(PLOT_ID, SUBP)) %>%
+# Tree and seedling records are attached to the plot scaffold *independently*,
+# rather than threading seedlings through the tree table. Joining them to each
+# other (on PLT_CN-SUBP-SPCD) has three failure modes: a seedling record for a
+# species with no >=1" stem on that subplot has no tree row to match, so it was
+# appended with NA plot attributes and silently dropped by the plot filters
+# (losing exactly the regeneration-without-adults signal); a seedling riding on
+# dead-tree rows was dropped by the live-stem filter; and a seedling value was
+# replicated across each of that species' tree rows, inflating the sum. Keeping
+# the two paths separate removes all three by construction.
 
+# Plot scaffold: every plot-level filter applied once, and the latest visit
+# selected per plot location. Keyed by plt_cn.
+plot_base <- plot %>%
+      left_join(planted, by = "PLT_CN") %>%
+      left_join(forest_type, by = "PLT_CN") %>%
       filter(is.na(planted),
              PLOT_STATUS_CD %in% 1:2, # keep sampled plots (forest or nonforest); drop non-sampled (status 3)
              DESIGNCD %in% c(1, 111:118, 230:242, 311:323, 328, 501:506), # 4-subplot design
-             SUBP <= 4) %>%
-
+             MANUAL >= 2.0) %>%
       clean_names() %>%
-      mutate(lon = ifelse(lon>0, lon-360, lon)) %>%
-      filter(lat > 24) %>%
-
-      mutate(tree_id = paste(subplot_id, designcd, tree)) %>%
-      filter(manual >= 2.0,
+      mutate(lon = ifelse(lon > 0, lon - 360, lon),
+             yr = measyear, # measurement year (not invyr) is the correct sampling date
+             plot_id = paste(statecd, unitcd, countycd, plot)) %>%
+      filter(lat > 24, lat < 50,
              is.finite(lon), is.finite(lat)) %>%
+      # Most recent visit per plot location. Grouped by plot_id (not subplot) so
+      # each plot is represented by exactly one visit, for every life stage.
+      group_by(plot_id) %>%
+      filter(yr == max(yr)) %>%
+      ungroup() %>%
+      select(plt_cn, plot_id, lon, lat, forest_type, samp_method_cd, yr)
 
-      mutate(yr = measyear) %>% # measurement year (not invyr) is the correct sampling date
-      select(-invyr, -measyear)
+# Species lookup: clean binomial + woodland flag, resolved once. Records not
+# identified to species (missing genus/epithet, or genus-level / unknown codes
+# like "spp.") get a NA name so they don't surface as fake species -- their stems
+# still count toward all-trees totals.
+species_lut <- species %>%
+      mutate(species_name = ifelse(is.na(GENUS) | GENUS == "" |
+                                         is.na(SPECIES) | SPECIES == "" |
+                                         tolower(SPECIES) %in% c("spp.", "spp", "unknown"),
+                                   NA_character_, paste(GENUS, SPECIES)),
+             is_woodland = !is.na(WOODLAND) & toupper(WOODLAND) == "Y") %>%
+      select(SPCD, genus = GENUS, species = species_name, is_woodland)
+
+# Live stems (>=1" DBH/DRC), attached to their plot by plt_cn.
+stems <- tree %>%
+      filter(STATUSCD == 1, SUBP <= 4) %>% # live trees on the 4 subplots
+      select(PLT_CN, SUBP, SPCD, DIA, TPA_UNADJ) %>%
+      left_join(species_lut, by = "SPCD") %>%
+      clean_names() %>%
+      inner_join(plot_base, by = "plt_cn")
+
+# Seedlings (<1" DBH/DRC), attached to their plot by plt_cn -- independently of
+# the tree records, so a species regenerating where it has no established stem
+# survives.
+seeds <- seedling %>%
+      filter(SUBP <= 4) %>%
+      left_join(species_lut, by = "SPCD") %>%
+      clean_names() %>%
+      inner_join(plot_base, by = "plt_cn")
 
 
 # summarize to plot-species level -------------------
 
-d <- d %>%
-      filter(lat < 50) %>%
-      group_by(plot_id, subplot_id) %>%
-      filter(yr == max(yr),
-             statuscd == 1 | is.na(statuscd) # live trees, or no trees
-      ) %>%
-      # Build a clean binomial; NA-out records that aren't identified to species
-      # (missing genus/epithet, or genus-level / unknown codes like "spp.") so
-      # they don't surface as fake species -- their stems still count in all-trees.
-      mutate(species = ifelse(is.na(genus) | genus == "" |
-                                    is.na(species) | species == "" |
-                                    tolower(species) %in% c("spp.", "spp", "unknown"),
-                              NA_character_, paste(genus, species))) %>%
-      # Woodland species are measured at DRC, not DBH.
-      # Convert DRC -> DBH (inches) via Chojnacky & Rogers 1999. Their
-      # equations are fit for pinyon, Gambel oak, and Utah juniper; we extend
-      # them by genus, and use the juniper equation for all other woodland genera.
-      # Juniper is the fallback because the genera (mesquite, mountain-mahogany, etc.)
-      # share its low-branching, multi-stemmed growth form mroe than pinyon or oak forms.
-      # stm assumed multi-stem (0); floored at 0 where the linear model goes negative for
-      # small stems. Used for BA only -- the sapling/tree split below stays on
-      # the field-measured diameter.
-      mutate(is_woodland = !is.na(woodland) & toupper(woodland) == "Y",
-             dia_ba = case_when(
-                   !is_woodland       ~ dia,
-                   genus == "Pinus"   ~ pmax(-1.9374 + 0.9823 * dia, 0), # pinyons
-                   genus == "Quercus" ~ pmax(-1.4599 + 0.9533 * dia, 0), # dryland/scrub oaks
-                   TRUE               ~ pmax(-2.6843 + 1.0222 * dia, 0))) %>% # junipers + other woodland
-      group_by(lon, lat, forest_type, species, samp_method_cd) %>%
+# Woodland species (junipers, pinyons, dryland oaks) are measured at
+# diameter-at-root-collar, not DBH, which overstates a DBH-basis basal
+# area. Convert DRC -> DBH (inches) via Chojnacky & Rogers 1999. Their
+# equations are fit for pinyon, Gambel oak, and Utah juniper; we extend
+# them by genus (the growth form driving the DRC/DBH offset is broadly
+# genus-conserved): Pinus -> pinyon slope, Quercus -> oak slope, all other
+# woodland -> juniper baseline. Juniper is the fallback because the
+# remaining woodland genera (mesquite, mountain-mahogany, etc.) share its
+# low-branching, multi-stemmed growth form -- the largest DRC/DBH offset of
+# the three -- more than the single-stem pinyon or oak forms. Only
+# woodland-flagged species are touched, so timber pines/oaks (DBH-measured)
+# are unaffected. stm assumed multi-stem (0); floored at 0 where the linear
+# model goes negative for small stems. Used for BA only -- the sapling/tree
+# split below stays on the field-measured diameter.
+stems <- stems %>%
+      mutate(dia_ba = case_when(
+            !is_woodland       ~ dia,
+            genus == "Pinus"   ~ pmax(-1.9374 + 0.9823 * dia, 0), # pinyons
+            genus == "Quercus" ~ pmax(-1.4599 + 0.9533 * dia, 0), # dryland/scrub oaks
+            TRUE               ~ pmax(-2.6843 + 1.0222 * dia, 0))) # junipers + other woodland
+
+tree_summ <- stems %>%
+      group_by(plt_cn, species) %>%
       summarize(basal_area = sum(0.0054542 * dia_ba^2 * tpa_unadj, na.rm = T), # ft2/acre, all live stems (DBH basis; woodland DRC->DBH converted)
                 n_saplings = sum(tpa_unadj[dia < 5], na.rm = T),  # stems/acre, saplings 1.0-4.9" DBH (microplot)
                 n_trees = sum(tpa_unadj[dia >= 5], na.rm = T),    # stems/acre, trees >=5.0" DBH (subplot/macroplot)
-                # seed_tpa is one value per subplot-species but the tree join
-                # replicates it across each of that species' tree rows, so count
-                # each subplot-species once.
-                n_seedlings = sum(seed_tpa[!duplicated(paste(subp, spcd))], na.rm = T), # stems/acre, seedlings <1" DBH (microplot)
-                # northness = mean(northness, na.rm = TRUE),
-                # eastness = mean(eastness, na.rm = TRUE),
                 .groups = "drop")
 
-# note: if we keep topo-interpolation downstream, may want to retain subplot resolution at this stage
+# Summed over subplots directly from the seedling records -- no tree rows to
+# replicate across, so no de-duplication needed.
+seed_summ <- seeds %>%
+      group_by(plt_cn, species) %>%
+      summarize(n_seedlings = sum(seed_tpa, na.rm = T), # stems/acre, seedlings <1" DBH (microplot)
+                .groups = "drop")
+
+# Combine the two life-stage paths at plot-species level. A species present in
+# only one of them (adults but no regen, or regen but no adults) gets 0 for the
+# other, rather than being dropped.
+plot_species <- full_join(tree_summ, seed_summ, by = c("plt_cn", "species")) %>%
+      mutate(across(c(basal_area, n_saplings, n_trees, n_seedlings),
+                    ~ ifelse(is.na(.x), 0, .x)))
+
+# Attach plot attributes. Plots with no tree or seedling records survive as a
+# single species = NA row of zeros -- these are the non-forest absences.
+d <- plot_base %>%
+      left_join(plot_species, by = "plt_cn") %>%
+      mutate(across(c(basal_area, n_saplings, n_trees, n_seedlings),
+                    ~ ifelse(is.na(.x), 0, .x))) %>%
+      select(lon, lat, forest_type, species, samp_method_cd,
+             basal_area, n_saplings, n_trees, n_seedlings)
+
+# note: if we keep topo-interpolation downstream, may want to retain subplot
+# resolution at this stage -- subplot attributes would attach to `stems` /
+# `seeds` by (plt_cn, subp) before the summaries above.
 
 
 
@@ -218,7 +266,7 @@ crs(dp) <- crs(rast("data/clim_historical.tif"))
 
 # load and extract landfire existing vegetation type
 # veg <- rast("/Volumes/T7/landfire/LF2024_EVT_250_CONUS/Tif/LC24_EVT_250.tif") # load raster
-veg <- rast("/Volumes/T7/landfire/LF2020_BPS_220_CONUS/Tif/LC20_BPS_220.tif") # load raster
+veg <- rast("/Volumes/ultramarine/landfire/LF2020_BPS_220_CONUS/Tif/LC20_BPS_220.tif") # load raster
 dp <- project(dp, crs(veg))
 if(crs(veg) != crs(dp)) stop()
 veg <- raster::extract(veg, dp)
@@ -226,7 +274,7 @@ veg <- raster::extract(veg, dp)
 # filter on veg
 nonforest_veg <- c("Barren-Rock/Sand/Clay", "Grassland", "Perennial Ice/Snow", "Riparian",
                    "Savanna", "Shrubland", "Sparse")
-nonforest <- foreign::read.dbf("/Volumes/T7/landfire/LF2020_BPS_220_CONUS/Tif/LC20_BPS_220.tif.vat.dbf") %>%
+nonforest <- foreign::read.dbf("/Volumes/ultramarine/landfire/LF2020_BPS_220_CONUS/Tif/LC20_BPS_220.tif.vat.dbf") %>%
       as_tibble() %>%
       filter(GROUPVEG %in% nonforest_veg)
 d <- d %>%
