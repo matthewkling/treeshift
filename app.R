@@ -618,7 +618,7 @@ ui <- page_sidebar(
                                               <dt>Abundance</dt> <dd>Population density of the selected life stage, in stems per acre.</dd>
                                               <dt>Basal area</dt> <dd>Live tree and sapling basal area, in ft&sup2; per acre.</dd>
                                               <dt>Proportion basal area</dt> <dd>The focal species' share of total stand basal area, multiplied by the probability that stand basal area is nonzero.</dd>
-                                              <dt>Regeneration fraction</dt> <dd>The focal population's regeneration share [selected stage / (selected stage + adults)], multiplied by species occurrence probability. Low where the species is adult-dominated or absent; high where regeneration dominates.</dd>
+                                              <dt>Regeneration fraction</dt> <dd>Probability that the selected regeneration stage is present relative to adults, conditional on the species occuring on the plot. Calcualted as p(regen) / (p(regen) + p(adult)). Adults only = 0; regen only = 1; adults and regen together = intermediate value (not precisely 0.5 due to differing sample areas).</dd>
                                           </dl>")),
                         ## Life stage: shown only for metrics/tracks that have one
                         ## (occurrence / abundance / regeneration fraction on the
@@ -1157,11 +1157,15 @@ server <- function(input, output, session) {
                         .groups = "drop") %>%
                   left_join(ft_to_fg, by = "forest_type") %>%
                   mutate(baprop = ifelse(baplot == 0, 0, baprop),
-                         # Regeneration fractions (focal species): stage relative to
-                         # adults, in [0,1]. NA where the species is absent as those
-                         # stages+adults (conditional on presence). mean-of-ratios v1.
-                         seed_frac = ifelse((nstot + nttot) > 0, nstot / (nstot + nttot), NA_real_),
-                         sap_frac  = ifelse((satot + nttot) > 0, satot / (satot + nttot), NA_real_))
+                         # Per-plot regeneration fractions (focal species), on an
+                         # occurrence basis to match the interpolated surface (see
+                         # ratio_pieces): 0 = adults only, 0.5 = stage and adults
+                         # both present, 1 = stage only. NA where the species is
+                         # absent as both that stage and adults.
+                         seed_frac = ifelse((nstot + nttot) > 0,
+                                            (nstot > 0) / ((nstot > 0) + (nttot > 0)), NA_real_),
+                         sap_frac  = ifelse((satot + nttot) > 0,
+                                            (satot > 0) / ((satot > 0) + (nttot > 0)), NA_real_))
       })
 
       # Single active response vector, aligned with plot_occ() rows.
@@ -1201,13 +1205,46 @@ server <- function(input, output, session) {
                          "number of trees"      = po$ntplot,
                          "number of saplings"   = po$saplot,
                          "number of seedlings"  = po$nsplot,
-                         "seedling fraction"    = ifelse((po$nsplot + po$ntplot) > 0, po$nsplot / (po$nsplot + po$ntplot), NA_real_),
-                         "sapling fraction"     = ifelse((po$saplot + po$ntplot) > 0, po$saplot / (po$saplot + po$ntplot), NA_real_))
+                         # Occurrence-based, matching ratio_pieces() and the
+                         # Species-track fractions in plot_occ(): 0 = adults only,
+                         # 0.5 = stage and adults both present, 1 = stage only.
+                         "seedling fraction"    = ifelse((po$nsplot + po$ntplot) > 0,
+                                                         (po$nsplot > 0) / ((po$nsplot > 0) + (po$ntplot > 0)), NA_real_),
+                         "sapling fraction"     = ifelse((po$saplot + po$ntplot) > 0,
+                                                         (po$saplot > 0) / ((po$saplot > 0) + (po$ntplot > 0)), NA_real_))
             }
 
             # Guard against transient NULL during track/fia_var transitions
             req(!is.null(v))
             v
+      })
+
+      # Whether the focal entity is present, per track -- the same quantity the
+      # "presence probability" variable measures, and independent of which
+      # variable is being displayed. Used by the "occupied FIA plots" filter:
+      # keying that off `display > 0` means "has regeneration" for the fraction
+      # variables, which hides plots that are occupied but simply aren't
+      # regenerating. (It coincides with display > 0 for the other variables.)
+      occupied_values <- reactive({
+            po <- plot_occ()
+            req(isTruthy(input$track))
+
+            v <- if (input$track == "Species") {
+                  po$pres
+            } else if (input$track == "Forest type") {
+                  req(isTruthy(input$forest_type))
+                  as.integer(!is.na(po$forest_type) &
+                                   po$forest_type == as.integer(input$forest_type))
+            } else if (input$track == "Forest group") {
+                  req(isTruthy(input$forest_group))
+                  as.integer(!is.na(po$forest_group) &
+                                   po$forest_group == as.integer(input$forest_group))
+            } else if (input$track == "All trees") {
+                  as.integer((po$ntplot + po$saplot) > 0 | po$nsplot > 0)
+            }
+
+            req(!is.null(v))
+            as.logical(v)
       })
 
       # Pooled-ratio variables (proportion basal area, seedling/sapling fraction)
@@ -1219,16 +1256,39 @@ server <- function(input, output, session) {
       ratio_pieces <- reactive({
             req(isTruthy(input$track), isTruthy(input$fia_var))
             po <- plot_occ()
+            # Regeneration fractions are a fraction of OCCURRENCE weight, not of
+            # stem density. Seedlings and saplings are tallied on the microplot
+            # (each stem = 74.965/acre) while adults come off the subplot (each =
+            # 6.018/acre), so a density ratio applies a ~12.5x amplification to
+            # every regen stem before dividing: one seedling + one adult reads
+            # 0.93 rather than 0.5, squashing the balanced core up against the
+            # pure-colonization end. Using presence indicators puts both stages on
+            # the same footing and gives a readable axis: 0 = adults only
+            # (relict/trailing), ~0.5 = both present (core), 1 = regen only
+            # (colonizing/leading).
+            #
+            # Proportion basal area is deliberately left on a density basis: it is
+            # focal BA over stand BA, with each stem's own TPA applied to both
+            # sides, so it never crosses the microplot/subplot boundary and isn't
+            # distorted the way the regen fractions are.
             if (input$track == "Species") {
                   switch(input$fia_var,
                          "proportion basal area" = list(num = po$batot, denom = po$baplot),
-                         "seedling fraction"     = list(num = po$nstot, denom = po$nstot + po$nttot),
-                         "sapling fraction"      = list(num = po$satot, denom = po$satot + po$nttot),
+                         "seedling fraction"     = list(num = as.integer(po$nstot > 0),
+                                                        denom = as.integer(po$nstot > 0) +
+                                                              as.integer(po$nttot > 0)),
+                         "sapling fraction"      = list(num = as.integer(po$satot > 0),
+                                                        denom = as.integer(po$satot > 0) +
+                                                              as.integer(po$nttot > 0)),
                          NULL)
             } else if (input$track == "All trees") {
                   switch(input$fia_var,
-                         "seedling fraction" = list(num = po$nsplot, denom = po$nsplot + po$ntplot),
-                         "sapling fraction"  = list(num = po$saplot, denom = po$saplot + po$ntplot),
+                         "seedling fraction" = list(num = as.integer(po$nsplot > 0),
+                                                    denom = as.integer(po$nsplot > 0) +
+                                                          as.integer(po$ntplot > 0)),
+                         "sapling fraction"  = list(num = as.integer(po$saplot > 0),
+                                                    denom = as.integer(po$saplot > 0) +
+                                                          as.integer(po$ntplot > 0)),
                          NULL)
             } else NULL
       })
@@ -1828,13 +1888,35 @@ server <- function(input, output, session) {
             aim_fut <- aim_query(clim()$fut)
             names(aim_bsl) <- names(aim_fut) <- gsub("weighted_mean_|weighted_sum_", "", names(aim_fut))
 
-            # Pooled-ratio surface: occurrence-gated ratio-of-means. The pieces
-            # come back as weighted_mean layers occ/num/denom; combine them into
-            # the standard `response` layer so all downstream code is unchanged.
+            # Pooled-ratio surface: ratio-of-means from the weighted_mean layers
+            # occ/num/denom, combined into the standard `response` layer so all
+            # downstream code is unchanged.
+            #
+            # num/denom is already conditional on occurrence -- absent plots
+            # contribute 0 to both and drop out -- so it reads "the ratio among
+            # plots where the focal entity occurs".
+            #
+            # The regeneration fractions stay conditional and are MASKED (NA)
+            # where no occupied plot falls within kernel range. Multiplying by
+            # occurrence instead would suppress unsuitable ground by driving the
+            # value to 0 -- but 0 already means "occurs, adults only" (relict), so
+            # the product would conflate two very different states. Masking keeps
+            # them distinct: blank = doesn't occur, 0 = occurs but no regen. This
+            # also matches the per-plot markers, which are already NA where the
+            # species is absent and 0 where it's adults-only.
+            #
+            # Proportion basal area keeps the occurrence weighting: there 0 means
+            # "the focal species is 0% of a real stand" vs "there is no stand" --
+            # both read as "the species isn't here", so collapsing them costs
+            # little, and the unconditional surface is better behaved.
             if (is_ratio) {
+                  conditional <- grepl("fraction", input$fia_var)
                   combine_ratio <- function(r){
-                        resp <- r[["occ"]] * r[["num"]] / r[["denom"]]
-                        resp[!is.finite(resp[])] <- 0  # denom == 0 (no stems in range) -> 0
+                        resp <- r[["num"]] / r[["denom"]]
+                        if (!conditional) resp <- r[["occ"]] * resp
+                        # denom == 0: no occupied plot in range. Undefined for the
+                        # fractions; 0 for the occurrence-weighted proportion.
+                        resp[!is.finite(resp[])] <- if (conditional) NA else 0
                         names(resp) <- "response"
                         c(r, resp)
                   }
@@ -2224,7 +2306,11 @@ server <- function(input, output, session) {
             if(input$time == "delta" && input$stat == "FIA variable"){
                   # units are deltas
                   r <- display_layer()
-                  r[is.na(r[])] <- 0 # fill non-analog NAs
+                  # Fill non-analog NAs -- except for the regeneration fractions,
+                  # whose NAs are a deliberate mask (species not found within
+                  # range). Filling those would read as "no change" on the
+                  # diverging scale rather than "no information".
+                  if(!grepl("fraction", input$fia_var)) r[is.na(r[])] <- 0
                   mm <- minmax(r)
                   dom <- max(abs(mm)) * c(-1, 1)
                   rast_pal <- colorNumeric(
@@ -2241,11 +2327,24 @@ server <- function(input, output, session) {
                   )
             } else if(input$stat == "FIA variable") {
                   # historical or future estimate: domain is unit except for total BA
-                  rast_pal <- colorNumeric(
-                        palette = c("gray90", green) %>% choose_palette(),
-                        domain = dom,
-                        na.color = "transparent"
-                  )
+                  if(grepl("fraction", input$fia_var)){
+                        # Regeneration fractions diverge around 0.5 (relict <->
+                        # colonizing), so they default to RdBu. Fixing the domain to
+                        # the variable's full [0, 1] range keeps 0.5 on the palette
+                        # midpoint rather than floating with the observed max.
+                        if(input$rast_transform == "identity") dom <- c(0, 1)
+                        rast_pal <- colorNumeric(
+                              palette = "RdBu" %>% choose_palette(),
+                              domain = dom,
+                              na.color = "transparent"
+                        )
+                  } else {
+                        rast_pal <- colorNumeric(
+                              palette = c("gray90", green) %>% choose_palette(),
+                              domain = dom,
+                              na.color = "transparent"
+                        )
+                  }
             } else if(input$stat == "connectivity" && input$cs_stat == "current direction") {
                   proj_method <- "ngb" # because bilinear interpolation breaks for a circular variable
                   dom <- if(input$rast_transform == "identity") c(0, 360) else mm
@@ -2320,26 +2419,39 @@ server <- function(input, output, session) {
                         # occ/num/denom (not `response`) for the pooled-ratio
                         # variables, so response_values() is the uniform source.
                         pd$display <- response_values()[pd$analog_index]
+                        pd$occupied <- occupied_values()[pd$analog_index]
                   } else {
                         # Show the full analog pool, including plots in the padded
                         # ring just outside the modeling bbox — these are still
                         # contributing as analogs to edge cells in the prediction.
                         pd <- plot_occ()
                         pd$display <- response_values()
+                        pd$occupied <- occupied_values()
                   }
 
-                  if(input$vector == "occupied FIA plots") pd <- filter(pd, display > 0)
+                  # Occupancy is the focal entity's presence, not `display > 0`:
+                  # for the regeneration fractions the latter would mean "has
+                  # regeneration" and hide adults-only plots, which are occupied.
+                  if(input$vector == "occupied FIA plots") pd <- filter(pd, occupied)
 
-                  dom <- if(!response_is_binary()) seq_domain(pd$display) else 0:1
+                  # Regeneration fractions get the variable's full [0, 1] range so
+                  # 0.5 stays on the diverging palette's midpoint.
+                  dom <- if(response_is_binary()) 0:1
+                  else if(grepl("fraction", input$fia_var)) c(0, 1)
+                  else seq_domain(pd$display)
 
                   # Markers follow the raster palette only when the raster is
                   # itself showing FIA response on a sequential scale (see
                   # marker_follows_raster_palette); otherwise the canonical
-                  # gray90 -> green ramp. colorNumeric accepts either a color
-                  # vector or a named-palette string.
+                  # gray90 -> green ramp, except for the regeneration fractions,
+                  # which default to the same diverging RdBu as their raster (on
+                  # the sequential ramp their 0 = relict end renders near-white).
+                  # colorNumeric accepts either a color vector or a palette name.
                   marker_palette <- if(input$rast_palette != "default" &&
                                        marker_follows_raster_palette()){
                         input$rast_palette
+                  } else if(grepl("fraction", input$fia_var)){
+                        "RdBu"
                   } else {
                         c("gray90", green)
                   }
@@ -2357,7 +2469,14 @@ server <- function(input, output, session) {
                               group = "FIA plots"
                         ) %>%
                         addCircles(
-                              data = filter(pd, samp_method_cd == 1),
+                              # Drop plots with no defined value: the regeneration
+                              # fractions are NA wherever the species is absent as
+                              # both the stage and adults, and colorNumeric would
+                              # otherwise paint them in its na.color (a mid gray
+                              # that reads darker than a true zero). No-op for the
+                              # other variables, which are 0 rather than NA when
+                              # the focal entity is absent.
+                              data = filter(pd, samp_method_cd == 1, !is.na(display)),
                               lng = ~x,
                               lat = ~y,
                               radius = point_radius(), # meters
@@ -2635,9 +2754,14 @@ server <- function(input, output, session) {
                               .groups = "drop"
                         ) %>%
                         filter(!is.na(species)) %>%
-                        # Per-species regeneration fractions (mean-of-ratios v1).
-                        mutate(seed_frac = ifelse((nstot + nttot) > 0, nstot / (nstot + nttot), NA_real_),
-                               sap_frac  = ifelse((satot + nttot) > 0, satot / (satot + nttot), NA_real_))
+                        # Per-species regeneration fractions, on the same
+                        # occurrence basis as the map (see ratio_pieces): the
+                        # weighted presence terms above are exactly the occurrence
+                        # weights, so the fraction is one over their sum.
+                        mutate(seed_frac = ifelse((pres_seed + pres_tree) > 0,
+                                                  pres_seed / (pres_seed + pres_tree), NA_real_),
+                               sap_frac  = ifelse((pres_sap + pres_tree) > 0,
+                                                  pres_sap / (pres_sap + pres_tree), NA_real_))
 
                   v <- switch(input$fia_var,
                               "presence probability"  = "pres",
