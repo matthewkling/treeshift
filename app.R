@@ -790,9 +790,23 @@ ui <- page_sidebar(
 
                   accordion_panel(
                         "Export",
-                        helpText("Download the raster data displayed on the map as a .tif, or the current model settings as a .txt for reproducibility."), hr(),
+                        helpText("Download the raster data displayed on the map as a .tif, the underlying FIA plot data as a .csv,
+                                  or the current model settings as a .txt for reproducibility."), hr(),
                         textInput("download_filename", "Filename (without extension)", "fia_aim_result"),
                         downloadButton("download_raster", "Download raster"),
+                        br(),
+                        downloadButton("download_points", "Download FIA points") %>%
+                              tooltip(HTML("Plot-level FIA data for the points currently drawn on the map.<br><br>
+                                           <dl style='margin:0;'>
+                                               <dt>x, y</dt> <dd>Plot location (publicly released, fuzzed ~1.6 km)</dd>
+                                               <dt>entity</dt> <dd>Selected species, forest type, or forest group</dd>
+                                               <dt>variable</dt> <dd>Selected FIA variable</dd>
+                                               <dt>value</dt> <dd>Observed historical value of that variable</dd>
+                                               <dt>occupied</dt> <dd>Whether the entity is present at the plot</dd>
+                                               <dt>sampled</dt> <dd>FALSE at plots that were never surveyed</dd>
+                                           </dl>
+                                           The analog layer adds climate/geographic distance from the focal site and
+                                           the analog's kernel weight.")),
                         br(),
                         downloadButton("download_metadata", "Download metadata")
                   )
@@ -1245,6 +1259,106 @@ server <- function(input, output, session) {
 
             req(!is.null(v))
             as.logical(v)
+      })
+
+      # Plot-level data behind the FIA marker layer, with the active response
+      # attached as `display` and focal-entity occupancy as `occupied`. Shared by
+      # the map observer and the CSV export so the downloaded table is exactly
+      # the set of points drawn on the map.
+      #
+      # When the vector selector is on a non-point layer ("none", current
+      # animation/field) there is nothing on screen to mirror, so this falls back
+      # to the full analog pool -- the export stays available and meaningful
+      # regardless of what the map happens to be showing.
+      vector_points <- reactive({
+            req(plot_occ())
+
+            if(input$vector == "focal site analogs"){
+                  pd <- switch(input$analog_direction,
+                               "Reverse analogs" = site_analogs()$rev_analogs,
+                               "Forward analogs" = site_analogs()$fwd_analogs,
+                               "Contemporary analogs" = site_analogs()$bsl_analogs) %>%
+                        mutate(x = analog_x, y = analog_y)
+                  # Index the per-plot response by analog_index rather than
+                  # reading a `response` y-column: pool()$values carries
+                  # occ/num/denom (not `response`) for the pooled-ratio
+                  # variables, so response_values() is the uniform source.
+                  pd$display <- response_values()[pd$analog_index]
+                  pd$occupied <- occupied_values()[pd$analog_index]
+            } else {
+                  # Show the full analog pool, including plots in the padded
+                  # ring just outside the modeling bbox — these are still
+                  # contributing as analogs to edge cells in the prediction.
+                  pd <- plot_occ()
+                  pd$display <- response_values()
+                  pd$occupied <- occupied_values()
+            }
+
+            # Occupancy is the focal entity's presence, not `display > 0`:
+            # for the regeneration fractions the latter would mean "has
+            # regeneration" and hide adults-only plots, which are occupied.
+            if(input$vector == "occupied FIA plots") pd <- filter(pd, occupied)
+
+            pd
+      })
+
+      # Header-only version of the export schema, used when export_points()
+      # can't be built (see the download handler). Keeps the file a valid CSV
+      # with the documented columns rather than a Shiny error page.
+      export_points_empty <- function(){
+            tibble::tibble(x = numeric(), y = numeric(),
+                           entity = character(), variable = character(),
+                           value = numeric(), occupied = logical(),
+                           sampled = logical())
+      }
+
+      # Curated export schema for the FIA point download.
+      #
+      # Deliberately narrow, and deliberately FIXED: the header is identical no
+      # matter which variable is displayed, because the variable's name lives in
+      # a `variable` column rather than in the column name of its values. That
+      # means several exports can be bind_rows()'d, and a script can read `value`
+      # without knowing what was on screen when the file was made.
+      #
+      # Everything else in plot_occ() (batot, nsplot, samp_method_cd, ...) is
+      # internal shorthand. Emitting it would turn those names into a public
+      # interface that has to be documented here and kept stable across refactors,
+      # which is a bigger commitment than the columns are worth.
+      export_points <- reactive({
+            pd <- vector_points()
+
+            out <- tibble::tibble(
+                  x = pd$x,
+                  y = pd$y,
+                  entity = focal_label(),
+                  # The forest-type/group tracks ignore fia_var: their response is
+                  # membership in the type named by `entity`.
+                  variable = if(input$track %in% c("Forest type", "Forest group")) "presence"
+                  else input$fia_var,
+                  value = pd$display,
+                  # Focal entity presence, independent of `variable`. Not the same
+                  # question as value > 0: for the regeneration fractions that
+                  # would mean "has regeneration", which is false at occupied
+                  # adults-only plots.
+                  occupied = pd$occupied,
+                  # FALSE at plots that exist in the frame but were never surveyed
+                  # (samp_method_cd 2). Without this their zeros read downstream as
+                  # true absences.
+                  sampled = pd$samp_method_cd == 1
+            )
+
+            # The analog layer additionally carries the kernel geometry that
+            # defines the analog set. Weight matches the plot-level decomposition
+            # code: the product of the two gaussian kernel densities, unnormalized.
+            if(all(c("env_dist", "geog_dist") %in% names(pd))){
+                  out <- out %>%
+                        mutate(climate_distance = pd$env_dist,
+                               geographic_distance = pd$geog_dist,
+                               weight = dnorm(pd$env_dist, sd = input$theta_clim) *
+                                     dnorm(pd$geog_dist, sd = input$theta_geog))
+            }
+
+            out
       })
 
       # Pooled-ratio variables (proportion basal area, seedling/sapling fraction)
@@ -2408,31 +2522,7 @@ server <- function(input, output, session) {
 
             if(input$vector %in% c("all FIA plots", "occupied FIA plots", "focal site analogs")){
 
-                  if(input$vector == "focal site analogs"){
-                        pd <- switch(input$analog_direction,
-                                     "Reverse analogs" = site_analogs()$rev_analogs,
-                                     "Forward analogs" = site_analogs()$fwd_analogs,
-                                     "Contemporary analogs" = site_analogs()$bsl_analogs) %>%
-                              mutate(x = analog_x, y = analog_y)
-                        # Index the per-plot response by analog_index rather than
-                        # reading a `response` y-column: pool()$values carries
-                        # occ/num/denom (not `response`) for the pooled-ratio
-                        # variables, so response_values() is the uniform source.
-                        pd$display <- response_values()[pd$analog_index]
-                        pd$occupied <- occupied_values()[pd$analog_index]
-                  } else {
-                        # Show the full analog pool, including plots in the padded
-                        # ring just outside the modeling bbox — these are still
-                        # contributing as analogs to edge cells in the prediction.
-                        pd <- plot_occ()
-                        pd$display <- response_values()
-                        pd$occupied <- occupied_values()
-                  }
-
-                  # Occupancy is the focal entity's presence, not `display > 0`:
-                  # for the regeneration fractions the latter would mean "has
-                  # regeneration" and hide adults-only plots, which are occupied.
-                  if(input$vector == "occupied FIA plots") pd <- filter(pd, occupied)
+                  pd <- vector_points()
 
                   # Regeneration fractions get the variable's full [0, 1] range so
                   # 0.5 stays on the diverging palette's midpoint.
@@ -3438,6 +3528,24 @@ server <- function(input, output, session) {
 
             content = function(file) {
                   terra::writeRaster(display_layer(), file)
+            }
+      )
+      output$download_points <- downloadHandler(
+            filename = function() {
+                  paste(input$download_filename, "_points.csv", sep="")
+            },
+
+            content = function(file) {
+                  # isolate() because this runs outside a render context, where a
+                  # req() reaching up through the reactive chain surfaces as a 500
+                  # (which the browser saves as download_points.html) rather than
+                  # as a quiet no-op. The realistic path here is "focal site
+                  # analogs" selected with no site clicked yet; a header-only file
+                  # is the truthful answer to that, and always a valid CSV.
+                  pd <- tryCatch(isolate(export_points()),
+                                 error = function(e) export_points_empty())
+
+                  write_csv(pd, file)
             }
       )
       output$download_metadata <- downloadHandler(
