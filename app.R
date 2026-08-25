@@ -278,6 +278,22 @@ cs_stat_names <- c("current flow", "current on target", "current loss", "current
 cs_stats <- c("current_flow", "current_destinations", "current_loss", "current_power",
               "current_direction", "voltage", "conductance", "loss")
 
+# Left-sidebar menu choices, in connectivity-off and connectivity-on variants.
+# Connectivity is a niche module, so its entries are kept out of the core
+# `stat` and `vector` menus unless the user flips "Enable connectivity" in the
+# right-sidebar Connectivity panel. The `*_base` sets are the UI defaults; the
+# observeEvent(input$cs_enable) handler in the server swaps between the two.
+# Listed explicitly rather than appended so "none" stays last in the vector menu.
+stat_choices_base <- c("FIA variable", "effective sample size" = "ESS",
+                       "focal site similarity")
+stat_choices_cs   <- c("FIA variable", "effective sample size" = "ESS",
+                       "focal site similarity", "connectivity")
+
+vector_choices_base <- c("occupied FIA plots", "all FIA plots", "focal site analogs",
+                         "none")
+vector_choices_cs   <- c("occupied FIA plots", "all FIA plots", "focal site analogs",
+                         "current animation", "current field", "none")
+
 theme_set(theme_bw(base_size = 16))
 
 # House style for facet strips: white text on a black background. Defined
@@ -570,9 +586,9 @@ ui <- page_sidebar(
                           model connectivity between current and potential future distributions,
                           and explore properties of plots that are analogs to your locations of interest."),
                         br(),
-                        helpText("In this lefthand sidebar, you'll find core controls for setting model parameters and
+                        helpText("Here on the lefthand sidebar, you'll find core controls for setting model parameters and
                                  choosing display variables. The righthand sidebar houses modules with their own
-                                 dedicated controls and plots."),
+                                 dedicated controls and plots. Hover your cursor over controls for explanatory pop-ups."),
                         br(),
                         helpText("NOTE: This tool is a prototype and is still under development.
                           Please contact matthew.kling@umontana.edu with questions, suggestions, or bug reports.")
@@ -706,40 +722,14 @@ ui <- page_sidebar(
                   ),
 
                   accordion_panel(
-                        "Connectivity",
-                        helpText("Settings for optional circuit-based landscape connectivity modeling between historical (source) and future (target) FIA surfaces.
-                                 To view connectivity results, select 'connectivity' as the raster variable under 'Map layer'."), hr(),
-                        selectInput("cs_sources", "Origin electrodes (sources)", c("grid cells", "FIA plots", "selected site")) %>%
-                              tooltip("Sites where current is injected. If `grid cells` or `FIA plots` is selected, current is injected
-                                      in proportion to modeled or observed (respectively) values of the selected FIA variable.
-                                      If `selected site` is chosen, current is injected only at the focal site."),
-                        selectInput("cs_targets", "Destination electrodes (target grounds)", c("grid cells", "FIA plots", "selected site")) %>%
-                              tooltip("Grounding sites that 'pull' current and allow it to exit the circuit.
-                                      If `grid cells` or `FIA plots` is selected, ground conductance is proportional to modeled values
-                                      of the selected FIA variable. If `selected site` is chosen, the focal site."),
-                        selectInput("cs_conductance_layer", "Horizontal conductance", c("suitability", "wind", "suitability * wind", "uniform")) %>%
-                              tooltip("The inverse of landscape resistance, horizontal conductance determines how easily current can flow across a site.
-                                      `Suitability` models conductance proportional to the mean of historical and future FIA raster values.
-                                      `Wind` models conductance proportional to the frequency and speed with which wind blows toward targets."),
-                        selectInput("cs_loss_layer", "Loss (non-target grounds)", c("none", "uniform", "suitability" = "mean suitability")) %>%
-                              tooltip("Choose whether and how to model current 'leakage' representing dispersers that are removed from the pool
-                                      (via mortality or permanent settlement) before reaching target grounds."),
-                        sliderInput("cs_conductance_scale", "log10 conductance scale", -2, 2, value = 0, step = .1) %>%
-                              tooltip("Relative strength of horizontal conductance, compared to source, target, and loss components."),
-                        sliderInput("cs_loss_scale", "log10 loss scale", -3, 2, value = -1, step = .1) %>%
-                              tooltip("Relative strength of loss conductance, compared to source, target, and horizontal components.")
-                  ),
-
-                  accordion_panel(
                         "Map layers",
                         helpText("Choose which model results are drawn on the map."), hr(),
-                        selectInput("stat", "Raster variable", c("FIA variable", "effective sample size" = "ESS",
-                                                                 "focal site similarity", "connectivity")) %>%
+                        selectInput("stat", "Raster variable", stat_choices_base) %>%
                               tooltip(HTML("<dl style='margin:0;'>
                                               <dt>FIA variable</dt> <dd>Interpolated values for the plot variable selected above</dd>
                                               <dt>Effective sample size</dt> <dd>Effective number of FIA plots within climatic and geographic range, accounting for weights</dd>
                                               <dt>Focal site similarity</dt> <dd>Climatic distance to the site selected on map, based on the selected analog direction</dd>
-                                              <dt>Connectivity</dt> <dd>Circuit-based connectivity outputs between historical and future surfaces; choose the specific connectivity variable below</dd>
+                                              <dt>Connectivity</dt> <dd>Circuit-based connectivity outputs between historical and future surfaces (available when the connectivity module is enabled); choose the specific connectivity variable below</dd>
                                           </dl>")),
                         conditionalPanel(
                               condition = "input.stat == 'connectivity'",
@@ -758,15 +748,14 @@ ui <- page_sidebar(
                         selectInput("time", "Raster variable timeframe", c("historical", "future", "delta")) %>%
                               tooltip("Choose whether to display historical (2000-2025) or future (scenario selected above) model predictions, or their difference (delta).
                                       Only relevant for `FIA variable` and `ESS` raster variables."),
-                        selectInput("vector", "Vector variable",
-                                    c("occupied FIA plots", "all FIA plots", "focal site analogs", "current animation", "current field", "none")) %>%
+                        selectInput("vector", "Vector variable", vector_choices_base) %>%
                               tooltip(HTML("Select which point or line layer is displayed:<br><br>
                                           <dl style='margin:0;'>
                                               <dt>Occupied FIA plots</dt> <dd>Plots where the selected species was recorded</dd>
                                               <dt>All FIA plots</dt> <dd>All plots including non-forested plots not surveyed</dd>
                                               <dt>Focal site analogs</dt> <dd>Plots within climatic and geographic range of the selected site</dd>
-                                              <dt>Current animation</dt> <dd>Animation with particle movement showing direction and magnitude of mean current flow</dd>
-                                              <dt>Current field</dt> <dd>Vector field showing showing direction and magnitude of mean current flow</dd>
+                                              <dt>Current animation</dt> <dd>Animation with particle movement showing direction and magnitude of mean current flow (available when the connectivity module is enabled)</dd>
+                                              <dt>Current field</dt> <dd>Vector field showing showing direction and magnitude of mean current flow (available when the connectivity module is enabled)</dd>
                                           </dl>"))
                   ),
 
@@ -864,7 +853,11 @@ ui <- page_sidebar(
                                           plotOutput("clim_plot"),
                                           plotOutput("dist_plot")
                                     ),
-                                    plotOutput("comp_plot")
+                                    plotOutput("comp_plot") %>%
+                                          tooltip("This plot shows the kernel-weighted composition of species or forest types across analog FIA plots.
+                                                  Contemporary analogs give the current modeled composition of the focal site.
+                                                  Reverse analogs give the potential future composition of the focal site.
+                                                  Forward analogs show the current composition of locations that may be suitable for the focal sites's current inhabitants in the future."),
                               ),
 
                               accordion_panel(
@@ -978,7 +971,42 @@ ui <- page_sidebar(
                                                       choices = clim_vars()) %>%
                                                 tooltip("Climate variable for the y-axis (delta = future - historical).")
                                     )
+                              ),
+
+                              accordion_panel(
+                                    "Connectivity",
+                                    helpText("This module contains settings for modeling circuit-based landscape connectivity
+                                             between historical (source) and future (target) FIA surfaces.
+                                             Click 'enable' to activate options.
+                                             To view connectivity results, select 'connectivity' as the raster variable under 'Map layer'.
+                                             The first time you run a connectivity model, "), hr(),
+                                    input_switch("cs_enable", "Enable connectivity", FALSE) %>%
+                                          tooltip("Adds the connectivity raster and current animation/field vector layers
+                                                  to the 'Map layers' menus in the left sidebar."),
+                                    conditionalPanel(
+                                          condition = "input.cs_enable",
+                                          selectInput("cs_sources", "Origin electrodes (sources)", c("grid cells", "FIA plots", "selected site")) %>%
+                                                tooltip("Sites where current is injected. If `grid cells` or `FIA plots` is selected, current is injected
+                                            in proportion to modeled or observed (respectively) values of the selected FIA variable.
+                                            If `selected site` is chosen, current is injected only at the focal site."),
+                                          selectInput("cs_targets", "Destination electrodes (target grounds)", c("grid cells", "FIA plots", "selected site")) %>%
+                                                tooltip("Grounding sites that 'pull' current and allow it to exit the circuit.
+                                            If `grid cells` or `FIA plots` is selected, ground conductance is proportional to modeled values
+                                            of the selected FIA variable. If `selected site` is chosen, the focal site."),
+                                          selectInput("cs_conductance_layer", "Horizontal conductance", c("suitability", "wind", "suitability * wind", "uniform")) %>%
+                                                tooltip("The inverse of landscape resistance, horizontal conductance determines how easily current can flow across a site.
+                                            `Suitability` models conductance proportional to the mean of historical and future FIA raster values.
+                                            `Wind` models conductance proportional to the frequency and speed with which wind blows toward targets."),
+                                          selectInput("cs_loss_layer", "Loss (non-target grounds)", c("none", "uniform", "suitability" = "mean suitability")) %>%
+                                                tooltip("Choose whether and how to model current 'leakage' representing dispersers that are removed from the pool
+                                            (via mortality or permanent settlement) before reaching target grounds."),
+                                          sliderInput("cs_conductance_scale", "log10 conductance scale", -2, 2, value = 0, step = .1) %>%
+                                                tooltip("Relative strength of horizontal conductance, compared to source, target, and loss components."),
+                                          sliderInput("cs_loss_scale", "log10 loss scale", -3, 2, value = -1, step = .1) %>%
+                                                tooltip("Relative strength of loss conductance, compared to source, target, and horizontal components.")
+                                    )
                               )
+
                         )
 
                   ),
@@ -1608,6 +1636,34 @@ server <- function(input, output, session) {
                   updateSelectInput(session, "time", selected = "delta")
             }
       })
+
+      ## Show or hide the connectivity entries in the left-sidebar "Map layers"
+      ## menus, driven by the "Enable connectivity" switch in the right-sidebar
+      ## Connectivity panel. Connectivity is a niche analysis, so its options are
+      ## kept out of the core menus until the user asks for them.
+      ##
+      ## updateSelectInput() resets the selection to the first choice whenever
+      ## `choices` changes, so `selected` is always passed explicitly. On enable,
+      ## the current pick is preserved; on disable, a connectivity pick is no
+      ## longer offered and falls back to the menu default.
+      ##
+      ## ignoreInit: the UI is built with the connectivity-off choices and the
+      ## switch defaults to FALSE, so the two already agree at startup.
+      observeEvent(input$cs_enable, {
+            on <- isTRUE(input$cs_enable)
+
+            stat_choices <- if(on) stat_choices_cs else stat_choices_base
+            vector_choices <- if(on) vector_choices_cs else vector_choices_base
+
+            keep <- function(cur, choices, default){
+                  if(isTruthy(cur) && cur %in% choices) cur else default
+            }
+
+            updateSelectInput(session, "stat", choices = stat_choices,
+                              selected = keep(input$stat, stat_choices, "FIA variable"))
+            updateSelectInput(session, "vector", choices = vector_choices,
+                              selected = keep(input$vector, vector_choices, "occupied FIA plots"))
+      }, ignoreInit = TRUE)
 
       # Swap eval_stat choices to the metric set cv_performance() produces
       # for the current response type. Binary (presence-type) responses get
