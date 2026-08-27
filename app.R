@@ -294,6 +294,54 @@ vector_choices_base <- c("occupied FIA plots", "all FIA plots", "focal site anal
 vector_choices_cs   <- c("occupied FIA plots", "all FIA plots", "focal site analogs",
                          "current animation", "current field", "none")
 
+# Spatial scopes the model-evaluation module can score over. These are the
+# EVALUATION set, never the analog pool: predictions are always built from
+# every available analog, and the scope only decides which held-out plots the
+# metrics are computed from. "Best bandwidth here" and "best bandwidth overall"
+# are different answers, and this is what lets the module give the first one.
+#
+# Deliberately not the same three scopes as model_delta_region: a focal site is
+# a point, and a point is not an evaluation set. The meaningful site-scoped
+# quantity is the plots within the geographic cutoff of the click -- the same
+# neighborhood the model draws its analogs from.
+eval_scope_names <- c("Modeling domain"         = "domain",
+                      "Study area"              = "polygon",
+                      "Buffered study area"     = "buffered",
+                      "Focal site neighborhood" = "site")
+
+# Below this many held-out plots, metrics are not reported at all. A small unit
+# can easily contain single-digit plot counts, and an AUC over eight plots is
+# worse than no answer because it looks like one.
+eval_min_n <- 10
+
+# Display labels for the metrics cv_performance() returns, in the order they
+# should be read. Both metric sets are listed; only the applicable ones appear
+# for a given response (binary -> n/auc/tss/tss_threshold/brier,
+# continuous -> n/rmse/mae/bias/r2).
+eval_metric_labels <- c(n             = "n",
+                        auc           = "AUC",
+                        tss           = "TSS",
+                        tss_threshold = "TSS thresh.",
+                        brier         = "Brier",
+                        rmse          = "RMSE",
+                        mae           = "MAE",
+                        bias          = "bias",
+                        r2            = "R\u00b2")
+
+# Fields the model-evaluation results depend on, and how to name them to the
+# user. Note clim_agg is absent: eval_var_set() extracts climate from the raw
+# rasters at plot coordinates, never from the aggregated modeling grid, so the
+# grain slider does not affect evaluation at all.
+eval_stamp_labels <- c(track      = "focal entity type",
+                       focal      = "focal entity",
+                       fia_var    = "FIA variable",
+                       bbox       = "modeling domain",
+                       clim_vars  = "climate variables",
+                       theta_clim = "climate bandwidth",
+                       theta_geog = "geographic bandwidth",
+                       polygon    = "study area polygon",
+                       site       = "focal site")
+
 theme_set(theme_bw(base_size = 16))
 
 # House style for facet strips: white text on a black background. Defined
@@ -305,6 +353,63 @@ strip_style <- theme(strip.text = element_text(color = "white"),
 
 
 # HELPER FUNCTIONS ------------------------------------
+
+## STALENESS -------------------------------------------
+##
+## Several outputs in this app are computed on an explicit button rather than
+## reactively, which means they can outlive the settings that produced them.
+## The mechanism is the same in each case: snapshot the inputs a result depends
+## on at compute time ("stamp"), compare against the current inputs on every
+## render, and mark the output rather than destroying it.
+##
+## Marking, not clearing, is deliberate. These results can take minutes to
+## produce and stay readable after the settings move; blanking them throws away
+## something the user may still want. Fading plus an explicit warning makes the
+## result unmistakably provisional while leaving it legible.
+
+# Which stamped fields differ between a stored stamp and the current one.
+# `exempt` names fields that were deliberately varied by the run itself and so
+# must not count as staleness -- a bandwidth sweep whose whole purpose is
+# comparing bandwidths would otherwise mark itself stale the moment the user
+# acts on its recommendation.
+stamp_diff <- function(now, old, exempt = character()) {
+      if (is.null(old)) return(character())
+      keys <- setdiff(intersect(names(now), names(old)), exempt)
+      keys[!vapply(keys, function(k) identical(now[[k]], old[[k]]), logical(1))]
+}
+
+# Human-readable phrase for a set of changed fields.
+stale_phrase <- function(fields, labels) {
+      nm <- unname(labels[fields])
+      nm <- nm[!is.na(nm)]
+      if (!length(nm)) return("settings")
+      if (length(nm) == 1) return(nm)
+      paste(paste(utils::head(nm, -1), collapse = ", "), "and", utils::tail(nm, 1))
+}
+
+# Inline warning banner. Returns NULL when nothing has changed, so it can be
+# dropped straight into a renderUI.
+stale_banner <- function(fields, labels,
+                         action = "Re-run to update these results.") {
+      if (!length(fields)) return(NULL)
+      div(class = "alert alert-warning py-2 px-3 mb-2",
+          style = "font-size: 0.85em;",
+          sprintf("Computed before the %s changed. %s",
+                  stale_phrase(fields, labels), action))
+}
+
+# Fade a ggplot and caption it when stale. Implemented as an in-plot overlay
+# rather than CSS opacity so it needs no JS round-trip and survives into a
+# downloaded image. Added last, so it sits above the plot's own layers.
+gg_stale <- function(p, stale, label = "Stale \u2014 re-run to update") {
+      if (!isTRUE(stale)) return(p)
+      p +
+            annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf,
+                     fill = "white", alpha = 0.5) +
+            labs(caption = label) +
+            theme(plot.caption = element_text(color = "#b8860b", face = "bold",
+                                              hjust = 0, size = 11))
+}
 
 circleLegend <- function(title, labels, colors, radii = 6) {
       # If only one radius is provided, repeat it for all labels
@@ -665,8 +770,42 @@ ui <- page_sidebar(
                                                "seedling fraction", "sapling fraction")))
                   ),
 
+                  ## Three nested spatial extents, one shared resolution.
+                  ##
+                  ## The modeling domain, the study area polygon, and the focal
+                  ## site are all "where", differing only in dimension: an area
+                  ## computed over, an area summarized within, a point queried at.
+                  ## Splitting them across two panels (or, before that, across
+                  ## two sidebars) made near-identical things look unrelated.
+                  ##
+                  ## Grain sits above all three rather than with the domain: it
+                  ## is the resolution everything here is evaluated at. The
+                  ## polygon density plot and the climate-models summarize-over
+                  ## sample the display raster at this grain, and the focal-site
+                  ## similarity surface is on the same grid.
+                  ##
+                  ## Note this panel deliberately mixes controls that invalidate
+                  ## aim() (bbox, grain) with ones that do not (polygon, site).
+                  ## The old left-panel rule kept those apart, but that rule had
+                  ## no home for shared-but-not-model controls. If the deferred
+                  ## update button lands, it should key off an explicit list of
+                  ## model-parameter inputs rather than off panel membership --
+                  ## otherwise every future placement decision silently becomes
+                  ## an invalidation decision.
                   accordion_panel(
-                        "Spatial grid",
+                        "Study area",
+                        helpText("Where the model runs, and the areas you compare against it:
+                                 the modeling domain, an optional study area polygon, and an
+                                 optional focal site. All three are evaluated at the grain set
+                                 below."), hr(),
+
+                        sliderInput("clim_agg", "Raster grain size", 1, 10, value = 10, step = 1, post = " km") %>%
+                              tooltip("Resolution of the modeling grid, and of every summary drawn from it. Larger values are faster but less precise."),
+
+                        hr(),
+
+                        tags$strong("Modeling domain"),
+                        helpText("The extent the model is computed over."),
                         sliderInput("bbox_x", "Longitude range",
                                     min = clim_bbox["xmin"], max = clim_bbox["xmax"],
                                     value = c(-116, -100)),
@@ -678,8 +817,33 @@ ui <- page_sidebar(
                               uiOutput("snap_focal_btn"),
                               actionButton("window_domain", "Snap to current view")
                         ),
-                        sliderInput("clim_agg", "Raster grain size", 1, 10, value = 10, step = 1, post = " km") %>%
-                              tooltip("Select the resolution of the modeling grid; larger values are faster but less precise.")
+
+                        hr(),
+
+                        tags$strong("Study area polygon"),
+                        helpText("An area within the domain to summarize over. Optional."),
+                        uiOutput("polygon_status"),
+                        fileInput("polygon_upload", NULL,
+                                  multiple = TRUE,
+                                  accept = c(".shp", ".dbf", ".shx", ".prj", ".kml", ".kmz",
+                                             ".gpkg", ".geojson"),
+                                  placeholder = "Shapefile, KML, GPKG, or GeoJSON") %>%
+                              tooltip("Upload a polygon layer. For shapefiles, select all component files (.shp, .dbf, .shx, .prj)."),
+                        actionButton("polygon_clear", "Clear") %>%
+                              tooltip("Remove the polygon from the map and plots."),
+
+                        hr(),
+
+                        tags$strong("Focal site"),
+                        helpText("A single location to query. Click the map to set one. Optional."),
+                        uiOutput("site_status"),
+                        layout_column_wrap(
+                              width = 1/2,
+                              actionButton("highlight_site", "Highlight on map") %>%
+                                    tooltip("Switch the vector layer to this site's analog plots and zoom the map to its geographic cutoff."),
+                              actionButton("site_clear", "Clear") %>%
+                                    tooltip("Remove the focal site from the map and plots.")
+                        )
                   ),
 
                   accordion_panel(
@@ -822,12 +986,17 @@ ui <- page_sidebar(
                               open = FALSE,
                               multiple = FALSE,
 
+                              ## Named for its contents rather than its input:
+                              ## all three plots are views of site_analogs(), the
+                              ## analog SET of the focal site. The site itself is
+                              ## now set under "Study area" in the left sidebar.
                               accordion_panel(
-                                    "Focal site",
+                                    "Focal site analogs",
                                     helpText(
                                           "This module lets you explore climate analogs for individual sites of interest.
                                           It does not influence the model results shown on the map except for the 'Focal site similarity' raster variable.
-                                          Click the map to select a site; the plots below display properties of FIA plots that are both geographically close and climatically similar to your site.
+                                          Click the map to select a site; its coordinates and a clear button are under 'Study area' in the left sidebar.
+                                          The plots below display properties of FIA plots that are both geographically close and climatically similar to your site.
                                           Purple reference lines illustrate bandwidths (dashed) and hard cutoffs (3x bandwidth) for geographic and climatic distances."), hr(),
                                     layout_column_wrap(
                                           width = 1/2,
@@ -838,11 +1007,6 @@ ui <- page_sidebar(
                                                     <li>Reverse (inbound) analogs have historical climates similar to the focal site's future climate.</li>
                                                     <li>Forward (outbound) analogs have future climates similar to the focal site's historical climate.</li>
                                                 </ul>")),
-                                          div(style = "display: flex; gap: 0.5rem;",
-                                              actionButton("highlight_site", "Highlight on map",
-                                                           style = "flex: 1;"),
-                                              actionButton("site_clear", "Clear") %>%
-                                                    tooltip("Remove the focal site from the map and plots.")),
                                           input_switch("filter_clim", "Exclude non-analog plots", TRUE) %>%
                                                 tooltip("Whether to include sites that are more than 3 climate bandwidths away from the focal site.
                                                         Sites more than 3 geographic bandwidths away are never shown.")
@@ -860,25 +1024,17 @@ ui <- page_sidebar(
                                                   Forward analogs show the current composition of locations that may be suitable for the focal sites's current inhabitants in the future."),
                               ),
 
+                              ## Renamed from "Study area": that name now belongs
+                              ## to the left panel that owns the polygon. This
+                              ## panel is named for what it renders, matching the
+                              ## rule that right-sidebar panels are local to one
+                              ## output.
                               accordion_panel(
-                                    "Study area",
-                                    helpText("Upload a polygon layer to display on the map and compare the distribution of raster values inside your study area against the broader modeling context.
+                                    "Value distribution",
+                                    helpText("Compare the distribution of raster values inside your study area against the broader modeling context.
+                                             Upload a polygon under 'Study area' in the left sidebar.
                                              The plot shows three curves: the modeling domain (all cells in the current bbox), your study area (cells inside the polygon), and the buffered area
                                              (cells within 3× the geographic bandwidth of the polygon — the predictive neighborhood used for analog matching)."), hr(),
-
-                                    layout_column_wrap(
-                                          width = NULL,
-                                          style = htmltools::css(grid_template_columns = "1fr auto"),
-                                          fileInput("polygon_upload", NULL,
-                                                    multiple = TRUE,
-                                                    accept = c(".shp", ".dbf", ".shx", ".prj", ".kml", ".kmz",
-                                                               ".gpkg", ".geojson"),
-                                                    placeholder = "Shapefile, KML, GPKG, or GeoJSON") %>%
-                                                tooltip("Upload a polygon layer. For shapefiles, select all component files (.shp, .dbf, .shx, .prj)."),
-                                          div(style = "padding-top: 0.5rem;",
-                                              actionButton("polygon_clear", "Clear") %>%
-                                                    tooltip("Remove the polygon from the map and plot."))
-                                    ),
 
                                     plotOutput("polygon_density"),
                                     selectInput("density_transform", "X-axis scale",
@@ -912,12 +1068,32 @@ ui <- page_sidebar(
                               accordion_panel(
                                     "Model evaluation",
                                     helpText("This module uses cross-validation to assess the accuracy of contemporary AIM predictions for the selected species and FIA variable.
-                                             The first plot shows predicted versus observed values for the currently-selected model parameters."), br(),
-                                    plotOutput("eval_scatter"), hr(),
+                                             Choose the area the accuracy is measured over: predictions always draw on every available analog plot, but the metrics
+                                             can be restricted to plots inside your study area or near your focal site."), hr(),
+
+                                    selectInput("eval_scope", "Evaluation scope",
+                                                choices = eval_scope_names,
+                                                selected = "domain") %>%
+                                          tooltip(HTML("Which held-out plots the accuracy metrics are computed from. The model itself is unchanged.<br><br>
+                                                       <dl style='margin:0;'>
+                                                           <dt>Modeling domain</dt> <dd>Every plot in the analog pool.</dd>
+                                                           <dt>Study area</dt> <dd>Plots inside the uploaded polygon. Often few; check the reported n.</dd>
+                                                           <dt>Buffered study area</dt> <dd>Plots within 3 geographic bandwidths of the polygon &mdash; the neighborhood predictions there are actually drawn from. Usually the better choice for a small unit.</dd>
+                                                           <dt>Focal site neighborhood</dt> <dd>Plots within the geographic cutoff of the clicked site.</dd>
+                                                       </dl>
+                                                       Scopes whose input is not yet set under 'Study area' in the left sidebar will say so when selected.")),
+                                    uiOutput("eval_stale"),
+
+                                    helpText("The first plot shows predicted versus observed values for the currently-selected model parameters.
+                                             Out-of-scope plots are drawn in grey for context."), br(),
+                                    plotOutput("eval_scatter"),
+                                    uiOutput("eval_scatter_stats"), hr(),
 
                                     helpText("The tool below helps you explore how different parameter values affect predictive accuracy.
                                              For bandwidth parameters, it tests five values bracketing the value selected under 'Analog bandwidths'.
-                                             For climate variables, it tests all combinations of the variables selected under 'Climate data', using the selected grain size."), br(),
+                                             For climate variables, it tests all combinations of the variables selected under 'Climate data'.
+                                             The scatterplot above always reflects your current settings; the heatmap below shows the last completed
+                                             run, and is faded and flagged if those settings have since changed."), br(),
 
                                     layout_column_wrap(
                                           width = 1/2,
@@ -979,7 +1155,7 @@ ui <- page_sidebar(
                                              between historical (source) and future (target) FIA surfaces.
                                              Click 'enable' to activate options.
                                              To view connectivity results, select 'connectivity' as the raster variable under 'Map layer'.
-                                             The first time you run a connectivity model, "), hr(),
+                                             Julia compiler startup may take a couple minutes the first time you run a connectivity result, but should be fast thereafter."), hr(),
                                     input_switch("cs_enable", "Enable connectivity", FALSE) %>%
                                           tooltip("Adds the connectivity raster and current animation/field vector layers
                                                   to the 'Map layers' menus in the left sidebar."),
@@ -1003,7 +1179,8 @@ ui <- page_sidebar(
                                           sliderInput("cs_conductance_scale", "log10 conductance scale", -2, 2, value = 0, step = .1) %>%
                                                 tooltip("Relative strength of horizontal conductance, compared to source, target, and loss components."),
                                           sliderInput("cs_loss_scale", "log10 loss scale", -3, 2, value = -1, step = .1) %>%
-                                                tooltip("Relative strength of loss conductance, compared to source, target, and horizontal components.")
+                                                tooltip("Relative strength of loss conductance, compared to source, target, and horizontal components.
+                                                        Ignored if loss is set to 'none.'")
                                     )
                               )
 
@@ -1584,6 +1761,32 @@ server <- function(input, output, session) {
                               selected = keep(input$cr_v2, if (length(cv) >= 2) cv[2] else cv[1]))
       })
 
+      ## Spatial-scope status lines. These exist so the left panel states its
+      ## own preconditions: a right-sidebar panel that renders empty because no
+      ## site or polygon is set now has a visible cause rather than looking
+      ## broken. Both are uiOutput rather than textOutput so the "not set" case
+      ## can carry its own instruction.
+      output$site_status <- renderUI({
+            if (is.null(site$x) || is.null(site$y)) {
+                  helpText("None selected \u2014 click the map to set one.")
+            } else {
+                  helpText(sprintf("lat %.3f, lon %.3f", site$y, site$x))
+            }
+      })
+
+      output$polygon_status <- renderUI({
+            f <- polygon_upload_active()
+            if (!isTruthy(f)) {
+                  helpText("None uploaded.")
+            } else {
+                  # A shapefile arrives as several sibling files; name the layer
+                  # rather than listing .dbf / .shx / .prj back at the user.
+                  nm <- f$name[tolower(tools::file_ext(f$name)) %in%
+                                     c("shp", "kml", "kmz", "gpkg", "geojson")]
+                  helpText(if (length(nm)) nm[1] else paste(length(f$name), "files"))
+            }
+      })
+
       ## Dynamic snap-to-range button (label reflects focal entity)
       output$snap_focal_btn <- renderUI({
             switch(input$track,
@@ -2042,7 +2245,21 @@ server <- function(input, output, session) {
       aim <- reactive({
 
             is_ratio <- !is.null(ratio_pieces())
-            stat <- "weighted_mean"
+
+            # Stats that describe the WEIGHTS rather than an outcome column.
+            # analog_impact() returns one layer for each of these regardless of
+            # how many outcome columns `y` carries. "count" and "sum_weights"
+            # were requested here but read nowhere in the app; they are dropped.
+            # (sum_weights becomes useful again if the multi-species module
+            # wants a per-species support signal: the weighted count of
+            # contributing presence plots is weighted_mean_<sp> * sum_weights.)
+            weight_stats <- "ess"
+
+            # Outcome columns for AIM. pool()$values also carries
+            # samp_method_cd, which exists for the site_analogs() / FIA-marker
+            # path and is not a response -- interpolating it produced an extra
+            # unread layer on every run.
+            y_cols <- setdiff(names(pool()$values), "samp_method_cd")
 
             aim_query <- function(x){
                   suppressWarnings(analogs::analog_impact(
@@ -2050,13 +2267,28 @@ server <- function(input, output, session) {
                         pool = pool()$index_hst,
                         env =  analogs::kernel(max = input$theta_clim * 3, weight = "gaussian", theta = input$theta_clim),
                         geog = analogs::kernel(max = input$theta_geog * 3, weight = "gaussian", theta = input$theta_geog),
-                        stat = c("count", "sum_weights", stat, "ess"),
-                        y = pool()$values))
+                        stat = c("weighted_mean", weight_stats),
+                        y = pool()$values[, y_cols, drop = FALSE]))
             }
 
-            aim_bsl <- aim_query(clim()$hst)
-            aim_fut <- aim_query(clim()$fut)
-            names(aim_bsl) <- names(aim_fut) <- gsub("weighted_mean_|weighted_sum_", "", names(aim_fut))
+            # analog_impact() names outcome layers `weighted_mean_<column>` when
+            # `y` has two or more columns, but bare `weighted_mean` when it has
+            # exactly one. Stripping the prefix with gsub() therefore yields
+            # "weighted_mean" rather than "response" in the single-column case,
+            # leaving aim()$bsl$response NULL. That never fired only because
+            # samp_method_cd rode along as a spurious second column -- i.e. the
+            # rename was load-bearing on an accident. Rename positionally
+            # instead: outcome layers are whatever isn't a weight stat, returned
+            # in y-column order.
+            name_outcomes <- function(r){
+                  is_outcome <- !names(r) %in% weight_stats
+                  stopifnot(sum(is_outcome) == length(y_cols))
+                  names(r)[is_outcome] <- y_cols
+                  r
+            }
+
+            aim_bsl <- name_outcomes(aim_query(clim()$hst))
+            aim_fut <- name_outcomes(aim_query(clim()$fut))
 
             # Pooled-ratio surface: ratio-of-means from the weighted_mean layers
             # occ/num/denom, combined into the standard `response` layer so all
@@ -3242,7 +3474,113 @@ server <- function(input, output, session) {
       ## MODEL EVALUATION ----------------------------
 
       model_eval <- reactiveValues(comparison = NULL,
-                                   scatter = NULL)
+                                   scatter = NULL,
+                                   stamp = NULL,
+                                   swept = NULL)
+
+      # Message shown when a scope is selected whose defining input isn't set.
+      # The scope list is static rather than rebuilt as inputs appear: a
+      # reactive choice list makes setting a focal site rebuild the selectize
+      # control, whose round-trip re-emits input$eval_scope and re-renders this
+      # section even under a scope that ignores the site. Stating the
+      # precondition is also more useful than hiding the option.
+      eval_scope_missing_msg <- function(scope){
+            switch(scope,
+                   "polygon"  = "Upload a study area polygon under 'Study area' in the left sidebar to evaluate over it.",
+                   "buffered" = "Upload a study area polygon under 'Study area' in the left sidebar to evaluate over its buffered neighborhood.",
+                   "site"     = "Click the map to set a focal site, then this scope evaluates the plots within its geographic cutoff.",
+                   "This evaluation scope is not available.")
+      }
+
+      # Stamp components. Plain functions rather than reactives, so a caller
+      # takes a dependency on the polygon or the site only when it actually
+      # calls for that piece. Bundling them into one reactive made every map
+      # click re-render the heatmap and its warning banner, even under a scope
+      # that ignores the site entirely.
+      eval_polygon_id <- function(){
+            f <- polygon_upload_active()
+            if (isTruthy(f)) paste(f$name, f$size, collapse = "|") else NA_character_
+      }
+      eval_site_id <- function(){
+            if (is.null(site$x) || is.null(site$y)) NA_character_
+            else sprintf("%.6f,%.6f", site$x, site$y)
+      }
+
+      # Settings that define the response and the analog pool, for every scope.
+      eval_model_stamp <- function(){
+            list(track      = input$track,
+                 focal      = focal_id(),
+                 fia_var    = input$fia_var,
+                 bbox       = c(input$bbox_x, input$bbox_y),
+                 clim_vars  = paste(sort(input$clim_vars), collapse = "_"),
+                 theta_clim = input$theta_clim,
+                 theta_geog = input$theta_geog)
+      }
+
+      # Full stamp, recorded when a run completes.
+      eval_run_stamp <- function(){
+            c(eval_model_stamp(),
+              list(polygon = eval_polygon_id(), site = eval_site_id()))
+      }
+
+      # Stamped fields that have changed since the stored run, with two
+      # exemptions applied.
+      #
+      # SWEPT DIMENSIONS. A bandwidth or variable-set sweep varies those inputs
+      # by design, and "Apply optimal parameters" then moves them deliberately.
+      # Counting them as staleness would make the heatmap mark itself stale the
+      # instant the user acts on its own recommendation.
+      #
+      # SCOPE RELEVANCE. Handled by only assembling the fields the current scope
+      # depends on: stamp_diff() intersects names, so a field left out of `now`
+      # is simply not compared. theta_geog is the one field with two roles -- it
+      # is a swept kernel parameter, but it also sets the buffer and neighborhood
+      # radii, so under those scopes it is never exempt even when swept.
+      eval_stale_fields <- reactive({
+            req(model_eval$comparison)
+            scope <- if (isTruthy(input$eval_scope)) input$eval_scope else "domain"
+
+            exempt <- if (is.null(model_eval$swept)) character() else model_eval$swept
+            if (scope %in% c("buffered", "site")) exempt <- setdiff(exempt, "theta_geog")
+
+            now <- eval_model_stamp()
+            if (scope %in% c("polygon", "buffered")) now$polygon <- eval_polygon_id()
+            if (scope == "site") now$site <- eval_site_id()
+
+            stamp_diff(now, model_eval$stamp, exempt)
+      })
+
+      # Logical membership vector per scope, for a set of pool plot coordinates.
+      # `xy` must be the POST-filter coordinates so the vectors align with the
+      # rows analog_cv() returns.
+      #
+      # `which` limits which scopes are computed, and that is load-bearing rather
+      # than an optimization: reading site$x or the polygon here takes a reactive
+      # dependency on it, so computing every scope unconditionally makes a map
+      # click invalidate the scatterplot even when the domain scope is selected.
+      # The `&&` short-circuits before touching those reactives.
+      eval_scope_membership <- function(xy, which = unname(eval_scope_names)){
+            keep <- list()
+            if ("domain" %in% which) keep$domain <- rep(TRUE, nrow(xy))
+
+            # Check the upload input directly rather than calling user_polygon(),
+            # whose internal req() would silently cancel the whole evaluation
+            # when no polygon is loaded. Same guard as polygon_density().
+            if (any(c("polygon", "buffered") %in% which) &&
+                isTruthy(polygon_upload_active())) {
+                  pts <- st_as_sf(as.data.frame(xy), coords = c("x", "y"), crs = 4326)
+                  if ("polygon" %in% which)
+                        keep$polygon <- lengths(st_intersects(pts, st_union(user_polygon()))) > 0
+                  if ("buffered" %in% which)
+                        keep$buffered <- lengths(st_intersects(pts, user_polygon_buffered())) > 0
+            }
+            if ("site" %in% which && !is.null(site$x) && !is.null(site$y)) {
+                  dkm <- geosphere::distHaversine(cbind(site$x, site$y),
+                                                  as.matrix(xy[, c("x", "y")])) / 1000
+                  keep$site <- dkm <= input$theta_geog * 3
+            }
+            keep
+      }
 
 
       eval_var_set <- function(clim_vars, vary_bandwidths = TRUE){
@@ -3271,6 +3609,18 @@ server <- function(input, output, session) {
             d <- d[complete, , drop = FALSE]
             values <- values[complete]
             stopifnot(nrow(d) == length(values))
+
+            # Scope membership, aligned with the filtered rows -- and therefore
+            # with the rows analog_cv() returns. Computed once per variable set
+            # rather than per bandwidth cell, since it depends on neither.
+            #
+            # Only on the summarizing path. eval() is called with summarize=TRUE
+            # exactly when vary_bandwidths is TRUE, and the scatter path resolves
+            # its own scope in the renderer. Computing this unconditionally reads
+            # site$x and the polygon, which would make eval_scatter_data() depend
+            # on them -- and a single map click would then re-run the whole LOO
+            # cross-validation to produce an identical plot.
+            scopes <- if (vary_bandwidths) eval_scope_membership(d[, c("x", "y")]) else NULL
 
             # Single-configuration evaluation: leave-one-out CV via the
             # analogs package's native analog_cv(), with performance metrics
@@ -3308,23 +3658,42 @@ server <- function(input, output, session) {
                         stat      = "weighted_mean"))
 
                   if(!summarize){
-                        # Scatterplot path: return per-plot obs/pred. cv$obs
-                        # and cv$residual are one row per pool plot; held-out
-                        # prediction is obs - residual.
-                        return(tibble::tibble(obs  = cv$obs,
-                                              pred = cv$obs - cv$residual) %>%
-                                     na.omit())
+                        # Scatterplot path: return the cv object itself plus the
+                        # plot coordinates. Scoping is deferred to the renderer
+                        # for the same reason it is here -- membership depends on
+                        # the polygon and the focal site, and resolving it inside
+                        # this function would make every map click re-run a full
+                        # LOO cross-validation. Returning cv (rather than just
+                        # obs/pred) lets the renderer call cv_performance() on a
+                        # row subset, exactly as the heatmap path does.
+                        return(list(cv = cv, xy = d[, c("x", "y"), drop = FALSE]))
                   }
 
-                  # Heatmap path: native CV performance metrics. Rename
-                  # `metric` -> `stat` so downstream consumers (eval_heatmap,
-                  # optimal_params) keep their existing column vocabulary,
-                  # and tag with the bandwidth coordinates for this cell.
-                  analogs::cv_performance(cv) %>%
-                        dplyr::rename(stat = metric) %>%
-                        dplyr::select(stat, value) %>%
-                        dplyr::mutate(theta_clim = theta_clim,
-                                      theta_geog = theta_geog)
+                  # Heatmap path: native CV performance metrics, computed once
+                  # per scope from the SAME cv object. Scoping is a row subset,
+                  # so every scope's metrics come out of one run for the cost of
+                  # an extra aggregation -- which is why the scope selector can
+                  # be a display control rather than something that recomputes.
+                  #
+                  # Rename `metric` -> `stat` so downstream consumers
+                  # (eval_heatmap, optimal_params) keep their existing column
+                  # vocabulary, and tag with the bandwidth coordinates.
+                  purrr::imap(scopes, function(keep, scope_name){
+                        if (sum(keep) < eval_min_n) return(NULL)
+                        # A small subset can hold a single class, leaving AUC and
+                        # TSS undefined. Drop that scope's cell rather than
+                        # failing the whole run.
+                        p <- tryCatch(analogs::cv_performance(cv[keep, , drop = FALSE]),
+                                      error = function(e) NULL)
+                        if (is.null(p)) return(NULL)
+                        p %>%
+                              dplyr::rename(stat = metric) %>%
+                              dplyr::select(stat, value) %>%
+                              dplyr::mutate(scope = scope_name,
+                                            theta_clim = theta_clim,
+                                            theta_geog = theta_geog)
+                  }) %>%
+                        purrr::list_rbind()
             }
 
             if(vary_bandwidths){
@@ -3359,10 +3728,44 @@ server <- function(input, output, session) {
             e <- v %>% lapply(eval_var_set) %>% bind_rows()
 
             model_eval$comparison <- e
+            # Snapshot the settings these results describe, plus the dimensions
+            # this run deliberately varied. Both are needed: the stamp detects
+            # change, the swept list keeps the run from indicting itself for the
+            # very dimensions it was exploring.
+            model_eval$stamp <- eval_run_stamp()
+            model_eval$swept <- c(
+                  if ("clim" %in% input$eval_params) "theta_clim",
+                  if ("geog" %in% input$eval_params) "theta_geog",
+                  if ("vars" %in% input$eval_params) "clim_vars"
+            )
+      })
+
+      ## Staleness marker. Per-scope metrics are aggregated at run time, so they
+      ## cannot be recomputed for new settings without re-running the CV.
+      ## Storing per-plot residuals instead would make rescoping free, but the
+      ## eval grid can reach hundreds of configurations across ~88k pool plots --
+      ## tens of millions of rows. Pre-aggregation is the right call; explicit
+      ## invalidation is its cost.
+      output$eval_stale <- renderUI({
+            stale_banner(eval_stale_fields(), eval_stamp_labels,
+                         action = "Click 'Run evaluations' to update them.")
       })
 
       observeEvent(input$optimal_params, {
             req(model_eval$comparison)
+
+            # Refuse rather than silently applying bandwidths derived from
+            # settings the user has since moved away from. The warning banner is
+            # visible, but a button that ignores its own panel's warning is worse
+            # than one that explains itself.
+            stale <- eval_stale_fields()
+            if (length(stale)) {
+                  showNotification(
+                        sprintf("These results predate a change to the %s. Re-run evaluations before applying optimal parameters.",
+                                stale_phrase(stale, eval_stamp_labels)),
+                        type = "warning", duration = 8)
+                  return()
+            }
 
             metric <- switch(input$eval_stat,
                              "RMSE" = "rmse",
@@ -3374,10 +3777,17 @@ server <- function(input, output, session) {
             # Metrics where larger is better; the rest are minimized.
             higher_better <- c("r2", "auc", "tss")
 
+            # Optimize against the SELECTED scope: the best bandwidth for a
+            # particular unit is not generally the best bandwidth domain-wide,
+            # and the whole point of the scope selector is to let the user ask
+            # for the first one.
             opt <- model_eval$comparison %>% ungroup() %>%
-                  filter(stat == metric) %>%
+                  filter(scope == input$eval_scope, stat == metric) %>%
                   mutate(value = ifelse(stat %in% higher_better, value, -value)) %>%
                   filter(value == max(value))
+
+            shiny::validate(need(nrow(opt) > 0,
+                                 "No results for the selected evaluation scope."))
 
             updateSliderInput(session, "theta_geog", value = opt$theta_geog)
             updateSliderInput(session, "theta_clim", value = opt$theta_clim)
@@ -3397,7 +3807,36 @@ server <- function(input, output, session) {
             # Metrics where larger is better; the rest are minimized.
             opt <- if(metric %in% c("r2", "auc", "tss")) 1 else -1
 
+            scope_label <- names(eval_scope_names)[eval_scope_names == input$eval_scope]
+
             e <- model_eval$comparison %>% ungroup() %>%
+                  filter(scope == input$eval_scope)
+
+            # No rows means one of three things: the scope's input isn't set,
+            # fewer than eval_min_n plots fall inside it, or the last run
+            # predates the selection. Name the first case specifically, since it
+            # is the only one the user can act on immediately.
+            scope_set <- switch(input$eval_scope,
+                                "polygon"  = ,
+                                "buffered" = isTruthy(polygon_upload_active()),
+                                "site"     = !is.null(site$x) && !is.null(site$y),
+                                TRUE)
+            shiny::validate(need(
+                  nrow(e) > 0,
+                  if (!scope_set) eval_scope_missing_msg(input$eval_scope)
+                  else sprintf("No evaluation results for '%s'. Either the last run predates this selection, or fewer than %d plots fall inside it.",
+                               scope_label, eval_min_n)))
+
+            # cv_performance() reports n alongside the requested metric. It can
+            # vary across bandwidth cells, since a plot with no analog in range
+            # yields no held-out prediction, so report the range rather than
+            # implying a single number.
+            n_vals <- e %>% filter(stat == "n") %>% pull(value)
+            n_text <- if (!length(n_vals)) "n unknown"
+            else if (min(n_vals) == max(n_vals)) sprintf("n = %d", as.integer(min(n_vals)))
+            else sprintf("n = %d\u2013%d", as.integer(min(n_vals)), as.integer(max(n_vals)))
+
+            e <- e %>%
                   filter(stat == metric) %>%
                   mutate(label = signif(value, 2),
                          optimal = value * opt == max(value * opt),
@@ -3407,7 +3846,15 @@ server <- function(input, output, session) {
                          clim_vars = gsub("_", " + ", clim_vars),
                          n_vars = stringr::str_count(clim_vars, "\\+") + 1)
 
-            ggplot(e, aes(theta_geog, theta_clim, fill = value, label = label)) +
+            shiny::validate(need(nrow(e) > 0,
+                                 sprintf("'%s' is not defined for this response within '%s'.",
+                                         input$eval_stat, scope_label)))
+
+            subtitle <- paste0(scope_label, " \u2014 ", n_text,
+                               if (length(n_vals) && min(n_vals) < 50)
+                                     "  (small samples; treat these numbers as indicative)" else "")
+
+            p <- ggplot(e, aes(theta_geog, theta_clim, fill = value, label = label)) +
                   facet_wrap(~clim_vars) +
                   geom_tile() +
                   geom_text(aes(color = I(text_color), fontface = "bold")) +
@@ -3419,7 +3866,12 @@ server <- function(input, output, session) {
                   strip_style +
                   labs(y = "climate bandwidth (z)",
                        x = "geographic bandwidth (km)",
+                       subtitle = subtitle,
                        fill = paste0(input$eval_stat, " (", input$fia_var, ")"))
+
+            # `%>%` binds tighter than `+`, so this cannot be chained onto the
+            # ggplot expression above -- it would pipe only the labs() object.
+            gg_stale(p, length(eval_stale_fields()) > 0)
       })
 
 
@@ -3427,22 +3879,99 @@ server <- function(input, output, session) {
             eval_var_set(input$clim_vars, vary_bandwidths = FALSE)
       })
 
-      output$eval_scatter <- renderPlot({
+      # Scope resolution for the single-configuration section. Shared by the
+      # scatter and its stat readout so the two can never disagree about which
+      # plots they are describing.
+      eval_scatter_scope <- reactive({
             e <- eval_scatter_data()
             req(e)
+            scope <- if (isTruthy(input$eval_scope)) input$eval_scope else "domain"
+            keep <- eval_scope_membership(e$xy, which = scope)[[scope]]
+            # NULL means the scope's defining input isn't set. Falling back to
+            # every plot would label domain-wide results with the selected
+            # scope's name, which is worse than showing nothing.
+            shiny::validate(need(!is.null(keep), eval_scope_missing_msg(scope)))
+            list(scope = scope,
+                 label = names(eval_scope_names)[eval_scope_names == scope],
+                 keep  = keep)
+      })
 
-            ggplot(e, aes(obs, pred)) +
-                  geom_point() +
+      output$eval_scatter <- renderPlot({
+            e <- eval_scatter_data()
+            s <- eval_scatter_scope()
+            req(e, s)
+
+            d <- tibble::tibble(obs      = e$cv$obs,
+                                pred     = e$cv$obs - e$cv$residual,
+                                in_scope = s$keep) %>%
+                  filter(!is.na(obs), !is.na(pred))
+
+            focus <- d[d$in_scope, , drop = FALSE]
+
+            shiny::validate(need(
+                  nrow(focus) >= eval_min_n,
+                  sprintf("Only %d plot(s) fall within '%s' \u2014 too few to read a fit from.",
+                          nrow(focus), s$label)))
+
+            # The domain cloud stays visible underneath. Seeing that a unit's
+            # plots sit in the tail of the domain's error distribution says more
+            # than seeing those plots alone.
+            p <- ggplot(mapping = aes(obs, pred))
+            if (!all(d$in_scope)) {
+                  p <- p + geom_point(data = d[!d$in_scope, , drop = FALSE],
+                                      color = "gray80", size = 1)
+            }
+            p +
+                  geom_point(data = focus) +
                   geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "dodgerblue") +
-                  geom_smooth(method = lm, se = F, color = "red", formula = 'y ~ x') +
+                  geom_smooth(data = focus, method = lm, se = F, color = "red", formula = 'y ~ x') +
                   annotate(geom = "point", color = "red", size = 4,
-                           x = mean(e$obs), y = mean(e$pred)) +
+                           x = mean(focus$obs), y = mean(focus$pred)) +
                   scale_x_sqrt() +
                   scale_y_sqrt() +
                   coord_fixed() +
                   theme_bw() +
                   labs(x = paste0("observed ", input$fia_var),
-                       y = paste0("predicted ", input$fia_var))
+                       y = paste0("predicted ", input$fia_var),
+                       subtitle = if (all(d$in_scope)) s$label
+                       else sprintf("%s \u2014 %d of %d plots",
+                                    s$label, nrow(focus), nrow(d)))
+      })
+
+      # Held-out accuracy for the current settings, over the selected scope.
+      # Reports the whole metric set cv_performance() returns rather than only
+      # input$eval_stat: for a single configuration there is no cost to showing
+      # all of them, and they answer different questions (bias and R-squared
+      # disagree in useful ways). Deliberately NOT faded by gg_stale -- this
+      # section is computed from current settings, so unlike the heatmap it is
+      # never stale, and that contrast is the point.
+      output$eval_scatter_stats <- renderUI({
+            e <- eval_scatter_data()
+            s <- eval_scatter_scope()
+            req(e, s)
+            if (sum(s$keep) < eval_min_n) return(NULL)   # scatter says why
+
+            p <- tryCatch(analogs::cv_performance(e$cv[s$keep, , drop = FALSE]),
+                          error = function(err) NULL)
+            if (is.null(p) || !nrow(p)) return(NULL)
+
+            fmt <- function(metric, value) {
+                  if (identical(metric, "n")) format(as.integer(value), big.mark = ",")
+                  else signif(value, 3)
+            }
+            items <- p %>%
+                  filter(metric %in% names(eval_metric_labels)) %>%
+                  arrange(match(metric, names(eval_metric_labels)))
+
+            div(class = "mb-2", style = "font-size: 0.9em;",
+                tags$span(style = "color: #666;", paste0(s$label, ": ")),
+                lapply(seq_len(nrow(items)), function(i) {
+                      tags$span(style = "margin-right: 1.1em;",
+                                tags$span(style = "color: #666;",
+                                          eval_metric_labels[[items$metric[i]]]),
+                                " ",
+                                tags$strong(fmt(items$metric[i], items$value[i])))
+                }))
       })
 
 
