@@ -168,7 +168,78 @@ clim_units <- c(tmean  = "\u00b0C",
 # standardized (z-score) units, so any plot showing native units must first
 # back-convert via clim_scales (z * sd + mean). Falls back to "standardized"
 # for a variable with no unit entry.
+# Colors offered for the focal polygon outline. A curated set rather than a full
+# picker: the polygon is a boundary drawn over a colored raster, so what matters
+# is contrast against a busy background, and a dozen strong, well-separated hues
+# cover that better than an unconstrained wheel. The selectize `create` option
+# still accepts anything typed, so a specific brand color is one keystroke away.
+overlay_colors <- c("darkred", "#e05c00", "#c2b200", "#2b6a4d", "#1f78b4",
+                    "#4c32a8", "#6a3d9a", "#e7298a", "black", "white", "gray40")
+
+# Swatch renderer for the overlay color selectors. Defined once because both use
+# it, and a divergence between them would be invisible until someone compared
+# the two dropdowns side by side.
+overlay_color_render <- function() {
+      swatch <- paste0(
+            "'<span style=\"display:inline-block;width:12px;height:12px;",
+            "margin-right:8px;vertical-align:middle;border:1px solid #999;",
+            "background:' + escape(item.value) + ';\"></span>'")
+      I(paste0("{
+            option: function(item, escape) {
+                  return '<div style=\"padding:4px 8px;\">' + ", swatch, " + escape(item.label) + '</div>';
+            },
+            item: function(item, escape) {
+                  return '<div>' + ", swatch, " + escape(item.label) + '</div>';
+            }
+      }"))
+}
+
+# Blend a color toward white. Used for the buffer ring, which follows the focal
+# polygon's color but needs to stay distinguishable from it -- a tint plus the
+# dashed line reads as "the same thing, extended" rather than as a second
+# unrelated boundary.
+lighten_color <- function(col, amount = 0.45) {
+      v <- grDevices::col2rgb(col)[, 1]
+      grDevices::rgb(t(v + (255 - v) * amount), maxColorValue = 255)
+}
+
+# One selector for either overlay. `create = TRUE` accepts any R color name or
+# hex typed straight in, so the curated list is a starting point rather than a
+# limit.
+overlay_color_input <- function(id, label, current) {
+      selectizeInput(id, label,
+                     choices = union(overlay_colors, current),
+                     selected = current,
+                     options = list(create = TRUE, render = overlay_color_render()))
+}
+
+# Variables the climate-relationships plot can put on its x axis. Deliberately
+# wider than the set the model is fitted on: a relationship against a variable
+# the model did not use is still a real property of the landscape, and often the
+# more interesting one -- richness peaking at mid elevation says something even
+# though elevation is not a predictor.
+#
+# Kept entirely separate from the modeling path. Widening clim_pool() instead
+# would be tidier-looking and much riskier: pool()'s analog index is built from
+# whatever climate columns it is handed, so a missed subset would silently build
+# a six-dimensional index instead of two and change every prediction with
+# nothing on screen to say so.
+#
+# Extra (non-climate) rasters are declared here with their file and units. Any
+# single-layer raster on the same grid slots in; back_transform() already leaves
+# variables with no clim_scales entry untouched, which is right for a raster
+# stored in native units.
+display_extra_vars <- list(
+      elevation = list(file = "data/elevation.tif", units = "m")
+)
+display_extra_vars <- display_extra_vars[
+      vapply(display_extra_vars, function(x) file.exists(x$file), logical(1))]
+
+# Available x-axis variables, and which of them the model can be fitted on.
+display_vars <- function() c(clim_vars(), names(display_extra_vars))
+
 unit_lab <- function(v) {
+      if (!is.null(display_extra_vars[[v]])) return(display_extra_vars[[v]]$units)
       u <- unname(clim_units[v])
       if (is.null(u) || is.na(u)) "standardized" else u
 }
@@ -294,6 +365,365 @@ vector_choices_base <- c("occupied FIA plots", "all FIA plots", "focal site anal
 vector_choices_cs   <- c("occupied FIA plots", "all FIA plots", "focal site analogs",
                          "current animation", "current field", "none")
 
+## Variables available for a track AND life stage. Stage is now the
+## upstream control (see the UI comment), so this is where the
+## stage-specific gaps in the FIA data get expressed:
+##
+##   basal area              only under "any" -- FIA's basal_area is not
+##                           broken out by size class
+##   proportion basal area   same
+##   abundance               needs a specific stage; there is no combined
+##                           stem count across seedlings, saplings and trees
+##   regeneration fraction   seedling or sapling only; it is a ratio
+##                           AGAINST adults, so "adult" and "any" are
+##                           meaningless
+metric_choices <- function(track, stage = "any") {
+      if (track %in% c("Forest type", "Forest group")) return("occurrence")
+      any_stage <- identical(stage, "any")
+
+      c("occurrence",
+        if (!any_stage) "abundance",
+        if (any_stage) "basal area",
+        if (identical(track, "All trees")) "species richness",
+        if (any_stage && identical(track, "Species")) "proportion basal area",
+        if (stage %in% c("seedling", "sapling")) "regeneration fraction")
+}
+
+# There is no stage_choices() counterpart: since the dependency was inverted,
+# stage is the upstream control and its options are the same four everywhere.
+# The observer that used to repopulate them from `metric` is gone -- it was the
+# old backwards direction, and it also overwrote the labeled choice vector
+# ("all life stages") with bare values and reset the user's selection.
+
+# Canonical fia_var for a (track, metric, stage) combination. Returns NULL for
+# combinations metric_choices() would not have offered -- "abundance" has no
+# "any" stage, for instance -- so callers must guard rather than assume a value.
+resolve_var <- function(track, metric, stage) {
+      if (track %in% c("Forest type", "Forest group")) return("presence probability")
+      switch(metric,
+             "occurrence" = switch(stage,
+                                   "seedling" = "seedling presence",
+                                   "sapling"  = "sapling presence",
+                                   "adult"    = "tree presence",
+                                   "any"      = "presence probability"),
+             "abundance" = switch(stage,
+                                  "seedling" = "number of seedlings",
+                                  "sapling"  = "number of saplings",
+                                  "adult"    = "number of trees"),
+             "basal area"            = "total basal area",
+             "species richness" = switch(stage,
+                                         "seedling" = "seedling species richness",
+                                         "sapling"  = "sapling species richness",
+                                         "adult"    = "adult species richness",
+                                         "any"      = "species richness"),
+             "proportion basal area" = "proportion basal area",
+             "regeneration fraction" = switch(stage,
+                                              "seedling" = "seedling fraction",
+                                              "sapling"  = "sapling fraction"))
+}
+
+# Climate variables selected at startup. Named once because three controls
+# depend on it: clim_vars itself, and cr_v1, whose choices an observer then
+# keeps in sync with it. Restating the default in each UI declaration is
+# how the Variable dropdown ended up offering "abundance" at a life stage where
+# it could not resolve.
+clim_vars_default <- c("cwd", "aet")
+
+# Occurrence-type variables. Richness is a sum of occurrence probabilities and
+# is only defined over these: summing "total basal area" across entities gives
+# community basal area, which is a perfectly good surface but is not richness.
+occurrence_vars <- c("presence probability", "seedling presence",
+                     "sapling presence", "tree presence")
+
+# Variables whose value depends on the SUPPORT it was estimated over, and so
+# need the plot-scale qualifier in the legend.
+#
+# Densities are not here: a kernel-weighted mean of per-acre basal area is the
+# expected per-acre basal area whatever area you evaluate it over, so support
+# affects their variance but not their expectation.
+#
+# Occurrence is different in kind, because presence is a threshold on an
+# underlying density -- P(>=1 stem in 0.07 ha) and P(>=1 stem in a 10 km cell)
+# are different numbers with no unit conversion between them.
+#
+# Two non-obvious members. "proportion basal area" is a ratio of means, which
+# would be scale-free on its own, but combine_ratio() multiplies it by the
+# occurrence layer, and that multiplier carries the support dependence. The
+# regeneration fractions are ratios of occurrence-based counts, and the support
+# does not cancel: both components saturate toward 1 as support grows, dragging
+# the ratio toward 0.5.
+support_dependent_vars <- c("presence probability", "seedling presence",
+                            "sapling presence", "tree presence",
+                            "proportion basal area",
+                            "seedling fraction", "sapling fraction",
+                            "species richness", "seedling species richness",
+                            "sapling species richness", "adult species richness")
+
+# Paired measures: computed from the historical AND future stacks together, and
+# undefined for a single timeframe. They ignore input$time rather than
+# inheriting historical/future/delta from it.
+#
+# Note these are NOT deltas of a per-timeframe measure, and the distinction
+# matters: net richness change of zero is entirely compatible with complete
+# species replacement. Both families have to exist.
+#
+# The pairing rule is a separate axis from the measure. Every formula here takes
+# two composition vectors and does not care whether they are separated in time
+# (same cell, two timeframes), in space (focal site vs every cell, one
+# timeframe), or both (the compositional counterpart of the reverse/forward
+# analog machinery). Only temporal pairing is wired up so far, but the measures
+# are written so the others slot in without redefining them.
+paired_measures <- c("turnover", "expected gains", "expected losses",
+                     "colonization demand", "loss fraction",
+                     "biggest winner", "biggest loser")
+
+# Measures whose value is an entity identity rather than a quantity. They need
+# a discrete palette, nearest-neighbour reprojection, and no scale transform,
+# and they are meaningless as a difference -- so they never take the "change in
+# X" relabelling the continuous per-timeframe measures get.
+#
+# Note "dominant entity" is NOT restricted to co-occurring entities: over a
+# mutually exclusive classification the argmax is the most likely forest type,
+# which is a perfectly good map.
+# "biggest winner" and "biggest loser" are BOTH categorical and paired: their
+# value is an entity identity, and they are defined only across two timeframes.
+# Membership in paired_measures puts them under "change"; membership here gives
+# them the discrete palette and nearest-neighbour reprojection.
+categorical_measures <- c("dominant entity", "biggest winner", "biggest loser")
+
+# Palette choices for the raster legend. The two sets are disjoint by design:
+# a sequential or diverging ramp applied to entity identities implies an
+# ordering that does not exist, and a qualitative set applied to a continuous
+# surface is unreadable. One control swaps between them.
+#
+# The categorical options come from grDevices::palette.colors() rather than
+# hcl.colors(): the hcl qualitative palettes sample a 1D path through HCL space,
+# so past about eight categories adjacent colors differ only slightly and the
+# result is a discretized gradient. scales::hue_pal() has the same problem --
+# a hue sweep at fixed chroma and luminance.
+#
+# Polychrome 36 and Alphabet are built by maximizing perceptual distance across
+# hue, chroma AND lightness together, which is what actually survives n = 10-25.
+# Tableau 10 and Set 3 look better at small n but run out; Okabe-Ito is the
+# colorblind-safe choice at eight. All are base R since 4.0, no new dependency.
+rast_palettes_continuous  <- c("default", "viridis", "magma", "plasma", "inferno",
+                               "RdYlBu", "Spectral", "RdBu", "BrBG")
+rast_palettes_categorical <- c("default", "Polychrome", "Alphabet", "Tableau",
+                               "Set 3", "Okabe-Ito")
+
+# Ceiling on a community-composition run, in gigabytes of per-entity surface
+# held at once (both timeframes).
+#
+# The cost scales as cells x entities, and BOTH inputs are user-controlled: the
+# grain slider goes to 1 km and the bounding box can span the data. At the
+# default 10 km the stack is about 0.07 GB and lives in memory; at 1 km over the
+# same box it is nearly 7 GB. On a shared server that is not a slow render, it
+# is an out-of-memory failure that takes other sessions with it.
+#
+# Set generously enough to allow 2 km over a typical domain and to refuse 1 km
+# over a wide one. Deployment-specific: raise it on a machine with headroom.
+comm_max_gb <- 1.5
+
+# Community measures that require entities able to CO-OCCUR at a plot.
+#
+# Forest types and groups are mutually exclusive plot classifications: each plot
+# carries exactly one FORTYPCD, so multi_values() rows are one-hot. Richness is
+# then 1 by construction, diversity is 1, dominance is 1 and evenness is 0 --
+# every per-timeframe measure is degenerate.
+#
+# This is the plot-support constraint again rather than anything wrong with the
+# classification: forest-type richness is meaningful over a cell, which contains
+# many plots of potentially different types. It is degenerate only because the
+# support is one plot.
+#
+# The paired measures will NOT be restricted this way. Bray-Curtis between two
+# probability vectors over forest types measures how the type distribution
+# shifts, which is well defined for a mutually exclusive classification.
+cooccurrence_measures <- c("richness", "diversity", "evenness", "dominance")
+
+# Community-level reductions across the per-entity stack. Each is a function of
+# the whole entity set rather than of any one entity, which is why they occupy
+# the entity-picker slot rather than the `metric` dropdown: in All mode, "how
+# are entities combined" IS the selection the picker makes.
+#
+# Two families, distinguished by whether they are computed per timeframe (and so
+# inherit historical / future / delta from input$time) or are inherently paired
+# and defined only as a change. Only the per-timeframe family is implemented so
+# far; the paired measures (turnover, expected gains and losses) are next.
+#
+# Richness is the one linear reduction here, and linearity means it commutes
+# with the interpolation -- it is also available far more cheaply as an
+# All-trees variable. It is kept here because it belongs to this family
+# conceptually, and because the two routes agreeing is a free check on the whole
+# multi-entity path. The other three genuinely require per-entity surfaces:
+# no plot-level aggregate can be interpolated to recover them.
+comm_measures <- c("richness", "diversity", "evenness", "dominance",
+                   "dominant entity", paired_measures)
+
+# Label and step for the support floor, which are properties of the DENOMINATOR
+# rather than of the layer being masked -- and the denominator changes with the
+# variable, so a fixed label would be wrong most of the time.
+#
+# Single-entity ratios (the regeneration fractions) are conditional on the
+# entity's occurrence probability, so the floor is on 0-1. Community measures
+# are normalized by the summed per-entity response, whose units are whatever the
+# variable measures.
+support_floor_spec <- function(multi, fia_var, track) {
+      # Defaults are nonzero because the unmasked layers are actively
+      # misleading: which.max always names a winner, and a ratio is at its most
+      # extreme where its denominator is smallest, so the empty ground is
+      # exactly where these maps look most dramatic. The values below are
+      # "barely anything there" in each unit -- deliberately low, since the
+      # control exists to be tuned.
+      if (!isTRUE(multi))
+            return(list(label = "Minimum occurrence probability",
+                        step = 0.05, default = 0.1))
+
+      unit <- switch(fia_var,
+                     "total basal area"      = list("Minimum ft\u00b2 BA / acre", 5, 5),
+                     "number of trees"       = list("Minimum trees / acre", 5, 5),
+                     "number of saplings"    = list("Minimum saplings / acre", 5, 5),
+                     "number of seedlings"   = list("Minimum seedlings / acre", 10, 10),
+                     "proportion basal area" = list("Minimum summed proportion", 0.1, 0.1),
+                     # Occurrence variables: the denominator is expected richness.
+                     # 0.5 rather than 1: a cell with 0.6 expected species is
+                     # more likely than not to hold a tree, so cutting at 1 would
+                     # discard genuinely occupied sparse woodland.
+                     list(paste("Minimum expected",
+                                if (identical(track, "Species")) "species" else "classes"),
+                          0.5, 0.5))
+      list(label = unit[[1]], step = unit[[2]], default = unit[[3]])
+}
+
+# Mask a ratio layer where the community or entity it describes is barely
+# present. Ratios stay numerically well behaved as their denominator approaches
+# zero but stop meaning anything: evenness, dominance, the regeneration
+# fractions -- and, shortly, Bray-Curtis turnover and colonization demand --
+# take their most extreme values exactly where nothing is there to be even,
+# dominant, regenerating or turning over.
+#
+# combine_ratio() already masks the fractions at denom == 0; this is the same
+# idea extended to denom ~ 0, which is the case that actually produces the
+# misleading map.
+#
+# Masking rather than fading, deliberately: the extreme values from empty cells
+# also drive seq_domain(), compressing the well-supported part of the map into a
+# narrow band of the palette. Removing them fixes the legend as much as the map.
+apply_support_floor <- function(x, support, floor) {
+      if (!isTruthy(floor) || is.na(floor) || floor <= 0) return(x)
+      terra::ifel(support >= floor, x, NA)
+}
+
+# Row-wise version of the community reductions in composition_layer(), for a
+# plot x entity matrix. Used to paint the FIA markers with the OBSERVED
+# counterpart of whatever the raster is modelling, on the same scale.
+#
+# Kept deliberately parallel to the raster path -- same formulas, different
+# substrate -- since the two being comparable is what makes the markers a check
+# on the surface rather than decoration.
+#
+# One interpretive wrinkle: for an occurrence variable the observed matrix is
+# 0/1, so observed diversity collapses to observed richness and observed
+# dominance to 1/richness. The MODELLED versions do not, because they act on
+# continuous probabilities. The markers and the raster are both correct and are
+# not measuring quite the same thing there.
+comm_reduce_rows <- function(y, measure) {
+      # Force the argument in this frame rather than inside as.matrix(): if a
+      # caller passes a reactive whose req() fails, the resulting condition
+      # escaping from S4 dispatch is reported as an evaluation error instead of
+      # a silent cancellation.
+      force(y)
+      if (is.null(y) || !ncol(y)) return(NULL)
+      v <- as.matrix(y)
+      v[is.na(v)] <- 0
+      s <- rowSums(v)
+
+      # Categorical: which entity is largest at the plot. Returned as a column
+      # index into `y`, the same index space the raster's which.max() uses, so
+      # the two share a code vocabulary before lumping.
+      if (measure %in% categorical_measures) {
+            # Only the per-timeframe one has an observed counterpart: a plot is
+            # surveyed at a single point in time, so there is no observed
+            # "biggest winner" to paint the markers with.
+            if (measure %in% paired_measures) return(NULL)
+            out <- max.col(v, ties.method = "first")
+            out[s == 0] <- NA_integer_
+            return(out)
+      }
+
+      out <- if (identical(measure, "richness")) {
+            s
+      } else {
+            # H = -sum(q log q) with q = v / s; see composition_layer().
+            vlv <- rowSums(ifelse(v > 0, v * log(v), 0))
+            H <- log(s) - vlv / s
+            switch(measure,
+                   "diversity" = exp(H),
+                   "evenness"  = H / log(ncol(v)),
+                   "dominance" = do.call(pmax, as.data.frame(v)) / s,
+                   NULL)
+      }
+      if (is.null(out)) return(NULL)
+
+      # A plot with nothing recorded has no composition to describe -- diversity,
+      # evenness and dominance are all undefined when the community is empty.
+      #
+      # Richness is the exception: zero is a real, well-defined observation, and
+      # it is exactly the value the model should be predicting low at. NA-ing
+      # those plots dropped the entire bottom of the calibration curve and pulled
+      # them out of the cross-validation pool, which is also why community
+      # richness disagreed with the All-trees species-richness variable -- that
+      # one counts zero correctly.
+      if (!identical(measure, "richness")) out[s == 0] <- NA_real_
+      out
+}
+
+# Which community measures are valid for a given track and variable. Invalid
+# combinations are made unselectable rather than selectable-and-warned: these
+# are permanent incompatibilities, not preconditions the user could satisfy by
+# supplying something. (Contrast eval_scope, where an unavailable option means
+# "no polygon uploaded yet" and saying so is more useful than hiding it.)
+comm_measure_choices <- function(track, fia_var, time = "historical") {
+      if (!isTruthy(fia_var) || !fia_var %in% multi_vars) return(character(0))
+
+      static <- setdiff(comm_measures, paired_measures)
+      # Mutually exclusive classifications make every per-timeframe measure
+      # degenerate.
+      if (track %in% c("Forest type", "Forest group"))
+            static <- setdiff(static, cooccurrence_measures)
+      # Richness counts entities, so it needs an occurrence variable: the same
+      # sum over an abundance variable is community abundance.
+      if (!fia_var %in% occurrence_vars) static <- setdiff(static, "richness")
+
+      # Timeframe is the first cut, because "state or change" is a smaller and
+      # more natural question than picking out of one mixed list. Under a single
+      # timeframe only the static measures apply; under change they are joined by
+      # the paired ones, and relabelled so the whole list reads as change
+      # measures. Only the LABELS change -- the values stay the measure ids, so
+      # nothing downstream has to know about this.
+      if (!identical(time, "delta")) return(stats::setNames(static, static))
+
+      # Categorical measures are dropped rather than relabelled: the difference
+      # of two entity identities is not an entity identity. Their change
+      # counterparts are separate measures (biggest winner, biggest loser).
+      chg <- setdiff(static, categorical_measures)
+      c(stats::setNames(chg, paste("change in", chg)),
+        stats::setNames(paired_measures, paired_measures))
+}
+
+# FIA variables that generalize to a per-entity column in the multi-entity
+# response matrix. The ratio variables (seedling fraction, sapling fraction)
+# carry the occurrence-gated numerator/denominator structure that
+# ratio_pieces() hands to aim() as three coupled columns; generalizing those
+# multiplies the column count by three and is deferred.
+#
+# Note "proportion basal area" IS here: its denominator is the plot total,
+# shared across entities, so it is a plain per-entity column divided by a
+# common vector rather than a pooled ratio.
+multi_vars <- c("presence probability", "seedling presence", "sapling presence",
+                "tree presence", "total basal area", "proportion basal area",
+                "number of trees", "number of saplings", "number of seedlings")
+
 # Spatial scopes the model-evaluation module can score over. These are the
 # EVALUATION set, never the analog pool: predictions are always built from
 # every available analog, and the scope only decides which held-out plots the
@@ -304,10 +734,24 @@ vector_choices_cs   <- c("occupied FIA plots", "all FIA plots", "focal site anal
 # a point, and a point is not an evaluation set. The meaningful site-scoped
 # quantity is the plots within the geographic cutoff of the click -- the same
 # neighborhood the model draws its analogs from.
-eval_scope_names <- c("Modeling domain"         = "domain",
-                      "Study area"              = "polygon",
-                      "Buffered study area"     = "buffered",
-                      "Focal site neighborhood" = "site")
+# The areas a module can summarize over, named once so a code means the same
+# thing everywhere. This previously diverged: "site" meant the analog
+# neighborhood in the evaluation and climate-relationship modules and the single
+# clicked cell in the composition and climate-model modules. Nothing shared them
+# yet, so nothing broke -- but the first helper used by both would have silently
+# done the wrong one.
+#
+# "site" is the neighborhood; "cell" is the one clicked cell.
+area_names <- c("Model bounding box"      = "domain",
+                "Focal polygon"           = "polygon",
+                "Buffered polygon"        = "buffered",
+                "Focal site neighborhood" = "site",
+                "Focal site"              = "cell")
+
+# Modules take the subset that is meaningful for them. Evaluation and climate
+# relationships exclude the single cell: one plot is not an evaluation set, and
+# one cell is not a relationship.
+eval_scope_names <- area_names[area_names != "cell"]
 
 # Below this many held-out plots, metrics are not reported at all. A small unit
 # can easily contain single-digit plot counts, and an AUC over eight plots is
@@ -334,12 +778,13 @@ eval_metric_labels <- c(n             = "n",
 # grain slider does not affect evaluation at all.
 eval_stamp_labels <- c(track      = "focal entity type",
                        focal      = "focal entity",
+                       measure    = "community measure",
                        fia_var    = "FIA variable",
-                       bbox       = "modeling domain",
+                       bbox       = "model bounding box",
                        clim_vars  = "climate variables",
                        theta_clim = "climate bandwidth",
                        theta_geog = "geographic bandwidth",
-                       polygon    = "study area polygon",
+                       polygon    = "focal polygon",
                        site       = "focal site")
 
 theme_set(theme_bw(base_size = 16))
@@ -392,9 +837,8 @@ stale_phrase <- function(fields, labels) {
 stale_banner <- function(fields, labels,
                          action = "Re-run to update these results.") {
       if (!length(fields)) return(NULL)
-      div(class = "alert alert-warning py-2 px-3 mb-2",
-          style = "font-size: 0.85em;",
-          sprintf("Computed before the %s changed. %s",
+      div(class = "ts-notice",
+          sprintf("These results were produced before the %s changed. %s",
                   stale_phrase(fields, labels), action))
 }
 
@@ -407,7 +851,9 @@ gg_stale <- function(p, stale, label = "Stale \u2014 re-run to update") {
             annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = Inf,
                      fill = "white", alpha = 0.5) +
             labs(caption = label) +
-            theme(plot.caption = element_text(color = "#b8860b", face = "bold",
+            # Same color as the .ts-notice rule, so an in-plot caption and a
+            # sidebar notice read as the same kind of statement.
+            theme(plot.caption = element_text(color = "#9a3412", face = "bold",
                                               hjust = 0, size = 11))
 }
 
@@ -631,6 +1077,57 @@ ui <- page_sidebar(
 ")),
 
       tags$style(HTML("
+  /* Notices come from two mechanisms that cannot share markup: inline divs in
+     the sidebar, and validate() messages, which Shiny renders as plain text in
+     place of an output. Styling them together is what makes them read as one
+     kind of thing.
+
+     Pitched between the two extremes it replaced: colored enough to register as
+     something to read rather than blending into body text, but without the
+     solid fill of an alert box. Most of these report an unmet precondition -- no polygon
+     uploaded, no focal site set -- which is a normal state on the way to using
+     the tool, and a full-width warning flag overstates it. */
+  .ts-notice,
+  .shiny-output-error-validation {
+    display: block;
+    color: #9a3412;
+    background-color: transparent;
+    border: none;
+    border-left: 3px solid #c2410c;
+    border-radius: 0;
+    padding: 0.35rem 0 0.35rem 0.7rem;
+    margin: 0.5rem 0;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    font-style: normal;
+    text-align: left;
+  }
+")),
+
+      tags$style(HTML("
+  /* Raster legend: title beside the color bar rather than stacked above it.
+     A multi-line title over a narrow gradient leaves a lot of dead width, and
+     the title is the part that wraps. Targets .info.legend, which addLegend()
+     produces; circleLegend() builds its own .leaflet-control container and is
+     unaffected. */
+  /* Gradient legends only: a discrete legend's swatch rows are themselves the
+     container's children, so laying them out in a row strings every category
+     across the screen. Those opt out via .legend-discrete. */
+  #map .info.legend:not(.legend-discrete) {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  #map .info.legend > div:first-child {
+    max-width: 11em;
+    min-width: 6em;
+    line-height: 1.2;
+    text-align: left;
+  }
+")),
+
+      tags$style(HTML("
   /* Remove padding on the main content wrapper(s) */
   .bslib-page-sidebar main,
   .bslib-page-sidebar .main {
@@ -686,14 +1183,14 @@ ui <- page_sidebar(
                   accordion_panel(
                         "Info",
                         helpText("This tool interpolates FIA variables across a spatial grid based on geographic proximity
-                          and climatic similarity to FIA plots, optionally accounting for pedicted future climate change.
-                          Use it to assess potential shifts in species distributions and other forest characteristics,
-                          model connectivity between current and potential future distributions,
-                          and explore properties of plots that are analogs to your locations of interest."),
+                          and climatic similarity to FIA plots, optionally accounting for predicted climate change.
+                          Use it to map forest properties like occurrence, abundance, and basal area of individual species,
+                          forest types, and the tree community as a whole, and to assess potential future shifts in
+                          the distributions of these variables."),
                         br(),
-                        helpText("Here on the lefthand sidebar, you'll find core controls for setting model parameters and
+                        helpText("Here on the left, you'll find core controls for setting model parameters and
                                  choosing display variables. The righthand sidebar houses modules with their own
-                                 dedicated controls and plots. Hover your cursor over controls for explanatory pop-ups."),
+                                 dedicated controls and plots. Throughout, hover your cursor over controls for explanatory pop-ups."),
                         br(),
                         helpText("NOTE: This tool is a prototype and is still under development.
                           Please contact matthew.kling@umontana.edu with questions, suggestions, or bug reports.")
@@ -701,63 +1198,196 @@ ui <- page_sidebar(
 
                   accordion_panel(
                         "FIA variable",
-                        selectInput("track", "Focal entity",
-                                    choices = c("Species", "Forest type", "Forest group", "All trees"),
+                        ## Labels lowercased to match the other parameter menus;
+                        ## values are unchanged, since switch() statements
+                        ## throughout the server match on them.
+                        selectInput("track", "Entity",
+                                    choices = c("species"      = "Species",
+                                                "forest type"  = "Forest type",
+                                                "forest group" = "Forest group",
+                                                "all trees"    = "All trees"),
                                     selected = "Species") %>%
                               tooltip(HTML("Choose the focal entity for the model.<br><br>
                                           <dl style='margin:0;'>
-                                              <dt>Species</dt> <dd>Model presence or abundance of a single focal tree species.</dd>
-                                              <dt>Forest type</dt> <dd>Model probability that a site is classified as a focal FIA forest type (a fine-grained classification).</dd>
-                                              <dt>Forest group</dt> <dd>Model probability that a site is classified within a focal FIA forest type group (a coarser classification).</dd>
+                                              <dt>Species</dt> <dd>Model the presence or abundance of a single focal tree species.</dd>
+                                              <dt>Forest type</dt> <dd>Model the probability that a site is classified as a focal FIA forest type (a fine-grained classification).</dd>
+                                              <dt>Forest group</dt> <dd>Model the probability that a site is classified within a focal FIA forest type group (a coarser classification).</dd>
                                               <dt>All trees</dt> <dd>Model community-wide forest properties (any-species presence or total basal area).</dd>
                                           </dl>")),
+                        ## How MANY entities, orthogonal to which quantity is
+                        ## measured on each. Unlabelled, so it reads as a
+                        ## qualifier on the entity dropdown above rather than as
+                        ## a separate axis. Option text is track-specific ("single
+                        ## species" vs "single forest type") and set by an
+                        ## observer; the underlying values stay single/multi.
+                        ##
+                        ## Hidden for All trees, which already aggregates the
+                        ## community into a single response BEFORE interpolation
+                        ## -- the opposite operation to interpolating each entity
+                        ## and reducing afterward.
                         conditionalPanel(
-                              condition = "input.track == 'Species'",
-                              selectizeInput("species", "Species", choices = spp, selected = "Pinus edulis") %>%
+                              condition = "input.track != 'All trees'",
+                              selectInput("entity_scope", NULL,
+                                          choices = c("single species" = "single",
+                                                      "community composition" = "multi"),
+                                          selected = "single") %>%
+                                    tooltip(HTML("How many entities (species or forest types) to model at once.<br><br>
+                                                <dl style='margin:0;'>
+                                                    <dt>Single</dt> <dd>Model one focal species, forest type, or group.</dd>
+                                                    <dt>Community composition</dt> <dd>Modeel every entity in the region at once, reducing results to a community-level summary.</dd>
+                                                </dl>
+                                                The life stage and variable settings apply either way."))
+                        ),
+                        conditionalPanel(
+                              condition = "input.track == 'Species' && input.entity_scope != 'multi'",
+                              selectizeInput("species", NULL, choices = spp, selected = "Pinus edulis") %>%
                                     tooltip("Select a focal species by scrolling or typing")
                         ),
                         conditionalPanel(
-                              condition = "input.track == 'Forest type'",
-                              selectizeInput("forest_type", "Forest type",
+                              condition = "input.track == 'Forest type' && input.entity_scope != 'multi'",
+                              selectizeInput("forest_type", NULL,
                                              choices = forest_type_choices,
                                              selected = forest_type_choices[[1]]) %>%
                                     tooltip("Select a focal FIA forest type by scrolling or typing. Labels show the FORTYPCD followed by the type name.")
                         ),
                         conditionalPanel(
-                              condition = "input.track == 'Forest group'",
-                              selectizeInput("forest_group", "Forest group",
+                              condition = "input.track == 'Forest group' && input.entity_scope != 'multi'",
+                              selectizeInput("forest_group", NULL,
                                              choices = forest_group_choices,
                                              selected = forest_group_choices[[1]]) %>%
                                     tooltip("Select a focal FIA forest type group by scrolling or typing.")
                         ),
+                        ## Life stage closes the entity group -- kind, scope,
+                        ## which one, which individuals -- all four unlabelled so
+                        ## they read as a single cluster under one heading. The
+                        ## scope row poses a question the picker row answers
+                        ## ("single species" / "which species"), so stage trails
+                        ## rather than splitting that pair.
+                        ##
+                        ## That placement inverts the old dependency: stage used
+                        ## to be filtered by metric, and now metric is filtered by
+                        ## stage (metric_choices takes it). A control whose
+                        ## options are set by a control below it reads badly, and
+                        ## the inverted direction is the more truthful one --
+                        ## "seedling basal area" is unavailable because FIA does
+                        ## not break basal area out by size class, not because
+                        ## basal area lacks a stage.
+                        ##
+                        ## Forest type and group have no stage: their entity is a
+                        ## plot classification, and multi_values() builds an
+                        ## indicator matrix that ignores the variable entirely.
+                        conditionalPanel(
+                              condition = "input.track == 'Species' || input.track == 'All trees'",
+                              selectInput("stage", NULL,
+                                          c("seedlings only"  = "seedling",
+                                            "saplings only"   = "sapling",
+                                            "adults only"     = "adult",
+                                            "all life stages" = "any"),
+                                          selected = "any") %>%
+                                    tooltip(HTML("Which tree size class to model. Variables that FIA does not break out by size class &mdash; basal area, and its proportion &mdash; are only offered under 'all life stages'.<br><br>
+                                                <dl style='margin:0;'>
+                                                    <dt>Seedlings</dt> <dd>&lt; 1 in. DBH/DRC.</dd>
+                                                    <dt>Saplings</dt> <dd>1.0&ndash;4.9 in. DBH/DRC.</dd>
+                                                    <dt>Adults</dt> <dd>&ge; 5.0 in. DBH/DRC.</dd>
+                                                    <dt>All life stages</dt> <dd>Combined.</dd>
+                                                </dl>"))
+                        ),
+                        ## Single-entity pickers and the community measure share
+                        ## one slot: in All mode the reduction IS the selection.
+                        ## Hidden rather than removed, so input$species keeps its
+                        ## value while All mode is active.
+                        ## Number of categories drawn for the categorical
+                        ## measures. 143 entities is far past what any palette or
+                        ## legend can carry, so all but the most frequent N are
+                        ## lumped into a single "other" class. The right N differs
+                        ## a lot between a polygon-scoped domain and a
+                        ## region-wide one, so it is a control rather than a
+                        ## constant.
+                        conditionalPanel(
+                              condition = paste0(
+                                    "input.track != 'All trees' && input.entity_scope == 'multi' && ",
+                                    "['", paste(categorical_measures, collapse = "','"),
+                                    "'].indexOf(input.comm_measure) >= 0"),
+                              numericInput("comm_top_n", "Categories shown", value = 10, min = 2, max = 25, step = 1) %>%
+                                    tooltip("How many entities get their own color. The rest are pooled into 'other', ranked by how much of the mapped area each one covers.")
+                        ),
+
+                        ## Timeframe sits above the variable because it is the
+                        ## first cut on the community measures below: "state or
+                        ## change" narrows the list before the user reads it,
+                        ## rather than the list being long and mixed and the
+                        ## timeframe control quietly not applying to half of it.
+                        ##
+                        ## "change" covers both a difference of a static measure
+                        ## (change in richness) and the paired measures, which are
+                        ## change quantities in their own right and not deltas of
+                        ## anything -- net richness change of zero is entirely
+                        ## compatible with complete species replacement.
+                        selectInput("time", "Timeframe",
+                                    c("historical", "future", "change" = "delta")) %>%
+                              tooltip("Choose whether to display historical (2000-2025) or future (scenario selected under 'Climate data') model predictions, or the change between them.
+                                      Only relevant for `FIA variable` and `ESS` raster variables."),
+                        ## Declared from metric_choices() rather than a literal
+                        ## list. The syncing observer uses ignoreInit, so a
+                        ## hard-coded list is the startup state -- and it held
+                        ## "abundance", which is not valid at the default life
+                        ## stage of "any". Selecting it made resolve_var() return
+                        ## NULL and the app silently do nothing.
                         selectInput("metric", "Variable",
-                                    c("occurrence", "abundance", "basal area",
-                                      "proportion basal area", "regeneration fraction")) %>%
+                                    choices = metric_choices("Species", "any")) %>%
                               tooltip(HTML("Choose the quantity to model.<br><br>
                                           <dl style='margin:0;'>
                                               <dt>Occurrence</dt> <dd>Probability the focal entity is present within a single FIA plot footprint (~0.07 ha) randomly located within the grid cell.</dd>
                                               <dt>Abundance</dt> <dd>Population density of the selected life stage, in stems per acre.</dd>
                                               <dt>Basal area</dt> <dd>Live tree and sapling basal area, in ft&sup2; per acre.</dd>
+                                              <dt>Species richness</dt> <dd>Number of tree species present within a single FIA plot footprint (~0.07 ha).</dd>
                                               <dt>Proportion basal area</dt> <dd>The focal species' share of total stand basal area, multiplied by the probability that stand basal area is nonzero.</dd>
-                                              <dt>Regeneration fraction</dt> <dd>Probability that the selected regeneration stage is present relative to adults, conditional on the species occuring on the plot. Calcualted as p(regen) / (p(regen) + p(adult)). Adults only = 0; regen only = 1; adults and regen together = intermediate value (not precisely 0.5 due to differing sample areas).</dd>
+                                              <dt>Regeneration fraction</dt> <dd>Probability that the selected regeneration stage is present relative to adults, conditional on the species occurring on the plot. Calculated as p(regen) / (p(regen) + p(adult)). Adults only = 0; regen only = 1; adults and regen together = intermediate value (not precisely 0.5 due to differing sample areas).</dd>
                                           </dl>")),
-                        ## Life stage: shown only for metrics/tracks that have one
-                        ## (occurrence / abundance / regeneration fraction on the
-                        ## Species and All trees tracks). Basal-area metrics and the
-                        ## forest type/group tracks have no stage.
+                        ## The community reduction pairs with the variable, not
+                        ## with the entity: "occurrence + richness" and "basal
+                        ## area + dominance" jointly define the mapped quantity,
+                        ## the same way the variable alone does in single-entity
+                        ## mode. It sits below the variable because
+                        ## comm_measure_choices() is filtered by it.
                         conditionalPanel(
-                              condition = "(input.track == 'Species' || input.track == 'All trees') && (input.metric == 'occurrence' || input.metric == 'abundance' || input.metric == 'regeneration fraction')",
-                              selectInput("stage", "Life stage",
-                                          c("seedling", "sapling", "adult", "any"),
-                                          selected = "any") %>%
-                                    tooltip(HTML("Choose the life stage (size class).<br><br>
+                              condition = "input.track != 'All trees' && input.entity_scope == 'multi'",
+                              selectInput("comm_measure", NULL,
+                                          choices = comm_measure_choices("Species", "presence probability"),
+                                          selected = "richness") %>%
+                                    tooltip(HTML("How the per-entity (species or forest types) surfaces are combined into one map. Only combinations that are well defined for the current entity type and variable are listed.<br><br>
                                                 <dl style='margin:0;'>
-                                                    <dt>Seedling</dt> <dd>&lt; 1 in. DBH/DRC.</dd>
-                                                    <dt>Sapling</dt> <dd>1.0&ndash;4.9 in. DBH/DRC.</dd>
-                                                    <dt>Adult</dt> <dd>&ge; 5.0 in. DBH/DRC.</dd>
-                                                    <dt>Any</dt> <dd>All life stages combined.</dd>
-                                                </dl>"))
+                                                    <dt>Richness</dt> <dd>Expected number of entities present, summed across per-entity occurrence probabilities. No threshold: a cell with 0.5 probability for each of two species has expected richness 1.</dd>
+                                                    <dt>Diversity</dt> <dd>Effective number of entities (Hill N1 = exp of Shannon entropy), in the same units as richness. Low where one entity dominates, however many rare ones are present.</dd>
+                                                    <dt>Evenness</dt> <dd>Pielou&#39;s J (Shannon entropy relative to its maximum given the species pool). 0 where a single species dominates, with higher values for more balanced communities.</dd>
+                                                    <dt>Dominance</dt> <dd>Share of the community held by its single largest member (0&ndash;1).</dd>
+                                                    <dt>Dominant entity</dt> <dd>Which entity is has the highest value at each cell. Drawn as discrete classes; all but the most frequent few are pooled into &quot;other&quot;. Most intuitive over an abundance variable &mdash; over occurrence it shows the most widely probable entity.</dd>
+                                                </dl>
+                                                The measures below compare the historical and future communities directly (they are not deltas of the measures above).<br>
+                                                <dl style='margin:0;'>
+                                                    <dt>Turnover</dt> <dd>Bray&ndash;Curtis dissimilarity between the historical and future communities. 0 is identical composition, 1 is no overlap.</dd>
+                                                    <dt>Expected gains / losses</dt> <dd>How much arrives and how much departs, in the variable&#39;s own units, counted separately. Asymmetric on purpose &mdash; what arrives is a different question from what leaves.</dd>
+                                                    <dt>Colonization demand</dt> <dd>Gains as a share of the future community: the fraction of what will be suitable there that is not there now.</dd>
+                                                    <dt>Loss fraction</dt> <dd>The opposite: losses as a share of the community that is there now. Read alongside turnover, the two fractions show which side is driving it &mdash; high turnover with a low loss fraction is accumulation rather than replacement.</dd>
+                                                    <dt>Biggest winner / loser</dt> <dd>Which single entity gains or loses the most at each cell, drawn as discrete classes. Says which entity is moving, where the measures above say how much. Use the Community composition panel to see the full ranking behind any one cell.</dd>
+                                                </dl>")),
+                              uiOutput("comm_note"),
+                              uiOutput("comm_cost_note")
                         ),
+                        ## Support floor for ratio-valued layers. Shown only when
+                        ## the selected layer is a ratio -- the community
+                        ## measures other than richness, and the regeneration
+                        ## fractions. Richness IS the denominator, so masking it
+                        ## by itself would be circular.
+                        conditionalPanel(
+                              condition = "(input.track != 'All trees' && input.entity_scope == 'multi' && input.comm_measure != 'richness' && input.comm_measure != 'expected gains' && input.comm_measure != 'expected losses') || input.metric == 'regeneration fraction'",
+                              numericInput("support_floor", "Minimum expected species", value = 0.5, min = 0, step = 0.5) %>%
+                                    tooltip(HTML("Blank out cells where there is too little predicted mass present for the ratio to mean anything.<br><br>
+                                                Ratios stay well behaved as their denominator approaches zero but stop being informative: evenness and the regeneration fractions take their most extreme values where the community or species is barely present.<br><br>
+                                                The label shows which quantity the threshold applies to &mdash; expected richness for occurrence variables, the summed response for abundance ones, and the species' own occurrence probability for the regeneration fractions. Set 0 for no masking.<br><br>
+                                                This also rescales the color palette, since the extreme values from near-empty cells otherwise compress the rest of the map into a narrow band."))
+                        ),
+
                         ## Canonical variable resolved from (track, metric, stage);
                         ## hidden because all downstream logic switches on input$fia_var.
                         tags$div(style = "display: none;",
@@ -767,12 +1397,14 @@ ui <- page_sidebar(
                                                "proportion basal area", "total basal area",
                                                "number of trees", "number of saplings",
                                                "number of seedlings",
+                                               "species richness", "seedling species richness",
+                                               "sapling species richness", "adult species richness",
                                                "seedling fraction", "sapling fraction")))
                   ),
 
                   ## Three nested spatial extents, one shared resolution.
                   ##
-                  ## The modeling domain, the study area polygon, and the focal
+                  ## The model bounding box, the focal polygon, and the focal
                   ## site are all "where", differing only in dimension: an area
                   ## computed over, an area summarized within, a point queried at.
                   ## Splitting them across two panels (or, before that, across
@@ -794,18 +1426,17 @@ ui <- page_sidebar(
                   ## an invalidation decision.
                   accordion_panel(
                         "Study area",
-                        helpText("Where the model runs, and the areas you compare against it:
-                                 the modeling domain, an optional study area polygon, and an
-                                 optional focal site. All three are evaluated at the grain set
-                                 below."), hr(),
+                        helpText("Where the model runs, and the places you compare against it: the model bounding box,
+                                 an optional focal polygon, and an optional focal site. All three are evaluated at the
+                                 grain size set below."), hr(),
 
                         sliderInput("clim_agg", "Raster grain size", 1, 10, value = 10, step = 1, post = " km") %>%
-                              tooltip("Resolution of the modeling grid, and of every summary drawn from it. Larger values are faster but less precise."),
+                              tooltip("Cell size of the model grid, and of every summary drawn from it. Larger values run faster but are less precise."),
 
                         hr(),
 
-                        tags$strong("Modeling domain"),
-                        helpText("The extent the model is computed over."),
+                        tags$strong("Model bounding box"),
+                        helpText("The rectangulare region the model is computed over. A smaller box runs faster."),
                         sliderInput("bbox_x", "Longitude range",
                                     min = clim_bbox["xmin"], max = clim_bbox["xmax"],
                                     value = c(-116, -100)),
@@ -820,8 +1451,8 @@ ui <- page_sidebar(
 
                         hr(),
 
-                        tags$strong("Study area polygon"),
-                        helpText("An area within the domain to summarize over. Optional."),
+                        tags$strong("Focal polygon"),
+                        helpText("A spatial polygon of your area of interest. Optional."),
                         uiOutput("polygon_status"),
                         fileInput("polygon_upload", NULL,
                                   multiple = TRUE,
@@ -837,19 +1468,18 @@ ui <- page_sidebar(
                         tags$strong("Focal site"),
                         helpText("A single location to query. Click the map to set one. Optional."),
                         uiOutput("site_status"),
-                        layout_column_wrap(
-                              width = 1/2,
-                              actionButton("highlight_site", "Highlight on map") %>%
-                                    tooltip("Switch the vector layer to this site's analog plots and zoom the map to its geographic cutoff."),
-                              actionButton("site_clear", "Clear") %>%
-                                    tooltip("Remove the focal site from the map and plots.")
-                        )
+                        ## The "highlight on map" button that used to sit here has
+                        ## moved to the "How predictions are made" panel. This
+                        ## group is for SETTING the site; showing which plots
+                        ## inform it is that panel's subject.
+                        actionButton("site_clear", "Clear") %>%
+                              tooltip("Remove the focal site from the map and plots.")
                   ),
 
                   accordion_panel(
                         "Climate data",
                         helpText("Select climate variables and future scenarios."), hr(),
-                        selectInput("clim_vars", "Climate variables", clim_vars(), selected = c("cwd", "aet"), multiple = TRUE) %>%
+                        selectInput("clim_vars", "Climate variables", clim_vars(), selected = clim_vars_default, multiple = TRUE) %>%
                               tooltip(HTML("Choose one or more variables for measuring multivariate climate similarity:<br><br>
                                           <dl style='margin:0;'>
                                               <dt>CWD</dt> <dd>Climatic water deficit</dd>
@@ -878,11 +1508,15 @@ ui <- page_sidebar(
 
                   accordion_panel(
                         "Interpolation",
-                        helpText("Analog FIA plots are weighted using Gaussian kernels based on climatic and geographic distances from a site.
-                                 Bandwidths specify the standard deviations of these kernels. Plots farther than 3 stdevs are considered non-analog and excluded."), hr(),
-                        sliderInput("theta_geog", "Geographic bandwidth (km)", 5, 100, value = 30),
+                        helpText("Predictions for each grid cell are built from nearby FIA plots with similar climate. Plots are weighted
+                                 more heavily the closer they are, in both senses, and these two settings control how quickly that
+                                 falloff happens. They are standrd deviations of Gaussian weighting kernels.
+                                 Plots more than three times either setting away are not used at all."), hr(),
+                        sliderInput("theta_geog", "Geographic bandwidth (km)", 5, 100, value = 30) %>%
+                              tooltip("Controls how plot weight decays with geographic distance from a grid cell.
+                                      This distance also defines two of the areas used in some of the righthand modules: the 'focal site neighborhood' is everything within three bandwidths of the site you clicked, and the 'buffered polygon' is your polygon widened by the same amount."),
                         sliderInput("theta_clim", "Climate bandwidth (z)", .05, .5, value = .1) %>%
-                              tooltip("Climate bandwidth units are in standard deviations relative to climate variation across all FIA plots in the contiguous US")
+                              tooltip("Measured in standard deviations of climate across all FIA plots in the contiguous US, so 0.1 means plots within a tenth of a standard deviation count almost fully.")
                   ),
 
                   accordion_panel(
@@ -890,10 +1524,10 @@ ui <- page_sidebar(
                         helpText("Choose which model results are drawn on the map."), hr(),
                         selectInput("stat", "Raster variable", stat_choices_base) %>%
                               tooltip(HTML("<dl style='margin:0;'>
-                                              <dt>FIA variable</dt> <dd>Interpolated values for the plot variable selected above</dd>
-                                              <dt>Effective sample size</dt> <dd>Effective number of FIA plots within climatic and geographic range, accounting for weights</dd>
-                                              <dt>Focal site similarity</dt> <dd>Climatic distance to the site selected on map, based on the selected analog direction</dd>
-                                              <dt>Connectivity</dt> <dd>Circuit-based connectivity outputs between historical and future surfaces (available when the connectivity module is enabled); choose the specific connectivity variable below</dd>
+                                              <dt>FIA variable</dt> <dd>Predicted values of the variable selected above.</dd>
+                                              <dt>Effective sample size</dt> <dd>How many FIA plots each cell's prediction effectively rests on. Nearby, climatically similar plots count close to fully and distant ones count for little, so this is usually well below the raw plot count. Low values mean a prediction is built on thin evidence.</dd>
+                                              <dt>Focal site similarity</dt> <dd>How climatically similar each cell is to the site you clicked on the map. Which climates are compared depends on the analog direction set in the 'Focal site analogs' panel at right.</dd>
+                                              <dt>Connectivity</dt> <dd>Circuit-based connectivity outputs between historical and future surfaces (available when the 'Lanscape connectivity' module is enabled); choose the specific connectivity variable below</dd>
                                           </dl>")),
                         conditionalPanel(
                               condition = "input.stat == 'connectivity'",
@@ -909,15 +1543,12 @@ ui <- page_sidebar(
                                               <dt>Loss</dt> <dd>Model input: rate at which dispersers are removed from the migrating pool at each cell</dd>
                                           </dl>"))
                         ),
-                        selectInput("time", "Raster variable timeframe", c("historical", "future", "delta")) %>%
-                              tooltip("Choose whether to display historical (2000-2025) or future (scenario selected above) model predictions, or their difference (delta).
-                                      Only relevant for `FIA variable` and `ESS` raster variables."),
                         selectInput("vector", "Vector variable", vector_choices_base) %>%
                               tooltip(HTML("Select which point or line layer is displayed:<br><br>
                                           <dl style='margin:0;'>
                                               <dt>Occupied FIA plots</dt> <dd>Plots where the selected species was recorded</dd>
                                               <dt>All FIA plots</dt> <dd>All plots including non-forested plots not surveyed</dd>
-                                              <dt>Focal site analogs</dt> <dd>Plots within climatic and geographic range of the selected site</dd>
+                                              <dt>Focal site analogs</dt> <dd>Plots within climatic and geographic range of the selected site. Which climates are matched &mdash; contemporary, reverse or forward &mdash; is set in the 'Focal site analogs' panel in the right sidebar.</dd>
                                               <dt>Current animation</dt> <dd>Animation with particle movement showing direction and magnitude of mean current flow (available when the connectivity module is enabled)</dd>
                                               <dt>Current field</dt> <dd>Vector field showing showing direction and magnitude of mean current flow (available when the connectivity module is enabled)</dd>
                                           </dl>"))
@@ -932,13 +1563,23 @@ ui <- page_sidebar(
                         selectInput("rast_transform", "Scale transformation",
                                     choices = c("identity", "log10", "sqrt", "uniform")) %>%
                               tooltip("Choose transformation used to visualize raster values. Legend will display transformed values."),
+                        ## Choices swap between continuous ramps and qualitative
+                        ## sets depending on the layer, rather than showing both
+                        ## lists at once and relying on the user to pick the
+                        ## applicable one.
                         selectInput("rast_palette", "Color palette",
-                                    choices = c("default", "viridis", "magma", "plasma", "inferno",
-                                                "RdYlBu", "Spectral", "RdBu", "BrBG"),
+                                    choices = rast_palettes_continuous,
                                     selected = "default") %>%
-                              tooltip("Override the default palette for the current raster variable. When the raster shows the historical or future FIA variable, the FIA plot markers and focal-site scatterplots adopt the same palette."),
+                              tooltip("Override the default palette for the current raster variable. When the raster shows the historical or future FIA variable, the FIA plot markers and focal-site scatterplots adopt the same palette. For layers showing entity identities the options become qualitative palettes."),
                         input_switch("show_site", "Show focal site", TRUE),
-                        input_switch("show_polygon", "Show study area polygon", TRUE)
+                        uiOutput("site_color_ui"),
+                        input_switch("show_polygon", "Show focal polygon", TRUE),
+
+                        ## Hidden until a polygon exists -- an outline color for
+                        ## nothing is just clutter. Rendered server-side rather
+                        ## than with a conditionalPanel because the condition is
+                        ## "a file has been uploaded", which is not visible to JS.
+                        uiOutput("polygon_color_ui")
                   ),
 
                   accordion_panel(
@@ -986,79 +1627,126 @@ ui <- page_sidebar(
                               open = FALSE,
                               multiple = FALSE,
 
-                              ## Named for its contents rather than its input:
-                              ## all three plots are views of site_analogs(), the
-                              ## analog SET of the focal site. The site itself is
-                              ## now set under "Study area" in the left sidebar.
+                              ## First panel: the map-level community measures
+                              ## reduce ACROSS entities, which is exactly the
+                              ## information this panel restores. A turnover or
+                              ## richness surface says how much changes; this
+                              ## says which entities changed, and is the only
+                              ## view in the app where entity identity survives
+                              ## the reduction.
                               accordion_panel(
-                                    "Focal site analogs",
-                                    helpText(
-                                          "This module lets you explore climate analogs for individual sites of interest.
-                                          It does not influence the model results shown on the map except for the 'Focal site similarity' raster variable.
-                                          Click the map to select a site; its coordinates and a clear button are under 'Study area' in the left sidebar.
-                                          The plots below display properties of FIA plots that are both geographically close and climatically similar to your site.
-                                          Purple reference lines illustrate bandwidths (dashed) and hard cutoffs (3x bandwidth) for geographic and climatic distances."), hr(),
-                                    layout_column_wrap(
-                                          width = 1/2,
-                                          selectInput("analog_direction", NULL, c("Contemporary analogs", "Reverse analogs", "Forward analogs")) %>%
-                                                tooltip(HTML("Choose which type of analog to visualize:
-                                                <ul>
-                                                    <li>Contemporary analogs have historical climates similar to the focal site's historical climate.</li>
-                                                    <li>Reverse (inbound) analogs have historical climates similar to the focal site's future climate.</li>
-                                                    <li>Forward (outbound) analogs have future climates similar to the focal site's historical climate.</li>
-                                                </ul>")),
-                                          input_switch("filter_clim", "Exclude non-analog plots", TRUE) %>%
-                                                tooltip("Whether to include sites that are more than 3 climate bandwidths away from the focal site.
-                                                        Sites more than 3 geographic bandwidths away are never shown.")
-                                    ),
+                                    "Community composition",
+                                    helpText("When you select the 'community composition' FIA variable at left,
+                                             the map summarizes across species or forest types into one summary number per cell.
+                                             This module lets you unpack the individual species behind those summaries. The two settings
+                                             below apply to all three plots."), hr(),
 
-                                    layout_column_wrap(
-                                          width = 1/2,
-                                          plotOutput("clim_plot"),
-                                          plotOutput("dist_plot")
-                                    ),
-                                    plotOutput("comp_plot") %>%
-                                          tooltip("This plot shows the kernel-weighted composition of species or forest types across analog FIA plots.
-                                                  Contemporary analogs give the current modeled composition of the focal site.
-                                                  Reverse analogs give the potential future composition of the focal site.
-                                                  Forward analogs show the current composition of locations that may be suitable for the focal sites's current inhabitants in the future."),
+                                    ## Both controls apply to every plot below, so
+                                    ## they sit together above the rule rather
+                                    ## than beside whichever plot they happen to
+                                    ## precede. "Entities shown" is the count
+                                    ## NAMED rather than pooled into "other", and
+                                    ## it feeds all three.
+                                    ## The full set: unlike the other modules, a
+                                    ## single cell is meaningful here -- reading
+                                    ## the composition at one place is the point
+                                    ## of drilling in.
+                                    selectInput("comm_scope", "Summarize over", area_names) %>%
+                                          tooltip("Which part of the map these plots describe. All but the last average over many cells; 'Focal site' reads just the cell you clicked, so it shows what is at one place rather than a regional average."),
+                                    sliderInput("comm_rank_n", "Entities shown", 5, 40, value = 15, step = 1) %>%
+                                          tooltip("How many species get named individually. The rest are combined into a single 'other' group rather than left out, so the totals stay right."),
+                                    hr(),
+
+                                    ## Leads the panel: it is the only view here
+                                    ## that shows the community as a whole. Band
+                                    ## thickness is one entity and total column
+                                    ## height is the community sum, so a
+                                    ## community that reshuffles without changing
+                                    ## size looks different from one that shrinks.
+                                    helpText("Current and predicted future forest composition. Each band is one species; the
+                                             height of the whole column is the community."),
+                                    plotOutput("comm_composition") %>%
+                                          tooltip("Each band runs from where a species is today, on the left, to where it is expected to be in the future, on the right. Labels sit on whichever side the band is thicker: on the left for species that decline, on the right for those that grow."),
+                                    hr(),
+
+                                    ## Second: the same numbers spread out, so
+                                    ## rare-but-gaining stays distinct from
+                                    ## abundant-but-declining. Absolute and
+                                    ## proportional change rank differently and
+                                    ## neither is wrong; the scatter shows both
+                                    ## at once.
+                                    helpText("A different view of the same data, showing whether gains are predicted in species that are already common or in ones
+                                             that are currently rare. Rare and gaining sits at the top left; common and declining sits
+                                             at the bottom right. Colored points are the species named above, gray are the rest."),
+                                    plotOutput("comm_scatter"), hr(),
+
+                                    ## Last: change without levels, for the cases
+                                    ## where the ordering itself is the answer.
+                                    ## Its "Rank by" control stays here because,
+                                    ## unlike the two above, it applies to this
+                                    ## plot alone.
+                                    helpText("Species with the largest projected gains and losses."),
+                                    selectInput("comm_rank_by", "Rank by",
+                                                c("absolute change" = "absolute",
+                                                  "proportional change" = "proportional")) %>%
+                                          tooltip("Absolute change ranks by how much is gained or lost outright, so common species tend to lead. Proportional change measures that against how much is there now, so a rare species that doubles outranks a common one that shifts a little. Neither ordering is more correct than the other."),
+                                    plotOutput("comm_ranking")
                               ),
 
+                              ## Named for its contents rather than its input:
+                              ## both plots are views of site_analogs(), the
+                              ## analog SET of the focal site. The site itself is
+                              ## now set under "Study area" in the left sidebar.
+                              ##
+                              ## The composition plot that used to live here has
+                              ## been replaced by a stack-based one in the
+                              ## Community composition panel: it was the only view
+                              ## here where entity identity survived, and it
+                              ## belonged with the other cross-entity displays.
                               ## Renamed from "Study area": that name now belongs
                               ## to the left panel that owns the polygon. This
                               ## panel is named for what it renders, matching the
                               ## rule that right-sidebar panels are local to one
                               ## output.
                               accordion_panel(
-                                    "Value distribution",
-                                    helpText("Compare the distribution of raster values inside your study area against the broader modeling context.
-                                             Upload a polygon under 'Study area' in the left sidebar.
-                                             The plot shows three curves: the modeling domain (all cells in the current bbox), your study area (cells inside the polygon), and the buffered area
-                                             (cells within 3× the geographic bandwidth of the polygon — the predictive neighborhood used for analog matching)."), hr(),
+                                    "Value distributions",
+                                    helpText("This module summarizes how the predicted values on the map differ across geographic areas.
+                                             It shows one curve (or bar stack, for categorical variables) for the whole bounding box,
+                                             and one for each area you have set: your focal polygon, that polygon
+                                             plus a surrounding buffer, and the neighborhood around your focal site."), hr(),
 
                                     plotOutput("polygon_density"),
                                     selectInput("density_transform", "X-axis scale",
                                                 choices = c("identity", "uniform", "sqrt", "log10"),
                                                 selected = "identity") %>%
-                                          tooltip("Optionally transform the x-axis for skewed variables. 'uniform' rank-transforms the values across the modeling domain, spreading skewed distributions evenly.")
+                                          tooltip("Optionally transform the x-axis for skewed variables. 'uniform' rank-transforms the values across the bounding box, spreading skewed distributions evenly.")
                               ),
 
                               accordion_panel(
                                     "Climate relationships",
-                                    helpText("Use this module to visualize how your selected FIA variable varies across climate gradients.
-                                             The plot shows smoothed relationships, based on either FIA plot data or interpolated grid cell values."), hr(),
+                                    helpText("This plot shows how the mapped variable changes along a climate gradient. The curve is a smoothed
+                                             relationship fitted to either the FIA plot observations or the modeled grid cells; the
+                                             density histogram above it shows how much data sits at each point along the gradient.
+                                             For categorical variables, this becomes one distribution per species instead, showing where along the
+                                             gradient each one comes out on top."), hr(),
 
+                                    ## Two columns of two, paired by what they
+                                    ## control: the left column defines the x
+                                    ## axis, the right column defines which data
+                                    ## the curve is fitted to.
                                     layout_column_wrap(
-                                          width = 1/3,
-                                          # cr_v1 / cr_v2 choices are populated dynamically from the
-                                          # selected climate variables (see observeEvent(input$clim_vars));
-                                          # these initial values are just placeholders.
-                                          selectInput("cr_v1", "Variable 1 (x-axis)", c("cwd", "aet")),
+                                          width = 1/2,
+                                          selectInput("cr_v1", "X-axis variable", display_vars()) %>%
+                                                tooltip("The variable the response is plotted against. It need not be one the model was fitted on; the plot says so when it isn't."),
+                                          selectInput("cr_data", "Dataset", c("modeled grid cells", "FIA plots")) %>%
+                                                tooltip("Whether to fit the curve to the model's predictions across the grid, or to the raw FIA plot observations."),
                                           selectInput("cr_clim", "Climate timeframe", c("historical", "future")) %>%
-                                                tooltip("Which climate the x-axis and grouping variable are drawn from. Use 'future' to pair a future prediction with the future climate that produced it. FIA plot observations are historical, so pairing them with future climate relates an observed response to a climate the plot has not experienced."),
-                                          selectInput("cr_data", "Dataset", c("modeled grid cells", "FIA plots")),
-                                          selectInput("cr_v2", "Variable 2 (levels)", c("aet", "cwd")),
-                                          sliderInput("cr_n", "Number of levels for variable 2", 1, 6, 3, step = 1)
+                                                tooltip("Which climate the x-axis is drawn from. Use 'future' to pair a future prediction with the future climate that produced it. FIA plot observations are historical, so pairing them with future climate relates an observed response to a climate the plot has not experienced."),
+                                          ## Same scope vocabulary as the evaluation and composition
+                                          ## modules, from the same named vector, so an area means the
+                                          ## same thing wherever it is offered.
+                                          selectInput("cr_scope", "Area", eval_scope_names) %>%
+                                                tooltip("Which part of the map the relationship is fitted to. Narrowing it shows how the variable behaves in your area specifically, which can differ from the regional pattern.")
                                     ),
 
 
@@ -1067,25 +1755,28 @@ ui <- page_sidebar(
 
                               accordion_panel(
                                     "Model evaluation",
-                                    helpText("This module uses cross-validation to assess the accuracy of contemporary AIM predictions for the selected species and FIA variable.
-                                             Choose the area the accuracy is measured over: predictions always draw on every available analog plot, but the metrics
-                                             can be restricted to plots inside your study area or near your focal site."), hr(),
+                                    helpText("This module uses 'leave-one-out cross validation' to quantify the accuracy of the model's present-day predictions.
+                                             Each FIA plot is held out in turn, predicted from the others, and compared against what was actually measured there.
+                                             You can choose the area accuracy is measured over."), hr(),
 
                                     selectInput("eval_scope", "Evaluation scope",
                                                 choices = eval_scope_names,
                                                 selected = "domain") %>%
                                           tooltip(HTML("Which held-out plots the accuracy metrics are computed from. The model itself is unchanged.<br><br>
                                                        <dl style='margin:0;'>
-                                                           <dt>Modeling domain</dt> <dd>Every plot in the analog pool.</dd>
-                                                           <dt>Study area</dt> <dd>Plots inside the uploaded polygon. Often few; check the reported n.</dd>
-                                                           <dt>Buffered study area</dt> <dd>Plots within 3 geographic bandwidths of the polygon &mdash; the neighborhood predictions there are actually drawn from. Usually the better choice for a small unit.</dd>
+                                                           <dt>Model bounding box</dt> <dd>Every plot in the analog pool.</dd>
+                                                           <dt>Focal polygon</dt> <dd>Plots inside the uploaded polygon. Often few; check the reported n.</dd>
+                                                           <dt>Buffered polygon</dt> <dd>Plots within 3 geographic bandwidths of the polygon &mdash; the neighborhood predictions there are actually drawn from. Usually the better choice for a small unit.</dd>
                                                            <dt>Focal site neighborhood</dt> <dd>Plots within the geographic cutoff of the clicked site.</dd>
                                                        </dl>
                                                        Scopes whose input is not yet set under 'Study area' in the left sidebar will say so when selected.")),
-                                    uiOutput("eval_stale"),
 
-                                    helpText("The first plot shows predicted versus observed values for the currently-selected model parameters.
-                                             Out-of-scope plots are drawn in grey for context."), br(),
+                                    helpText("This first plot compares predictions against what was actually measured, using your current
+                                             settings. Each red point is a group of plots with similar predicted values, placed against what
+                                             was really found there. Points on the dashed 1:1 line mean the predictions are unbiased, while
+                                             deviations from the 1:1 line indicate bias; the shaded band is the IQR of observed values. Marks along the
+                                             bottom show where the predictions actually fall. When you narrow the spatial scope a gray line
+                                             shows the same curve for everything outside it."), br(),
                                     plotOutput("eval_scatter"),
                                     uiOutput("eval_scatter_stats"), hr(),
 
@@ -1100,35 +1791,43 @@ ui <- page_sidebar(
                                           checkboxGroupInput("eval_params", NULL,
                                                              choiceNames = c("Test geographic bandwidths", "Test climate bandwidths", "Test climate variables"),
                                                              choiceValues = c("geog", "clim", "vars")),
-                                          selectInput("eval_stat", "Evaluation statistic",  c("AUC", "TSS", "Brier", "R-squared", "RMSE")),
+                                          ## Choices swap with the response type; declared with the
+                                          ## binary set because that matches the default variable.
+                                          selectInput("eval_stat", "Evaluation statistic", c("AUC", "TSS", "Brier")),
                                           sliderInput("eval_n_vars", "Max n climate vars", 1, 6, value = c(1, 2), step = 1),
                                           actionButton("optimal_params", "Apply optimal parameters"),
                                           actionButton("run_eval", "Run evaluations")
                                     ),
 
+                                    ## Directly above the heatmap, which is the
+                                    ## only thing it describes. Sitting under the
+                                    ## scope selector, it read as a caution about
+                                    ## the scatterplot too -- and that plot always
+                                    ## reflects current settings, so it is never
+                                    ## the stale one.
+                                    uiOutput("eval_stale"),
                                     plotOutput("eval_heatmap", height = "600px")
                               ),
 
                               accordion_panel(
                                     "Climate models",
-                                    helpText("This module helps you choose among climate models. For every
-                                             available scenario and GCM, it plots the projected climate change
+                                    helpText("This module helps you choose among, and contextualize, climate models.
+                                             It can take a couple minutes to run.
+                                             For every available emissions scenario and GCM, it plots the projected climate change
                                              (future minus historical) as a trajectory across time periods, so
                                              you can see which models are hot/dry, warm/wet, and so on, and how
                                              the spread fans out over eras and emissions scenarios. Models in your
                                              current ensemble selection (set in the left sidebar) are drawn at full
                                              opacity, others faded. The x and y variables can be changed
-                                             without re-clicking Update."), hr(),
+                                             without re-clicking 'Update'."), hr(),
                                     layout_column_wrap(
                                           width = 1/2,
                                           selectInput("model_delta_region", "Summarize over",
-                                                      choices = c("Modeling domain" = "domain",
-                                                                  "Focal site"      = "site",
-                                                                  "Study area"      = "polygon"),
+                                                      choices = area_names,
                                                       selected = "domain") %>%
-                                                tooltip("Region over which deltas are summarized. 'Modeling domain'
+                                                tooltip("Region over which deltas are summarized. 'Model bounding box'
                                                         averages over the current bounding box; 'Focal site' samples
-                                                        at the clicked site; 'Study area' averages over the uploaded
+                                                        at the clicked site; 'Focal polygon' averages over the uploaded
                                                         polygon."),
                                           div(style = "padding-top: 1.9rem;",
                                               actionButton("model_delta_update", "Update chart") %>%
@@ -1150,17 +1849,21 @@ ui <- page_sidebar(
                               ),
 
                               accordion_panel(
-                                    "Connectivity",
-                                    helpText("This module contains settings for modeling circuit-based landscape connectivity
-                                             between historical (source) and future (target) FIA surfaces.
+                                    "Landscape connectivity",
+                                    helpText("This module lets you model circuit-based landscape connectivity between historical (source) and future (target) FIA surfaces.
+                                             This approach can identify key movement corridors and pinch points for large-scale climate connectivity.
                                              Click 'enable' to activate options.
-                                             To view connectivity results, select 'connectivity' as the raster variable under 'Map layer'.
+                                             To view connectivity results, select 'connectivity' as the raster variable under 'Map layers' at left.
                                              Julia compiler startup may take a couple minutes the first time you run a connectivity result, but should be fast thereafter."), hr(),
-                                    input_switch("cs_enable", "Enable connectivity", FALSE) %>%
-                                          tooltip("Adds the connectivity raster and current animation/field vector layers
-                                                  to the 'Map layers' menus in the left sidebar."),
+                                    uiOutput("cs_note"),
                                     conditionalPanel(
-                                          condition = "input.cs_enable",
+                                          condition = "input.track == 'All trees' || input.entity_scope != 'multi'",
+                                          input_switch("cs_enable", "Enable connectivity", FALSE) %>%
+                                                tooltip("Adds the connectivity raster and current animation/field vector layers
+                                                        to the 'Map layers' menus in the left sidebar.")
+                                    ),
+                                    conditionalPanel(
+                                          condition = "input.cs_enable && (input.track == 'All trees' || input.entity_scope != 'multi')",
                                           selectInput("cs_sources", "Origin electrodes (sources)", c("grid cells", "FIA plots", "selected site")) %>%
                                                 tooltip("Sites where current is injected. If `grid cells` or `FIA plots` is selected, current is injected
                                             in proportion to modeled or observed (respectively) values of the selected FIA variable.
@@ -1181,6 +1884,76 @@ ui <- page_sidebar(
                                           sliderInput("cs_loss_scale", "log10 loss scale", -3, 2, value = -1, step = .1) %>%
                                                 tooltip("Relative strength of loss conductance, compared to source, target, and horizontal components.
                                                         Ignored if loss is set to 'none.'")
+                                    )
+                              ),
+
+                              ## Last, and deliberately so. Every other panel here
+                              ## reports a result; this one shows the mechanism
+                              ## behind them -- which plots inform a prediction,
+                              ## and how the two bandwidths weight them. That is
+                              ## worth having for anyone asking where the numbers
+                              ## come from, but it is not what a manager opens
+                              ## first.
+                              ##
+                              ## Named for its subject rather than its purpose,
+                              ## even though the purpose is what the intro text
+                              ## explains. The panel is not purely illustrative:
+                              ## analog_direction set here also drives the 'focal
+                              ## site similarity' raster and the 'focal site
+                              ## analogs' vector layer. Matching those option
+                              ## names exactly means cross-references from the
+                              ## left sidebar are literal rather than approximate.
+                              ##
+                              ## The analog SET does not depend on the entity --
+                              ## the same plots are near and climatically similar
+                              ## whichever species is selected -- so only the
+                              ## point coloring is entity-specific, and it follows
+                              ## display_values() like the map markers do.
+                              accordion_panel(
+                                    "Focal site analogs",
+                                    helpText(
+                                          "This module helps you explore where a model prediction at a given location actually comes from:
+                                          the 'analog' FIA plots that are geographically close and climatically similar.
+                                          When you click the map to set a focal site, these figures show the FIA plots (drawn as points) inform the prediction.
+                                          'Contemporary' analogs compare the focal cell's and plots' current climates, while 'reverse' and 'forward' analogs compare climates across time to make future projections.
+
+                                          Reference lines mark the two bandwidths (dashed) and the hard cutoffs at three times each (solid).
+                                          Weights, represented by shading in the righthand figure, fall off with both distances.
+
+                                          Use the button below to see the same analog plots on the map.
+
+                                          The analog type set here also governs two map layers: the 'focal site similarity'
+                                          raster and the 'focal site analogs' points. Nothing here changes the model
+                                          itself."), hr(),
+                                    layout_column_wrap(
+                                          width = 1/2,
+                                          selectInput("analog_direction", NULL, c("Contemporary analogs", "Reverse analogs", "Forward analogs")) %>%
+                                                tooltip(HTML("Which climates are being matched:
+                                                <ul>
+                                                    <li>Contemporary: plots whose present climate resembles the site's present climate. This is what the historical prediction is built from.</li>
+                                                    <li>Reverse (inbound): plots whose present climate resembles the site's future climate. This is the basis for future model predictions in the app.</li>
+                                                    <li>Forward (outbound): plots whose future climate resembles the site's present climate. Where the site's current conditions are heading; interesting, but not currently used in this app's core modeling machinery.</li>
+                                                </ul>")),
+                                          ## Kept, and relabeled. The old name
+                                          ## described the mechanism rather than
+                                          ## what turning it off would show. In a
+                                          ## panel about how predictions are made,
+                                          ## seeing which nearby plots the climate
+                                          ## kernel rules out is half the point --
+                                          ## otherwise the cutoff is a line with
+                                          ## nothing outside it.
+                                          input_switch("filter_clim", "Hide plots beyond the climate cutoff", TRUE) %>%
+                                                tooltip("Turn this off to also show the plots that are close by but too climatically different to count. Those are what the climate bandwidth excludes. Plots beyond three geographic bandwidths are never shown either way.")
+                                    ),
+
+                                    actionButton("highlight_site", "Show these plots on the map") %>%
+                                          tooltip("Switch the map's vector layer to this site's analog plots and zoom to its geographic cutoff, so the same plots can be seen in geographic space."),
+                                    br(), br(),
+
+                                    layout_column_wrap(
+                                          width = 1/2,
+                                          plotOutput("clim_plot"),
+                                          plotOutput("dist_plot")
                                     )
                               )
 
@@ -1206,7 +1979,19 @@ server <- function(input, output, session) {
       green <- "darkgreen"
 
       # Active focal identifier and human-readable label
+      ## All-entity ("community composition") mode. Guarded on track as well as
+      ## the control, because input$entity_scope keeps its value while hidden --
+      ## switching to All trees with the scope left on "multi" would otherwise
+      ## try to run a community reduction over a track that is already an
+      ## aggregate.
+      multi_mode <- reactive({
+            isTruthy(input$entity_scope) && input$entity_scope == "multi" &&
+                  isTruthy(input$track) && input$track != "All trees"
+      })
+
       focal_id <- reactive({
+            if (multi_mode())
+                  return(paste0("all_", tolower(gsub(" ", "_", input$track))))
             switch(input$track,
                    "Species"      = input$species,
                    "Forest type"  = input$forest_type,
@@ -1215,6 +2000,10 @@ server <- function(input, output, session) {
       })
 
       focal_label <- reactive({
+            if (multi_mode()) return(switch(input$track,
+                                            "Species"      = "All species",
+                                            "Forest type"  = "All forest types",
+                                            "Forest group" = "All forest groups"))
             switch(input$track,
                    "Species"      = input$species,
                    "Forest type"  = {
@@ -1232,6 +2021,9 @@ server <- function(input, output, session) {
       # "presence probability", "seedling presence", and the forest type/group
       # classification probabilities); FALSE if continuous (basal area / counts).
       response_is_binary <- reactive({
+            # A community reduction is never binary even though it is built from
+            # presence columns: richness is a count.
+            if (multi_mode()) return(FALSE)
             isTruthy(input$fia_var) && grepl("presence", input$fia_var)
       })
 
@@ -1286,10 +2078,100 @@ server <- function(input, output, session) {
       # alignment that holds by default without ever giving the markers an
       # inappropriate scale.
       marker_follows_raster_palette <- reactive({
-            input$stat == "FIA variable" && input$time != "delta"
+            # Not for categorical layers: the map markers take the raster's
+            # colorFactor directly, and the focal-site scatterplots are
+            # continuous, so handing them a qualitative palette name would
+            # reach scale_fill_distiller() with a palette it does not know.
+            input$stat == "FIA variable" && input$time != "delta" && !categorical_layer()
       })
 
+      ## The panel plots are always categorical, but rast_palette holds a
+      ## continuous ramp whenever the map is showing a continuous measure -- so
+      ## without this they would fall back to the default palette the moment the
+      ## user switched the map off dominant entity. Remembering the last
+      ## qualitative choice keeps the panel on the palette the user picked.
+      last_cat_palette <- reactiveVal("default")
+      observeEvent(input$rast_palette, {
+            if (input$rast_palette %in% rast_palettes_categorical)
+                  last_cat_palette(input$rast_palette)
+      })
+
+      ## Swap the palette choices to match the layer type. observeEvent so the
+      ## handler's read of input$rast_palette is isolated and cannot re-trigger
+      ## its own write. "default" is in both sets, so it is the natural landing
+      ## point when a selection does not survive the swap.
+      observeEvent(categorical_layer(), {
+            ch <- if (categorical_layer()) rast_palettes_categorical
+            else rast_palettes_continuous
+            cur <- if (isTruthy(input$rast_palette)) input$rast_palette else "default"
+            updateSelectInput(session, "rast_palette", choices = ch,
+                              selected = if (cur %in% ch) cur else "default")
+      }, ignoreInit = TRUE)
+
       # ggplot fill-scale equivalent of the leaflet choose_palette() logic.
+      # Resolve one of rast_palettes_categorical to n colors. Falls back to the
+      # default hue ramp for any name it does not recognise, which is what makes
+      # the choice-set swap safe: a stale continuous name arriving here during a
+      # flush produces a usable palette rather than an error.
+      # Drop neutrals: near-black, near-white and low-saturation grays. Gray is
+      # reserved for the pooled "other" band, so a gray in the palette reads as
+      # "other"; near-white leaves an entity with no visible swatch at all; and
+      # black is heavy enough to dominate a map it only holds a slice of.
+      # Okabe-Ito leads with black and Polychrome 36's second entry is near-white,
+      # so both need this.
+      drop_neutral_colors <- function(cols) {
+            h <- grDevices::rgb2hsv(grDevices::col2rgb(cols))
+            # Saturation alone catches grays AND near-whites (near-white is
+            # bright but unsaturated); the value floor catches near-black. An
+            # upper value bound would be wrong -- a pure hue like magenta or
+            # green sits at v = 1 and is vivid, not washed out.
+            keep <- h["s", ] > 0.25 & h["v", ] > 0.35
+            if (!any(keep)) return(cols)
+            cols[keep]
+      }
+
+      # When more entities are shown than the palette holds, recycled colors are
+      # shaded rather than repeated exactly. Two entities the same color is
+      # unavoidable past the palette length, but a darker and a lighter version
+      # of one hue can still be told apart, where two identical swatches cannot.
+      recycle_shaded <- function(cols, n) {
+            if (n <= length(cols)) return(cols[seq_len(n)])
+            k <- length(cols)
+            vapply(seq_len(n), function(i) {
+                  base <- cols[((i - 1) %% k) + 1]
+                  cycle <- (i - 1) %/% k
+                  if (cycle == 0) return(base)
+                  h <- grDevices::rgb2hsv(grDevices::col2rgb(base))
+                  # Alternate darker / lighter on successive passes.
+                  darker <- (cycle %% 2) == 1
+                  v <- if (darker) max(0.20, h["v", 1] * 0.62) else min(0.98, h["v", 1] * 1.30)
+                  sat <- if (darker) h["s", 1] else h["s", 1] * 0.55
+                  grDevices::hsv(h["h", 1], min(1, sat), v)
+            }, character(1))
+      }
+
+      cat_palette_colors <- function(n, pal) {
+            if (!pal %in% rast_palettes_categorical) pal <- "default"
+            if (n < 1) return(character(0))
+
+            pick <- function(name, max_n) {
+                  cols <- drop_neutral_colors(
+                        unname(grDevices::palette.colors(max_n, palette = name)))
+                  recycle_shaded(cols, n)
+            }
+
+            switch(pal,
+                   "Polychrome" = pick("Polychrome 36", 36),
+                   "Alphabet"   = pick("Alphabet", 26),
+                   "Tableau"    = pick("Tableau 10", 10),
+                   "Set 3"      = pick("Set 3", 12),
+                   "Okabe-Ito"  = pick("Okabe-Ito", 8),
+                   # Default adapts: Tableau 10 is the nicer set at small n, but
+                   # it runs out, and past that perceptual separation matters
+                   # more than individual colors looking good.
+                   if (n <= 9) pick("Tableau 10", 10) else pick("Polychrome 36", 36))
+      }
+
       # rast_palette values are heterogeneous: "default" -> the canonical
       # gray90 -> green gradient; "viridis"/"magma"/"plasma"/"inferno" ->
       # viridis options; the rest ("RdYlBu"/"Spectral"/"RdBu"/"BrBG") ->
@@ -1312,9 +2194,59 @@ server <- function(input, output, session) {
       }
 
 
+      # Relative weight each analog plot carries in a prediction.
+      #
+      # analog_search() returns distances but not weights (pairs mode gives
+      # env_dist and geog_dist only), and the search in this panel is called with
+      # cutoff-only kernels -- so nothing upstream knows about weighting. It has
+      # to be recomputed here.
+      #
+      # *** THIS FORMULA MUST MATCH THE KERNELS aim() PASSES TO analog_impact():
+      #     kernel(max = theta * 3, weight = "gaussian", theta = theta)
+      # Assumed Gaussian with theta as the standard deviation, and the joint
+      # weight the product across the two dimensions. That reading comes from the
+      # app's own help text ("bandwidths specify the standard deviations") and
+      # from the cutoff sitting at three of them. If analogs uses a different
+      # constant, the point sizes here are subtly wrong while everything still
+      # looks reasonable -- so this is the line to check against the package. ***
+      analog_weight <- function(geog_dist, env_dist) {
+            w <- exp(-0.5 * (geog_dist / input$theta_geog)^2) *
+                  exp(-0.5 * (env_dist / input$theta_clim)^2)
+            # The cutoff is hard, not a tail: kernel(max = theta * 3) drops a
+            # plot entirely rather than down-weighting it. Without this a plot
+            # just past the cutoff gets exp(-4.5), which is small but not zero,
+            # and is drawn as though it still counts for something.
+            w[geog_dist > input$theta_geog * 3 | env_dist > input$theta_clim * 3] <- 0
+            w
+      }
+
+      # Value column and fill scale for the analog plots, which color each plot
+      # by the response at that plot. For a categorical layer that response is an
+      # entity code, and handing codes to a continuous ramp paints arbitrary
+      # integers on a gradient -- the points come out gray-to-green and mean
+      # nothing. Convert to a labeled factor and use the entity colors instead,
+      # the same ones the map and the composition panel use.
+      analog_fill <- function(d) {
+            if (categorical_layer()) {
+                  cc <- comm_categories()
+                  d$value <- factor(cc$labels[match(d$value, cc$codes)],
+                                    levels = cc$labels)
+                  # guide "none": the map legend beside these plots already keys
+                  # the same colors, and a second copy would crowd two small panels.
+                  list(d = d,
+                       scale = ggplot2::scale_fill_manual(
+                             values = stats::setNames(cc$colors, cc$labels),
+                             drop = FALSE, guide = "none", na.value = "gray85"))
+            } else {
+                  dom <- if (!response_is_binary()) seq_domain(d$value) else 0:1
+                  list(d = d, scale = marker_fill_scale(limits = dom))
+            }
+      }
+
+
       ## DATA SETUP -----------------------
 
-      # Padded bbox: includes plots just outside the modeling domain so they
+      # Padded bbox: includes plots just outside the model bounding box so they
       # can still serve as analogs for cells near the bbox edge.
       # Pad tracks theta_geog * 3 (the hard cutoff used by analog_impact),
       # converted from km to degrees with a conservative ratio. 1° lat ≈ 111 km;
@@ -1372,6 +2304,20 @@ server <- function(input, output, session) {
                         saplot = sum(n_saplings), # total plot sapling count, all species
                         nstot = sum(n_seedlings[focal]), # focal species seedling count
                         nsplot = sum(n_seedlings), # total plot seedling count, all species
+                        # Plot species richness, by stage. A count of distinct
+                        # species is an aggregation ACROSS species done at the
+                        # plot, exactly like baplot and ntplot -- which is what
+                        # makes it an All-trees variable rather than something
+                        # only the multi-entity path can produce. Because AIM is
+                        # a weighted mean (linear) with entity-independent
+                        # weights, interpolating this equals summing the
+                        # interpolated per-entity occurrence surfaces. The two
+                        # routes should agree to floating point, which makes each
+                        # a check on the other.
+                        nspp      = dplyr::n_distinct(species[!is.na(species)]),
+                        nspp_seed = dplyr::n_distinct(species[!is.na(species) & n_seedlings > 0]),
+                        nspp_sap  = dplyr::n_distinct(species[!is.na(species) & n_saplings > 0]),
+                        nspp_tree = dplyr::n_distinct(species[!is.na(species) & n_trees > 0]),
                         forest_type = dplyr::first(forest_type), # plot-level FORTYPCD
                         .groups = "drop") %>%
                   left_join(ft_to_fg, by = "forest_type") %>%
@@ -1424,6 +2370,10 @@ server <- function(input, output, session) {
                          "number of trees"      = po$ntplot,
                          "number of saplings"   = po$saplot,
                          "number of seedlings"  = po$nsplot,
+                         "species richness"          = po$nspp,
+                         "seedling species richness" = po$nspp_seed,
+                         "sapling species richness"  = po$nspp_sap,
+                         "adult species richness"    = po$nspp_tree,
                          # Occurrence-based, matching ratio_pieces() and the
                          # Species-track fractions in plot_occ(): 0 = adults only,
                          # 0.5 = stage and adults both present, 1 = stage only.
@@ -1444,9 +2394,61 @@ server <- function(input, output, session) {
       # keying that off `display > 0` means "has regeneration" for the fraction
       # variables, which hides plots that are occupied but simply aren't
       # regenerating. (It coincides with display > 0 for the other variables.)
+      ## Per-plot value to paint the FIA markers with: the observed counterpart
+      ## to whatever the raster is showing. In Single mode that is the focal
+      ## entity's response; in All mode it is the same reduction applied across
+      ## entities at each plot, so observed richness sits next to modelled
+      ## richness on the same color scale. That comparison is the cheapest
+      ## available check on whether Sum(p_s) is calibrated.
+      display_values <- reactive({
+            if (!multi_mode()) return(response_values())
+
+            # Guard before touching multi_values(). The regeneration fractions
+            # have no per-entity form, so multi_values() req()s out for them --
+            # and because it would otherwise be passed to comm_reduce_rows() as
+            # an unforced promise, the reactiveStop would surface from inside
+            # as.matrix()'s S4 dispatch as an error rather than a silent cancel.
+            # Forcing it here, in this reactive's own frame, keeps a cancellation
+            # a cancellation.
+            if (!isTruthy(input$fia_var) || !input$fia_var %in% multi_vars) return(NULL)
+            y <- multi_values()
+            req(!is.null(y), ncol(y) > 0)
+
+            v <- comm_reduce_rows(y, input$comm_measure)
+            # NULL means the measure has no per-plot counterpart (the paired
+            # categoricals: a plot is surveyed at one point in time, so there is
+            # no observed "biggest winner"). Return early -- subsetting NULL in
+            # the lumping step below yields a ZERO-LENGTH vector rather than
+            # NULL, which slips past a null check and only fails later at
+            # `pd$display <- dv`.
+            if (is.null(v)) return(NULL)
+
+            # Lump the observed categories to exactly the set the raster drew, so
+            # a plot and the cell under it get the same color for the same
+            # entity, and anything outside the top N reads as "other" on both.
+            if (input$comm_measure %in% categorical_measures) {
+                  cc <- comm_categories()
+                  v[!is.na(v) & !v %in% cc$codes] <- 0L
+            }
+            v
+      })
+
       occupied_values <- reactive({
             po <- plot_occ()
             req(isTruthy(input$track))
+
+            # In All mode "occupied" means any entity is present -- a forested
+            # plot -- since there is no focal entity to be occupied by.
+            #
+            # Assigned before use for the same reason as display_values(): forcing
+            # multi_values() inside an operator means a failed req() escapes from
+            # dispatch as an error rather than cancelling.
+            if (multi_mode()) {
+                  if (!isTruthy(input$fia_var) || !input$fia_var %in% multi_vars)
+                        return(rep(FALSE, nrow(po)))
+                  y <- multi_values()
+                  return(rowSums(y > 0, na.rm = TRUE) > 0)
+            }
 
             v <- if (input$track == "Species") {
                   po$pres
@@ -1477,6 +2479,15 @@ server <- function(input, output, session) {
       # regardless of what the map happens to be showing.
       vector_points <- reactive({
             req(plot_occ())
+            # display_values() is NULL if a community measure ever lacks a
+            # row-wise counterpart. Catching it here degrades to an empty layer;
+            # letting it through assigns NULL to pd$display, which silently drops
+            # the column and crashes inside addCircles() instead.
+            dv <- display_values()
+            # Length, not just non-NULL: a zero-length vector would fail later
+            # inside the data-frame assignment with a recycling error rather
+            # than cancelling here.
+            req(!is.null(dv), length(dv) == nrow(plot_occ()))
 
             if(input$vector == "focal site analogs"){
                   pd <- switch(input$analog_direction,
@@ -1484,18 +2495,18 @@ server <- function(input, output, session) {
                                "Forward analogs" = site_analogs()$fwd_analogs,
                                "Contemporary analogs" = site_analogs()$bsl_analogs) %>%
                         mutate(x = analog_x, y = analog_y)
-                  # Index the per-plot response by analog_index rather than
+                  # Index the per-plot value by analog_index rather than
                   # reading a `response` y-column: pool()$values carries
                   # occ/num/denom (not `response`) for the pooled-ratio
-                  # variables, so response_values() is the uniform source.
-                  pd$display <- response_values()[pd$analog_index]
+                  # variables, so display_values() is the uniform source.
+                  pd$display <- dv[pd$analog_index]
                   pd$occupied <- occupied_values()[pd$analog_index]
             } else {
                   # Show the full analog pool, including plots in the padded
                   # ring just outside the modeling bbox — these are still
                   # contributing as analogs to edge cells in the prediction.
                   pd <- plot_occ()
-                  pd$display <- response_values()
+                  pd$display <- dv
                   pd$occupied <- occupied_values()
             }
 
@@ -1572,6 +2583,120 @@ server <- function(input, output, session) {
       # surfaces (then gate by occurrence in aim()). This returns the per-plot
       # numerator/denominator for those variables, or NULL for everything else
       # (which uses the single-response path). Occurrence is denom > 0.
+      ## MULTI-ENTITY RESPONSE MATRIX -------------------
+      ##
+      ## plot_occ() collapses to one row per plot around a single focal entity
+      ## (`focal = species == input$species`), so there is nowhere for a
+      ## multi-column `y` to come from. This builds the wide counterpart: one
+      ## row per plot, one column per entity, holding the same quantity
+      ## response_values() would return if that entity were the focal one.
+      ##
+      ## Row alignment with plot_occ() is the whole ballgame. pool()$index_hst is
+      ## built from plot_occ()[, c("x","y")], so a mismatch here silently attaches
+      ## every entity's response to the wrong plot and produces maps that look
+      ## entirely plausible. Alignment is guaranteed by construction (the join
+      ## runs FROM plot_occ()'s coordinates) and then asserted on the coordinates
+      ## themselves rather than on row counts.
+      multi_values <- reactive({
+            req(isTruthy(input$track))
+            po <- plot_occ()
+            xy <- po[, c("x", "y")]
+
+            if (input$track %in% c("Forest type", "Forest group")) {
+                  # Membership is plot-level -- one type per plot -- so the wide
+                  # form is an indicator matrix and fia_var does not apply. Same
+                  # reason response_values() ignores fia_var for these tracks.
+                  key <- if (input$track == "Forest type") po$forest_type else po$forest_group
+                  lvls <- sort(unique(key[!is.na(key)]))
+                  req(length(lvls) > 0)
+                  w <- as.data.frame(
+                        vapply(lvls, function(k) as.integer(!is.na(key) & key == k),
+                               integer(nrow(po))),
+                        check.names = FALSE)
+
+                  # Name the columns for the classes rather than their FORTYPCD
+                  # integers. The column names ARE the entity labels everywhere
+                  # downstream -- legend, category table, and any future ranking
+                  # -- so resolving them here fixes all of those at once rather
+                  # than translating codes at each display site.
+                  nm <- if (input$track == "Forest type") ft_name(as.integer(lvls))
+                  else fg_name(as.integer(lvls))
+                  nm[is.na(nm)] <- paste(input$track, lvls[is.na(nm)])
+                  names(w) <- make.unique(as.character(nm))
+
+            } else {
+                  req(isTruthy(input$fia_var), input$fia_var %in% multi_vars)
+                  pb <- pool_bbox()
+
+                  # Same summaries plot_occ() computes, but grouped by entity as
+                  # well as plot. All of them at once: it is a single pass over
+                  # the same rows either way, and computing them together keeps
+                  # the definitions visibly identical to the single-entity path.
+                  long <- fia_plots_species_all() %>%
+                        filter(between(x, pb$x[1], pb$x[2]),
+                               between(y, pb$y[1], pb$y[2]),
+                               !is.na(species)) %>%
+                        group_by(x, y, species) %>%
+                        summarize(
+                              # Presence is "the entity was recorded at this
+                              # plot", matching plot_occ()'s any(focal) -- it is
+                              # not conditioned on any stage count.
+                              pres      = 1L,
+                              pres_seed = as.integer(any(n_seedlings > 0)),
+                              pres_sap  = as.integer(any(n_saplings > 0)),
+                              pres_tree = as.integer(any(n_trees > 0)),
+                              batot     = sum(basal_area),
+                              nttot     = sum(n_trees),
+                              satot     = sum(n_saplings),
+                              nstot     = sum(n_seedlings),
+                              .groups = "drop")
+
+                  val_col <- switch(input$fia_var,
+                                    "presence probability"  = "pres",
+                                    "seedling presence"     = "pres_seed",
+                                    "sapling presence"      = "pres_sap",
+                                    "tree presence"         = "pres_tree",
+                                    "total basal area"      = "batot",
+                                    "proportion basal area" = "batot",
+                                    "number of trees"       = "nttot",
+                                    "number of saplings"    = "satot",
+                                    "number of seedlings"   = "nstot")
+
+                  wide <- long %>%
+                        select(x, y, species, value = dplyr::all_of(val_col)) %>%
+                        tidyr::pivot_wider(names_from = species, values_from = value,
+                                           values_fill = 0)
+
+                  # Join FROM plot_occ()'s coordinates, so row order is inherited
+                  # rather than assumed. Plots where no entity was recorded are
+                  # dropped by the !is.na(species) filter above and must come
+                  # back as all-zero rows: absence is data, and dropping those
+                  # plots would bias every entity's surface upward.
+                  j <- xy %>% left_join(wide, by = dplyr::join_by(x, y))
+                  stopifnot(nrow(j) == nrow(xy),
+                            identical(j$x, xy$x), identical(j$y, xy$y))
+
+                  w <- as.data.frame(j[, setdiff(names(j), c("x", "y")), drop = FALSE],
+                                     check.names = FALSE)
+                  w[is.na(w)] <- 0
+
+                  if (identical(input$fia_var, "proportion basal area")) {
+                        # Denominator is the plot total across ALL entities, so
+                        # it is shared. Plots with no basal area get 0 rather
+                        # than NaN, matching plot_occ()'s baprop guard.
+                        denom <- po$baplot
+                        w[] <- lapply(w, function(v) ifelse(denom == 0, 0, v / denom))
+                  }
+            }
+
+            # Occupied-plot count per entity: the pool-level support signal, and
+            # the basis for deciding a rare-entity floor. Attached rather than
+            # filtered on, so that decision can be made against real numbers
+            # instead of a guessed threshold.
+            attr(w, "n_plots") <- vapply(w, function(v) sum(v > 0, na.rm = TRUE), integer(1))
+            w
+      })
+
       ratio_pieces <- reactive({
             req(isTruthy(input$track), isTruthy(input$fia_var))
             po <- plot_occ()
@@ -1669,55 +2794,33 @@ server <- function(input, output, session) {
       ## Variable selection is a (track x metric x stage) cascade that resolves to
       ## a single canonical `fia_var` string, which the rest of the app switches
       ## on. These helpers define the valid choices and the resolution.
-      metric_choices <- function(track) {
-            switch(track,
-                   "Species"      = c("occurrence", "abundance", "basal area",
-                                      "proportion basal area", "regeneration fraction"),
-                   "All trees"    = c("occurrence", "abundance", "basal area",
-                                      "regeneration fraction"),
-                   "Forest type"  = c("occurrence"),
-                   "Forest group" = c("occurrence"))
-      }
-      stage_choices <- function(track, metric) {
-            if (track %in% c("Forest type", "Forest group")) return(character(0))
-            switch(metric,
-                   "occurrence"            = c("seedling", "sapling", "adult", "any"),
-                   "abundance"             = c("seedling", "sapling", "adult"),
-                   "regeneration fraction" = c("seedling", "sapling"),
-                   character(0))  # basal area / proportion basal area: no stage
-      }
-      resolve_var <- function(track, metric, stage) {
-            if (track %in% c("Forest type", "Forest group")) return("presence probability")
-            switch(metric,
-                   "occurrence" = switch(stage,
-                                         "seedling" = "seedling presence",
-                                         "sapling"  = "sapling presence",
-                                         "adult"    = "tree presence",
-                                         "any"      = "presence probability"),
-                   "abundance" = switch(stage,
-                                        "seedling" = "number of seedlings",
-                                        "sapling"  = "number of saplings",
-                                        "adult"    = "number of trees"),
-                   "basal area"            = "total basal area",
-                   "proportion basal area" = "proportion basal area",
-                   "regeneration fraction" = switch(stage,
-                                                    "seedling" = "seedling fraction",
-                                                    "sapling"  = "sapling fraction"))
-      }
-
-      ## Repopulate metric choices when the track changes.
-      observeEvent(input$track, {
-            mc <- metric_choices(input$track)
-            updateSelectInput(session, "metric", choices = mc, selected = mc[1])
+      ## Repopulate variable choices when the track or life stage changes.
+      ## Selection is preserved when it survives the new choice set, so moving
+      ## between two stages that both offer "occurrence" does not bounce the
+      ## user back to the first option.
+      observeEvent(list(input$track, input$stage), {
+            mc <- metric_choices(input$track, input$stage)
+            cur <- if (isTruthy(input$metric)) input$metric else ""
+            updateSelectInput(session, "metric", choices = mc,
+                              selected = if (cur %in% mc) cur else mc[1])
       }, ignoreInit = TRUE)
 
-      ## Repopulate stage choices when track or metric changes (staged metrics only).
-      observeEvent(list(input$track, input$metric), {
-            req(input$metric)
-            sc <- stage_choices(input$track, input$metric)
-            if (length(sc) > 0) {
-                  updateSelectInput(session, "stage", choices = sc, selected = sc[1])
-            }
+      ## Entity-scope option text follows the track ("single species" vs "single
+      ## forest type"); only the labels change, the values stay single/multi so
+      ## nothing downstream is affected.
+      ##
+      ## observeEvent rather than observe: the handler body is isolated, so
+      ## reading input$entity_scope here does not create a dependency on the
+      ## input this writes to. A bare observe() would re-fire on its own write.
+      observeEvent(input$track, {
+            req(input$track != "All trees")
+            one <- switch(input$track,
+                          "Species"      = "single species",
+                          "Forest type"  = "single forest type",
+                          "Forest group" = "single forest group")
+            ch <- setNames(c("single", "multi"), c(one, "community composition"))
+            updateSelectInput(session, "entity_scope", choices = ch,
+                              selected = if (isTruthy(input$entity_scope)) input$entity_scope else "single")
       }, ignoreInit = TRUE)
 
       ## Resolve (track, metric, stage) -> hidden canonical fia_var.
@@ -1749,17 +2852,11 @@ server <- function(input, output, session) {
       ## Keep the climate-relationships module's variable menus in sync with the
       ## climate variables selected in the left sidebar. Its plot indexes into
       ## clim()$hst, which only holds the selected variables, so the options must
-      ## be exactly that set. Preserve the current pick when it's still available,
-      ## otherwise fall back to the first (v1) / second (v2) selected variable.
-      observeEvent(input$clim_vars, {
-            cv <- input$clim_vars
-            req(length(cv) >= 1)
-            keep <- function(cur, default) if (isTruthy(cur) && cur %in% cv) cur else default
-            updateSelectInput(session, "cr_v1", choices = cv,
-                              selected = keep(input$cr_v1, cv[1]))
-            updateSelectInput(session, "cr_v2", choices = cv,
-                              selected = keep(input$cr_v2, if (length(cv) >= 2) cv[2] else cv[1]))
-      })
+      ## be exactly that set. Preserve the current pick when it is still
+      ## available, otherwise fall back to the first selected variable.
+      ## cr_v1 offers every display variable, not just the modeled ones, so its
+      ## choices no longer depend on input$clim_vars and the observer that used
+      ## to narrow them is gone. The UI declares the full set directly.
 
       ## Spatial-scope status lines. These exist so the left panel states its
       ## own preconditions: a right-sidebar panel that renders empty because no
@@ -1822,15 +2919,19 @@ server <- function(input, output, session) {
                             xmax = ceiling(max(x)) + pad,
                             ymin = floor(min(y)) - pad,
                             ymax = ceiling(max(y)) + pad)
-            updateSelectInput(session, "bbox_x", selected = c(bb$xmin, bb$xmax))
-            updateSelectInput(session, "bbox_y", selected = c(bb$ymin, bb$ymax))
+            # bbox_x / bbox_y are sliderInputs, so updateSliderInput(value=) is
+            # the matching call. These previously used updateSelectInput(selected=)
+            # and worked, but that pairing is not the documented one and is not
+            # something to rely on.
+            updateSliderInput(session, "bbox_x", value = c(bb$xmin, bb$xmax))
+            updateSliderInput(session, "bbox_y", value = c(bb$ymin, bb$ymax))
       })
 
       ## Snap domain to current map view
       observeEvent(input$window_domain, {
             bb <- input$map_bounds
-            updateSelectInput(session, "bbox_x", selected = c(bb$west, bb$east))
-            updateSelectInput(session, "bbox_y", selected = c(bb$south, bb$north))
+            updateSliderInput(session, "bbox_x", value = c(bb$west, bb$east))
+            updateSliderInput(session, "bbox_y", value = c(bb$south, bb$north))
       })
 
       # for circuitscape rasters, time period must be "delta"
@@ -1852,8 +2953,27 @@ server <- function(input, output, session) {
       ##
       ## ignoreInit: the UI is built with the connectivity-off choices and the
       ## switch defaults to FALSE, so the two already agree at startup.
-      observeEvent(input$cs_enable, {
-            on <- isTRUE(input$cs_enable)
+      ## Explains the withdrawal rather than leaving a switch that has silently
+      ## stopped doing anything.
+      output$cs_note <- renderUI({
+            req(multi_mode())
+            div(class = "ts-notice",
+                "Connectivity models the movement of one species or forest type between its
+                 current and future range, so it does not apply to community composition. For
+                 connectivity of the forest as a whole, set the entity to 'all trees'.")
+      })
+
+      ## Also fires on multi_mode(): connectivity is a single-entity analysis.
+      ## Its electrodes are built from one entity's historical and future
+      ## surfaces and then solved, so under community composition it would
+      ## silently describe whichever species the hidden picker still holds --
+      ## producing something that looks like community connectivity and is not.
+      ##
+      ## There is no community version worth building here. The one that would
+      ## be well defined is connectivity of an aggregate surface, and the All
+      ## trees track already provides exactly that.
+      observeEvent(list(input$cs_enable, multi_mode()), {
+            on <- isTRUE(input$cs_enable) && !multi_mode()
 
             stat_choices <- if(on) stat_choices_cs else stat_choices_base
             vector_choices <- if(on) vector_choices_cs else vector_choices_base
@@ -1868,20 +2988,28 @@ server <- function(input, output, session) {
                               selected = keep(input$vector, vector_choices, "occupied FIA plots"))
       }, ignoreInit = TRUE)
 
-      # Swap eval_stat choices to the metric set cv_performance() produces
-      # for the current response type. Binary (presence-type) responses get
+      # Swap eval_stat choices to the metric set cv_performance() produces for
+      # the current response type. Binary (presence-type) responses get
       # ranking/threshold metrics; continuous responses get error metrics.
-      observe({
-            if(isTruthy(input$fia_var) && grepl("presence", input$fia_var)){
+      #
+      # Keyed on response_is_binary() rather than on fia_var directly: in
+      # community mode fia_var is still "presence probability" -- that is the
+      # per-entity variable being summed -- but the response being scored is
+      # richness, a count. Testing fia_var offered AUC and TSS for it.
+      #
+      # observeEvent so the handler is isolated; ignoreInit because the UI is
+      # declared with the binary set, which is right for the default variable.
+      observeEvent(response_is_binary(), {
+            if (response_is_binary()) {
                   updateSelectInput(session, "eval_stat",
                                     choices = c("AUC", "TSS", "Brier"),
                                     selected = "AUC")
-            }else{
+            } else {
                   updateSelectInput(session, "eval_stat",
                                     choices = c("R-squared", "RMSE"),
                                     selected = "R-squared")
             }
-      })
+      }, ignoreInit = TRUE)
 
       # highlight focal site analogs: activate correct vector layer; zoom to site
       observeEvent(input$highlight_site, {
@@ -1918,7 +3046,7 @@ server <- function(input, output, session) {
             proxy %>%
                   addPolygons(
                         data = user_polygon_buffered(),
-                        color = "#e05c00",
+                        color = lighten_color(polygon_color()),
                         weight = 2,
                         dashArray = "5, 5",
                         fill = FALSE,
@@ -1926,10 +3054,10 @@ server <- function(input, output, session) {
                   ) %>%
                   addPolygons(
                         data = poly,
-                        color = "darkred",
+                        color = polygon_color(),
                         weight = 2,
                         fillOpacity = 0.1,
-                        fillColor = "darkred",
+                        fillColor = polygon_color(),
                         group = "user_polygon",
                         label = if(!is.null(poly$Name)) ~Name else NULL
                   )
@@ -2010,6 +3138,124 @@ server <- function(input, output, session) {
       })
 
 
+      ## DISPLAY-ONLY COVARIATES ------------------------------------
+      ##
+      ## The x-axis variable for the climate-relationships plot, resolved
+      ## independently of clim_pool(). Nothing here feeds the analog model: the
+      ## point is that a user can plot against a variable the model was not
+      ## fitted on, and the isolation is what makes that safe.
+      ##
+      ## The cost is one extra crop/aggregate per variable change. Cheap relative
+      ## to a prediction, and it only recomputes when the axis variable, the
+      ## bbox, the grain, or the scenario changes.
+      cr_grid <- reactive({
+            v <- input$cr_v1
+            req(isTruthy(v), v %in% display_vars())
+            bb_ext <- ext(c(input$bbox_x, input$bbox_y))
+
+            grid_of <- function(r) r %>% crop(bb_ext) %>%
+                  aggregate(input$clim_agg, na.rm = TRUE)
+
+            if (!is.null(display_extra_vars[[v]])) {
+                  # A static covariate: the same raster for both timeframes,
+                  # since elevation does not change between them.
+                  g <- grid_of(rast(display_extra_vars[[v]]$file))
+                  names(g) <- v
+                  return(list(hst = g, fut = g))
+            }
+
+            # Averaged across the selected GCMs, matching clim_pool()'s ensemble.
+            sf <- scenario_file()
+            fut_list <- lapply(sf, function(pth) rast(pth)[[v]])
+            r_fut <- Reduce(`+`, fut_list) / length(fut_list)
+            names(r_fut) <- v
+
+            list(hst = grid_of(rast("data/clim_historical.tif")[[v]]),
+                 fut = grid_of(r_fut))
+      })
+
+      ## Same variable at the FIA plot coordinates, row-aligned with plot_occ().
+      cr_plot_values <- reactive({
+            v <- input$cr_v1
+            req(isTruthy(v), v %in% display_vars())
+            xy <- as.data.frame(plot_occ()[, c("x", "y")])
+
+            src <- if (!is.null(display_extra_vars[[v]])) {
+                  rast(display_extra_vars[[v]]$file)
+            } else if (isTRUE(input$cr_clim == "future")) {
+                  sf <- scenario_file()
+                  fl <- lapply(sf, function(pth) rast(pth)[[v]])
+                  Reduce(`+`, fl) / length(fl)
+            } else {
+                  rast("data/clim_historical.tif")[[v]]
+            }
+            as.numeric(terra::extract(src, xy, ID = FALSE, method = "bilinear")[, 1])
+      })
+
+      ## Outline color for the focal polygon. selectizeInput with a swatch
+      ## renderer rather than a text box: the swatches make the choice visual
+      ## without adding a color-picker dependency, and `create = TRUE` still
+      ## accepts any R color name or hex typed straight in.
+      output$polygon_color_ui <- renderUI({
+            req(isTruthy(polygon_upload_active()))
+            # isolate: this renderUI CREATES polygon_color, so reading it
+            # reactively would rebuild the widget on every change -- resetting
+            # the dropdown and stealing focus mid-selection. The read is only to
+            # carry the selection across a polygon swap.
+            overlay_color_input("polygon_color", "Focal polygon color",
+                                isolate(if (isTruthy(input$polygon_color)) input$polygon_color
+                                        else "darkred"))
+      })
+
+      ## Matching control for the focal site, shown only once one is set.
+      output$site_color_ui <- renderUI({
+            req(!is.null(site$x), !is.null(site$y))
+            overlay_color_input("site_color", "Focal site color",
+                                isolate(if (isTruthy(input$site_color)) input$site_color
+                                        else "#4c32a8"))
+      })
+
+      ## Resolved once so both the outline and its buffer ring agree, and so a
+      ## typed value that R cannot parse falls back instead of erroring inside
+      ## leaflet.
+      valid_color <- function(v, fallback) {
+            if (!isTruthy(v)) return(fallback)
+            ok <- tryCatch({ grDevices::col2rgb(v); TRUE }, error = function(e) FALSE)
+            if (ok) v else fallback
+      }
+      polygon_color <- reactive(valid_color(input$polygon_color, "darkred"))
+      site_color    <- reactive(valid_color(input$site_color, "#4c32a8"))
+
+      ## Restrict a raster to the selected area. Applied to the COMBINED raster
+      ## rather than to each layer, because cropping them separately would leave
+      ## the response and the covariate on different extents.
+      cr_scope_mask <- function(r) {
+            sc <- if (isTruthy(input$cr_scope)) input$cr_scope else "domain"
+            if (identical(sc, "domain")) return(r)
+
+            if (sc %in% c("polygon", "buffered")) {
+                  req(isTruthy(polygon_upload_active()))
+                  pv <- terra::vect(if (identical(sc, "polygon")) user_polygon()
+                                    else user_polygon_buffered())
+                  return(terra::mask(terra::crop(r, pv), pv))
+            }
+
+            # Focal site: the neighborhood the model draws analogs from, not the
+            # single cell -- one cell would give one point and no relationship.
+            req(!is.null(site$x), !is.null(site$y))
+            b <- terra::buffer(terra::vect(cbind(site$x, site$y), crs = "EPSG:4326"),
+                               width = input$theta_geog * 3 * 1000)
+            terra::mask(terra::crop(r, b), b)
+      }
+
+      ## Is the x-axis variable one the model was actually fitted on? A
+      ## relationship against anything else is a property of the landscape rather
+      ## than of the model, and the plot says so rather than leaving it to be
+      ## inferred.
+      cr_var_in_model <- reactive({
+            isTruthy(input$cr_v1) && input$cr_v1 %in% input$clim_vars
+      })
+
       ## CLIMATE MODEL SELECTOR -------------------------------------
 
       # Per-(scenario x era x model) climate deltas (future - historical) for
@@ -2049,12 +3295,12 @@ server <- function(input, output, session) {
             shiny::validate(need(nrow(scenario_meta) > 0,
                                  "No future climate files found in data/clim_future/."))
 
-            if (region == "site") {
+            if (region %in% c("cell", "site")) {
                   shiny::validate(need(!is.null(site$x) && !is.null(site$y),
                                        "Click the map to select a focal site, or choose a different summary region."))
-            } else if (region == "polygon") {
+            } else if (region %in% c("polygon", "buffered")) {
                   shiny::validate(need(isTruthy(polygon_upload_active()),
-                                       "Upload a study-area polygon, or choose a different summary region."))
+                                       "Upload a focal polygon, or choose a different summary region."))
             }
 
             # Extract ALL climate variables (not just the current axis pair),
@@ -2065,21 +3311,31 @@ server <- function(input, output, session) {
             all_vars <- clim_vars()
             hst <- rast("data/clim_historical.tif")[[all_vars]]
 
-            # Region geometry resolved once, outside the per-file loop.
+            # Region geometry resolved once, outside the per-file loop. The
+            # buffered polygon and the site neighborhood differ from their
+            # unbuffered counterparts only slightly for a climate delta, but they
+            # are offered anyway: a wide buffer around a small polygon can span a
+            # real elevation gradient, and a user should not have to learn which
+            # module offers which areas.
             bb_ext <- ext(c(input$bbox_x, input$bbox_y))
-            poly_vect <- if (region == "polygon") {
-                  terra::vect(st_transform(user_polygon(), crs(hst)))
-            } else NULL
+            region_vect <- switch(
+                  region,
+                  "polygon"  = terra::vect(st_transform(user_polygon(), crs(hst))),
+                  "buffered" = terra::vect(st_transform(user_polygon_buffered(), crs(hst))),
+                  "site"     = terra::buffer(
+                        terra::vect(cbind(site$x, site$y), crs = "EPSG:4326"),
+                        width = input$theta_geog * 3 * 1000),
+                  NULL)
 
             # Summarize a (future - historical) delta SpatRaster to a named
             # numeric vector, one value per climate variable.
             summarize_delta <- function(delta) {
-                  if (region == "site") {
+                  if (region == "cell") {
                         v <- terra::extract(delta, cbind(site$x, site$y),
                                             method = "bilinear")
                         stats::setNames(as.numeric(v[1, ]), names(delta))
-                  } else if (region == "polygon") {
-                        v <- terra::extract(delta, poly_vect, fun = "mean",
+                  } else if (!is.null(region_vect)) {
+                        v <- terra::extract(delta, region_vect, fun = "mean",
                                             na.rm = TRUE, ID = FALSE)
                         stats::setNames(as.numeric(v[1, ]), names(delta))
                   } else {
@@ -2127,9 +3383,13 @@ server <- function(input, output, session) {
                                       levels = c(.hist_era_label,
                                                  sort(unique(futures$era)))))
       }) %>%
+            # theta_geog is part of the key because the buffered polygon and the
+            # site neighborhood are both sized by it -- without it, changing the
+            # bandwidth would return a cached delta for the old geometry.
             bindCache(input$model_delta_region,
                       input$bbox_x, input$bbox_y,
                       site$x, site$y,
+                      input$theta_geog,
                       polygon_upload_active()) %>%
             bindEvent(input$model_delta_update)
 
@@ -2488,6 +3748,9 @@ server <- function(input, output, session) {
 
       ### Circuitscape --------------
       connectivity <- reactive({
+            # Belt and braces: the stat option is withdrawn in community mode,
+            # but a stale selection during a flush must not reach a solve.
+            req(!multi_mode())
 
             # First connectivity computation in this R process pays the Julia /
             # Circuitscape warmup; subsequent calls are a no-op. See the
@@ -2583,6 +3846,7 @@ server <- function(input, output, session) {
             input$bbox_y
             input$theta_geog
             input$show_site
+            site_color()
             site$x
             site$y
 
@@ -2596,14 +3860,14 @@ server <- function(input, output, session) {
                   leafletProxy("map") %>%
                         addCircles(lng = site$x, lat = site$y,
                                    radius = input$theta_geog / 10,
-                                   opacity = 1, fillOpacity = .5, color = "#4c32a8",
+                                   opacity = 1, fillOpacity = .5, color = site_color(),
                                    group = "focal_site") %>%
                         addPolygons(lng = r1[,1], lat = r1[,2],
-                                    color = "#4c32a8", weight = 2, fill = FALSE,
+                                    color = site_color(), weight = 2, fill = FALSE,
                                     dashArray = "12, 5",
                                     group = "focal_site") %>%
                         addPolygons(lng = r3[,1], lat = r3[,2],
-                                    color = "#4c32a8", weight = 2, fill = FALSE,
+                                    color = site_color(), weight = 2, fill = FALSE,
                                     group = "focal_site")
             }
       })
@@ -2629,8 +3893,781 @@ server <- function(input, output, session) {
 
 
       ### Raster -------------------------------
+      ## When the point layer is the focal site's analogs, which analogs it shows
+      ## depends on analog_direction -- a control in a right-sidebar panel, with
+      ## nothing on the map to say which setting is active. This is that line.
+      ## NULL when the qualifier does not apply, so callers can drop it.
+      analog_vector_note <- reactive({
+            if (!isTruthy(input$vector) || input$vector != "focal site analogs") return(NULL)
+            if (!isTruthy(input$analog_direction)) return(NULL)
+            paste0("(", tolower(input$analog_direction), " of focal site)")
+      })
+
+      ## Plain-text form of the legend title, for ggplot axis labels.
+      ##
+      ## raster_title() emits HTML because the leaflet legend renders it. Callers
+      ## used to strip the "<br/>" it once contained; when that was rewritten to
+      ## <div> blocks the strippers silently stopped matching and started printing
+      ## raw markup as an axis label. Stripping tags generically means the two
+      ## cannot drift apart again.
+      raster_title_text <- reactive({
+            trimws(gsub("\\s+", " ", gsub("<[^>]*>", " ", raster_title())))
+      })
+
+      ## "delta" is the internal value; the control and the legend both say
+      ## "change", which also covers the paired measures -- they are change
+      ## quantities without being deltas of anything.
+      time_label <- reactive({
+            if (identical(input$time, "delta")) "change" else input$time
+      })
+
+      ## What the evaluation is scoring, for axis and legend labels: the
+      ## community measure in community mode, the variable otherwise.
+      eval_response_label <- reactive({
+            if (multi_mode() && isTruthy(input$comm_measure)) comm_label()
+            else tolower(input$fia_var)
+      })
+
+      ## Display name for the community measure, with the life stage folded in
+      ## rather than repeated as a separate variable line. "sapling richness"
+      ## says everything "richness (sapling presence)" said, on one line.
+      comm_label <- reactive({
+            req(isTruthy(input$comm_measure))
+            stage <- switch(input$fia_var,
+                            "seedling presence" = "seedling ",
+                            "sapling presence"  = "sapling ",
+                            "tree presence"     = "adult ",
+                            "")
+            paste0(stage, input$comm_measure)
+      })
+
+      ## MULTI-ENTITY RUN AND REDUCTION -----------------
+      ##
+      ## One analog_impact() call per timeframe with every entity as an outcome
+      ## column. Benchmarks: ~0.19 s for one entity and ~2 s for all 143 at the
+      ## default domain and 10 km grain, because kernel weights are computed once
+      ## and reused across columns. Cost is linear in cells, so this is cheap at
+      ## coarse grain and minutes-scale at 1 km -- no button yet, deliberately,
+      ## until a cost estimate says one is needed.
+      ## Size and rough duration of a community run at the current settings.
+      ## Both are read before the run rather than after, which is the point:
+      ## the expensive configuration has to be refusable, not merely slow.
+      ##
+      ## Timing coefficients are measured, not guessed -- about 0.10 s fixed plus
+      ## 0.012 s per entity at 31,624 cells, per timeframe, scaling linearly in
+      ## cells. Marginal cost per entity climbs somewhat above ~25 entities, so
+      ## this runs a little optimistic at large entity counts.
+      comm_run_cost <- reactive({
+            req(multi_mode())
+            n_ent <- ncol(multi_values())
+            r <- clim()$hst
+            n_cells <- terra::ncell(r)
+            gb <- n_cells * n_ent * 8 * 2 / 1024^3
+            secs <- (n_cells / 31624) * (0.10 + 0.012 * n_ent) * 2
+
+            # Smallest grain that would fit, so a refusal can say what to do
+            # rather than leaving the user to bisect the slider. Cells scale as
+            # the inverse square of grain, so gb(g) = gb_now * (agg_now/g)^2.
+            agg <- input$clim_agg
+            fits <- ceiling(agg / sqrt(comm_max_gb / gb))
+            list(entities = n_ent, cells = n_cells, gb = gb, secs = secs,
+                 # NA when even the coarsest grain the slider offers is not
+                 # enough -- then the bounding box is the thing to change.
+                 grain_that_fits = if (is.finite(fits) && fits <= 10) max(fits, 1) else NA_integer_)
+      })
+
+      multi_aim <- reactive({
+            req(multi_mode())
+            y <- multi_values()
+            req(ncol(y) > 0)
+
+            # req(), not validate(): this reactive is reached from the map's
+            # leaflet observer, and a validation condition raised outside a
+            # render context propagates as an app error rather than a message.
+            # The refusal is explained by comm_cost_note in the sidebar, which
+            # is a render context and can say it properly.
+            cost <- comm_run_cost()
+            req(cost$gb <= comm_max_gb)
+
+            # sum_weights is retained even though nothing reads it yet: it is one
+            # extra layer for the whole run (a weight property, not per-entity),
+            # and it is the second half of the per-cell support signal. The
+            # weighted count of contributing presence plots for entity s is
+            # weighted_mean_s * sum_weights, which is what any reliability
+            # filter or rare-entity floor will be built on.
+            weight_stats <- "sum_weights"
+
+            aim_query <- function(x){
+                  suppressWarnings(analogs::analog_impact(
+                        x = x,
+                        pool = pool()$index_hst,
+                        env =  analogs::kernel(max = input$theta_clim * 3, weight = "gaussian", theta = input$theta_clim),
+                        geog = analogs::kernel(max = input$theta_geog * 3, weight = "gaussian", theta = input$theta_geog),
+                        stat = c("weighted_mean", weight_stats),
+                        y = y))
+            }
+
+            # Same positional rename as aim(): outcome layers are whatever isn't
+            # a weight stat, returned in y-column order.
+            name_outcomes <- function(r){
+                  is_outcome <- !names(r) %in% weight_stats
+                  stopifnot(sum(is_outcome) == ncol(y))
+                  names(r)[is_outcome] <- names(y)
+                  r
+            }
+
+            list(bsl = name_outcomes(aim_query(clim()$hst)),
+                 fut = name_outcomes(aim_query(clim()$fut)))
+      })
+
+      ## Reduce the per-entity stack to one community surface. Reduction reads
+      ## from the stack rather than accumulating during the run, which is what
+      ## keeps every additional measure cheap -- re-reducing is a re-read, not a
+      ## re-run.
+      ## One entity -> color lookup for the whole app.
+      ##
+      ## Colors have to be keyed to entity IDENTITY, not to rank within a plot.
+      ## The map ranks entities by cell count and the composition panel ranks
+      ## them by value over the selected area, so assigning palette color 1 to
+      ## each view's own first entity gives two entirely different mappings for
+      ## the same species.
+      ##
+      ## The canonical order is domain-wide historical abundance, so the entities
+      ## most likely to appear in any view get the first and most distinct colors.
+      ## Past the palette length colors recycle, which can put two same-colored
+      ## entities in one plot -- but only for entities rare enough to be far down
+      ## this ordering, and a visible repeat is better than a mapping that
+      ## silently disagrees between views.
+      comm_entity_colors <- reactive({
+            m <- multi_aim()
+            ent <- setdiff(names(m$bsl), "sum_weights")
+            rank_val <- as.numeric(terra::global(m$bsl[[ent]], "mean", na.rm = TRUE)[, 1])
+            ord <- ent[order(rank_val, decreasing = TRUE)]
+            stats::setNames(cat_palette_colors(length(ord), last_cat_palette()), ord)
+      })
+
+      ## Categorical measures: the argmax raster AND the code/label/color
+      ## mapping, produced together.
+      ##
+      ## The mapping is carried here rather than as terra factor levels because
+      ## assigning levels<- renumbers the categories to a sequential index --
+      ## terra::cats() then returns 0..n-1 while the per-plot values are still
+      ## column indices into the entity set, so almost nothing matches and the
+      ## markers all collapse to "other".
+      comm_category_result <- reactive({
+            req(categorical_layer())
+            m <- multi_aim()
+            ent <- setdiff(names(m$bsl), "sum_weights")
+
+            if (input$comm_measure %in% paired_measures) {
+                  # Biggest winner / loser: argmax and argmin of the per-entity
+                  # DIFFERENCE. These cannot be recovered from the reduced
+                  # surfaces -- which entity gained most is not a function of how
+                  # much the community gained -- so they are the categorical case
+                  # that genuinely needs the stack.
+                  va <- m$bsl[[ent]]
+                  vb <- m$fut[[ent]]
+                  dv <- vb - va
+                  idx <- if (identical(input$comm_measure, "biggest winner"))
+                        terra::which.max(dv) else terra::which.min(dv)
+
+                  # Support over both eras together, so a cell that is empty now
+                  # but gains entities still qualifies. Requiring historical
+                  # support would mask exactly the arrivals this layer is for.
+                  support <- (terra::app(va, fun = "sum", na.rm = TRUE) +
+                                    terra::app(vb, fun = "sum", na.rm = TRUE)) / 2
+            } else {
+                  # Dominant entity: per timeframe.
+                  r <- if (identical(input$time, "future")) m$fut else m$bsl
+                  v <- r[[ent]]
+                  idx <- terra::which.max(v)
+                  support <- terra::app(v, fun = "sum", na.rm = TRUE)
+            }
+
+            # Support floor FIRST. which.max always names a winner, including in
+            # cells where essentially nothing is expected to be present -- so
+            # without this the map shows a dominant tree species across
+            # unforested country. Masking before the frequency count also keeps
+            # those cells out of the top-N ranking, which otherwise promotes
+            # whichever entity happens to win the empty ground.
+            idx <- apply_support_floor(idx, support, input$support_floor)
+
+            # Lump all but the most frequent N. Ranking by cell count rather
+            # than mean value answers "what covers this map", which is the
+            # question a discrete palette can address.
+            n_top <- if (isTruthy(input$comm_top_n)) input$comm_top_n else 10
+            f <- terra::freq(idx)
+            f <- f[order(-f$count), , drop = FALSE]
+            top <- utils::head(f$value, max(1, n_top))
+            other <- setdiff(f$value, top)
+            if (length(other)) idx <- terra::subst(idx, other, 0)
+            names(idx) <- input$comm_measure
+
+            codes  <- c(if (length(other)) 0, top)
+            labels <- c(if (length(other)) "other", ent[top])
+            # Looked up by entity name, so these match the composition panel
+            # regardless of how the two views happen to rank entities.
+            cols <- unname(comm_entity_colors()[labels[labels != "other"]])
+            cols <- c(if (length(other)) "gray80", cols)
+
+            list(raster = idx, codes = codes, labels = labels, colors = cols)
+      })
+
+      ## COMMUNITY COMPOSITION MODULE -------------------
+      ##
+      ## The map-level measures reduce across entities; this reduces across
+      ## SPACE instead, so entity identity survives. Same stack, other axis --
+      ## which is why it costs nothing beyond a global() over layers already
+      ## computed.
+      comm_profile <- reactive({
+            req(multi_mode())
+            m <- multi_aim()
+            ent <- setdiff(names(m$bsl), "sum_weights")
+            scope <- if (isTruthy(input$comm_scope)) input$comm_scope else "domain"
+
+            reduce_space <- function(r) {
+                  v <- r[[ent]]
+
+                  # One cell, not an average: the composition AT a place.
+                  if (scope == "cell") {
+                        req(site$x, site$y)
+                        return(as.numeric(terra::extract(v, cbind(site$x, site$y))))
+                  }
+
+                  mean_over <- function(g)
+                        as.numeric(terra::global(terra::mask(terra::crop(v, g), g),
+                                                 "mean", na.rm = TRUE)[, 1])
+
+                  if (scope %in% c("polygon", "buffered")) {
+                        req(isTruthy(polygon_upload_active()))
+                        return(mean_over(terra::vect(
+                              if (scope == "polygon") user_polygon() else user_polygon_buffered())))
+                  }
+
+                  if (scope == "site") {
+                        req(site$x, site$y, isTruthy(input$theta_geog))
+                        return(mean_over(terra::buffer(
+                              terra::vect(cbind(site$x, site$y), crs = "EPSG:4326"),
+                              width = input$theta_geog * 3 * 1000)))
+                  }
+
+                  as.numeric(terra::global(v, "mean", na.rm = TRUE)[, 1])
+            }
+
+            hst <- reduce_space(m$bsl)
+            fut <- reduce_space(m$fut)
+            req(length(hst) == length(ent), length(fut) == length(ent))
+
+            tibble::tibble(entity = ent, hst = hst, fut = fut) %>%
+                  # Entities absent in both timeframes are not part of this
+                  # community: they contribute zero to every reduction and only
+                  # crowd the label spread and the ranking.
+                  filter(hst > 0 | fut > 0) %>%
+                  mutate(change = fut - hst,
+                         # Proportional change is undefined where nothing is
+                         # there now, and wildly unstable just above that -- the
+                         # same denominator problem the support floor addresses
+                         # on the maps. Entities below the floor are dropped from
+                         # the proportional ranking rather than topping it.
+                         prop = ifelse(hst > 0, change / hst, NA_real_)) %>%
+                  filter(!is.na(hst), !is.na(fut))
+      })
+
+      ## The entity set the panel names and colors, shared by the alluvial and
+      ## the scatterplot so an entity has one color across both and the two show
+      ## the same named set. Everything outside it is the "other" pool -- which
+      ## is also exactly what the scatterplot's gray points are.
+      comm_bands <- reactive({
+            d <- comm_profile()
+            req(nrow(d) > 0)
+            n <- if (isTruthy(input$comm_rank_n)) input$comm_rank_n else 15
+
+            # Rank by the larger of the two values, so an entity arriving from
+            # near zero is not excluded for having a small historical one.
+            #
+            # with_ties = FALSE is essential, not tidying: slice_max() otherwise
+            # returns EVERY row tied at the cutoff value, and at a focal site
+            # most entities sit at exactly 0. The n-th value is then 0, the tie
+            # set is the whole pool, `rest` comes back empty, and nothing is ever
+            # pooled into "other".
+            d <- mutate(d, top = pmax(hst, fut, na.rm = TRUE))
+            keep <- dplyr::slice_max(d, top, n = n, with_ties = FALSE)
+            rest <- filter(d, !entity %in% keep$entity)
+
+            # Largest first, so it sits at the bottom of the alluvial column and
+            # the eye reads dominant entities against a fixed baseline.
+            bands <- keep %>% arrange(desc(top)) %>% select(entity, hst, fut)
+
+            # The tail is pooled rather than dropped: column height in the
+            # alluvial is the community sum, and discarding ~128 entities would
+            # make that aggregate silently wrong.
+            if (nrow(rest))
+                  bands <- bind_rows(bands,
+                                     tibble::tibble(entity = "other",
+                                                    hst = sum(rest$hst, na.rm = TRUE),
+                                                    fut = sum(rest$fut, na.rm = TRUE)))
+
+            # Same palette family as the dominant-entity map, so an entity keeps
+            # a consistent identity across the map and both panel plots.
+            cols <- comm_entity_colors()[bands$entity]
+            cols[bands$entity == "other"] <- "gray80"
+            names(cols) <- bands$entity
+
+            list(bands = bands, cols = cols,
+                 named = bands$entity[bands$entity != "other"])
+      })
+
+      ## Scope preconditions, stated rather than left as an empty panel.
+      comm_profile_ready <- reactive({
+            # Most fundamental precondition first: someone in single-entity mode
+            # with the scope on "focal polygon" should be told about the entity
+            # setting, not sent off to upload a polygon that would not help.
+            if (!multi_mode())
+                  return("This panel doesn't work in single-entity mode. Under 'Entity' in the left sidebar, switch from a single species or type to 'community composition'.")
+            scope <- if (isTruthy(input$comm_scope)) input$comm_scope else "domain"
+            if (scope %in% c("polygon", "buffered") && !isTruthy(polygon_upload_active()))
+                  return("No focal polygon yet. Upload one under 'Study area' in the left sidebar, or summarize over the whole bounding box instead.")
+            if (scope %in% c("site", "cell") && (is.null(site$x) || is.null(site$y)))
+                  return("No focal site yet. Click anywhere on the map to set one.")
+            NULL
+      })
+
+      output$comm_scatter <- renderPlot({
+            shiny::validate(need(is.null(comm_profile_ready()), comm_profile_ready()))
+            d <- comm_profile()
+            req(nrow(d) > 0)
+            cb <- comm_bands()
+
+            # Named entities are the same set the alluvial draws, in the same
+            # colors, so the two plots can be read against each other. The gray
+            # points are literally the alluvial's "other" band, unpooled.
+            d <- mutate(d, band = ifelse(entity %in% cb$named, entity, "other"))
+            lab <- filter(d, band != "other") %>% arrange(desc(abs(change)))
+
+            ggplot(d, aes(hst, change)) +
+                  geom_hline(yintercept = 0, color = "gray70", linewidth = .3) +
+                  geom_point(data = filter(d, band == "other"),
+                             color = "gray80", size = 1.5) +
+                  geom_point(data = lab, aes(color = entity), size = 2.4) +
+                  # check_overlap rather than a repel dependency: rows are
+                  # pre-sorted by |change| so the most extreme entities win the
+                  # collisions.
+                  geom_text(data = lab, aes(label = entity, color = entity),
+                            size = 3.1, hjust = -0.12, vjust = 0.5,
+                            check_overlap = TRUE) +
+                  scale_color_manual(values = cb$cols, guide = "none") +
+                  scale_x_sqrt() +
+                  ggplot2::expand_limits(x = max(d$hst, na.rm = TRUE) * 1.35) +
+                  theme_bw() +
+                  labs(x = paste("historical", tolower(input$fia_var)),
+                       y = "change",
+                       subtitle = names(area_names)[match(
+                             if (isTruthy(input$comm_scope)) input$comm_scope else "domain",
+                             area_names)])
+      })
+
+      output$comm_ranking <- renderPlot({
+            shiny::validate(need(is.null(comm_profile_ready()), comm_profile_ready()))
+            d <- comm_profile()
+            req(nrow(d) > 0)
+
+            prop <- identical(input$comm_rank_by, "proportional")
+            d$value <- if (prop) d$prop else d$change
+            d <- filter(d, !is.na(value), value != 0)
+            shiny::validate(need(nrow(d) > 0, "Nothing changes measurably over this area."))
+
+            n <- if (isTruthy(input$comm_rank_n)) input$comm_rank_n else 15
+            # Both tails, not the top of one: the losers are as much the answer
+            # as the winners, and showing only gains hides half the turnover.
+            # with_ties = FALSE for the same reason as comm_bands(): a tie at
+            # the cutoff would return the whole pool.
+            d <- bind_rows(dplyr::slice_max(d, value, n = ceiling(n / 2), with_ties = FALSE),
+                           dplyr::slice_min(d, value, n = floor(n / 2), with_ties = FALSE)) %>%
+                  distinct(entity, .keep_all = TRUE) %>%
+                  mutate(entity = factor(entity, levels = entity[order(value)]))
+
+            ggplot(d, aes(value, entity, fill = value > 0)) +
+                  geom_col() +
+                  geom_vline(xintercept = 0, color = "gray30", linewidth = .3) +
+                  scale_fill_manual(values = c(`TRUE` = "dodgerblue4", `FALSE` = "darkred"),
+                                    guide = "none") +
+                  theme_bw() +
+                  labs(y = NULL,
+                       x = if (prop) "proportional change" else "change")
+      })
+
+      composition_layer <- reactive({
+            req(multi_mode(), isTruthy(input$comm_measure))
+            if (input$comm_measure %in% categorical_measures)
+                  return(comm_category_result()$raster)
+            req(input$comm_measure %in% comm_measure_choices(input$track, input$fia_var, input$time))
+            m <- multi_aim()
+
+            reduce <- function(r){
+                  ent <- setdiff(names(r), "sum_weights")
+                  v <- r[[ent]]
+
+                  # Shared pieces. Everything below is layer-wise terra
+                  # arithmetic rather than an app() callback over cells, which
+                  # matters at 143 layers.
+                  s <- terra::app(v, fun = "sum", na.rm = TRUE)
+
+                  # Shannon entropy of the composition, normalized to
+                  # proportions q = v / sum(v):
+                  #   H = -sum(q log q) = log(s) - sum(v log v) / s
+                  # ifel() guards log(0); a zero entity contributes nothing to
+                  # the entropy, and 0 * -Inf would otherwise be NaN.
+                  shannon <- function(){
+                        vlv <- terra::app(terra::ifel(v > 0, v * log(v), 0),
+                                          fun = "sum", na.rm = TRUE)
+                        log(s) - vlv / s
+                  }
+
+                  out <- switch(input$comm_measure,
+                                # Expected richness. Summing occurrence
+                                # probabilities is deliberate: thresholding at
+                                # p > 0.5 would discard the difference between
+                                # 0.51 and 0.99, and Sum(p) is the unbiased
+                                # estimator if p is calibrated. Whether it IS
+                                # calibrated across ~143 mostly-rare entities is
+                                # the open question this layer exposes.
+                                "richness" = s,
+
+                                # Hill N1 -- the effective number of entities, in
+                                # the same units as richness, so the two are
+                                # directly comparable. A cell where one species
+                                # dominates has low diversity however many rare
+                                # species carry small probabilities, which is
+                                # exactly the behavior richness lacks.
+                                "diversity" = exp(shannon()),
+
+                                # Pielou's J, against the FULL entity set rather
+                                # than a count of entities present. With
+                                # continuous probabilities almost every entity is
+                                # nonzero somewhere, so a "number present" divisor
+                                # would be degenerate. Note this makes evenness
+                                # depend on the size of the entity set, which
+                                # moves with theta_geog and the bbox.
+                                "evenness" = shannon() / log(terra::nlyr(v)),
+
+                                # Share of the community held by its largest
+                                # member. Bounded 0-1 and needs no normalization.
+                                "dominance" = terra::app(v, fun = "max", na.rm = TRUE) / s)
+                  req(!is.null(out))
+
+                  # app(na.rm = TRUE) returns 0 where every layer is NA, i.e.
+                  # outside analog range -- where a single-entity surface would
+                  # correctly be blank. Restore nodata there, or the map grows a
+                  # fringe of hard zeros that read as "no species" rather than
+                  # "no prediction". Every entity layer shares one NA mask, since
+                  # they come from one call with one set of weights and
+                  # multi_values() contains no NAs, so masking by any single
+                  # entity layer is enough.
+                  out <- terra::mask(out, v[[1]])
+
+                  # Support floor, applied per timeframe so a delta is blank
+                  # wherever EITHER timeframe is unsupported. `s` is the natural
+                  # denominator here: expected richness for an occurrence
+                  # variable, total basal area or stems for an abundance one.
+                  # Richness is exempt because it IS the denominator.
+                  if (!identical(input$comm_measure, "richness"))
+                        out <- apply_support_floor(out, s, input$support_floor)
+
+                  names(out) <- input$comm_measure
+                  out
+            }
+
+            ## Paired reduction: both stacks at once, entity by entity. The
+            ## per-entity differences cannot be recovered from the reduced
+            ## surfaces -- Sum(max(f-h, 0)) is not a function of Sum(f) and
+            ## Sum(h) -- which is what makes these genuinely require the stack
+            ## rather than being obtainable from a cheap All-trees variable.
+            ##
+            ## `a` is the reference composition and `b` the comparison. For
+            ## temporal pairing that is historical and future; the same formulas
+            ## take a focal site's composition and every cell's for spatial
+            ## pairing, which is why they are written in terms of a and b.
+            reduce_paired <- function(a, b){
+                  ent <- setdiff(names(a), "sum_weights")
+                  va <- a[[ent]]
+                  vb <- b[[ent]]
+
+                  d      <- vb - va
+                  gains  <- terra::app(terra::ifel(d > 0,  d, 0), fun = "sum", na.rm = TRUE)
+                  losses <- terra::app(terra::ifel(d < 0, -d, 0), fun = "sum", na.rm = TRUE)
+                  sa     <- terra::app(va, fun = "sum", na.rm = TRUE)
+                  sb     <- terra::app(vb, fun = "sum", na.rm = TRUE)
+
+                  out <- switch(input$comm_measure,
+                                # Bray-Curtis dissimilarity: sum|a-b| over
+                                # sum(a+b), which is (gains + losses) over the
+                                # combined community. 0 is identical
+                                # composition, 1 is no overlap. Threshold-free,
+                                # unlike Jaccard, which needs presence/absence
+                                # sets and so needs a cutoff.
+                                "turnover" = (gains + losses) / (sa + sb),
+
+                                # Absolute expected arrivals and departures, in
+                                # the variable's own units. Asymmetric on
+                                # purpose: what must arrive is a different
+                                # question from what must leave, and for
+                                # sourcing or connectivity only one of them is
+                                # the relevant demand.
+                                "expected gains"  = gains,
+                                "expected losses" = losses,
+
+                                # Gains as a share of the future community: the
+                                # fraction of what will be there that is not
+                                # there now. This is the colonization demand used
+                                # to weight connectivity, and it deliberately
+                                # ignores losses.
+                                "colonization demand" = gains / sb,
+
+                                # Its mirror: losses as a share of the CURRENT
+                                # community -- how much of what is here now is
+                                # expected to depart. Normalizing by sa rather
+                                # than sb is the whole difference, and it is what
+                                # makes this the question a manager asks about
+                                # the stand in front of them rather than about
+                                # the one that replaces it.
+                                #
+                                # With the two fractions and turnover together,
+                                # it is visible WHICH side drives turnover:
+                                # Bray-Curtis is their average when the two
+                                # communities are similar in size, so a high
+                                # turnover with a low loss fraction is
+                                # accumulation rather than replacement.
+                                "loss fraction" = losses / sa)
+                  req(!is.null(out))
+
+                  out <- terra::mask(out, va[[1]])
+
+                  # Ratios only. Turnover is normalized by the combined
+                  # community, colonization demand by the future one, so each is
+                  # floored against its own denominator. The absolute sums stay
+                  # meaningful at low support and are left alone.
+                  if (identical(input$comm_measure, "turnover"))
+                        out <- apply_support_floor(out, (sa + sb) / 2, input$support_floor)
+                  if (identical(input$comm_measure, "colonization demand"))
+                        out <- apply_support_floor(out, sb, input$support_floor)
+                  if (identical(input$comm_measure, "loss fraction"))
+                        out <- apply_support_floor(out, sa, input$support_floor)
+
+                  names(out) <- input$comm_measure
+                  out
+            }
+
+            if (input$comm_measure %in% paired_measures)
+                  return(reduce_paired(m$bsl, m$fut))
+
+            hst <- reduce(m$bsl)
+            fut <- reduce(m$fut)
+            switch(input$time,
+                   "historical" = hst,
+                   "future"     = fut,
+                   "delta"      = fut - hst)
+      })
+      ## The support floor's units are the denominator's units, which change with
+      ## the variable and with entity scope.
+      ##
+      ## The value is reset only when the UNITS change, not on every variable
+      ## change: moving between two occurrence variables keeps whatever the user
+      ## set, while moving from expected species to ft2/acre resets, because
+      ## carrying a threshold of 1 across that boundary would mean something
+      ## entirely different. Passing value = NULL leaves the field alone.
+      support_floor_units <- reactiveVal(NULL)
+      observeEvent(list(multi_mode(), input$fia_var, input$track), {
+            req(isTruthy(input$fia_var))
+            sp <- support_floor_spec(multi_mode(), input$fia_var, input$track)
+            units_changed <- !identical(support_floor_units(), sp$label)
+            support_floor_units(sp$label)
+            updateNumericInput(session, "support_floor",
+                               label = sp$label, step = sp$step,
+                               value = if (units_changed) sp$default else NULL)
+      })
+
+      ## Repopulate community measures for the current track and variable.
+      ## Invalid combinations are removed from the menu rather than flagged
+      ## after selection. observeEvent so the handler's read of
+      ## input$comm_measure is isolated and cannot re-trigger its own write.
+      observeEvent(list(input$track, input$fia_var, input$time), {
+            req(multi_mode())
+            ch <- comm_measure_choices(input$track, input$fia_var, input$time)
+            req(length(ch) > 0)
+            cur <- if (isTruthy(input$comm_measure)) input$comm_measure else ""
+            updateSelectInput(session, "comm_measure", choices = ch,
+                              selected = if (cur %in% ch) cur else ch[1])
+      })
+
+      ## A modal when the run first goes over the limit.
+      ##
+      ## The inline notice is not enough on its own: it renders in the FIA
+      ## variable panel, while the grain slider that pushes a run over the limit
+      ## is in the Study area panel -- and with one accordion panel open at a
+      ## time, the notice is suspended at exactly the moment it matters. So the
+      ## user coarsens nothing, sees the map quietly go blank, and has no idea
+      ## why.
+      ##
+      ## Fires once per crossing rather than on every slider tick: the flag is
+      ## read with isolate() so the observer does not depend on what it writes,
+      ## and clears when the settings come back under the limit.
+      comm_limit_warned <- reactiveVal(FALSE)
+
+      observe({
+            req(multi_mode())
+            cost <- comm_run_cost()
+
+            if (cost$gb <= comm_max_gb) {
+                  if (isolate(comm_limit_warned())) comm_limit_warned(FALSE)
+                  return()
+            }
+            if (isolate(comm_limit_warned())) return()
+            comm_limit_warned(TRUE)
+
+            fix <- cost$grain_that_fits
+            showModal(modalDialog(
+                  title = "Too large to map",
+                  tags$p(sprintf(
+                        "This query would model %s species/forest types over %s cells, which would need about %.1f GB of memory, exceeding this app's %.1f GB limit. The operation will not be run at these settings.",
+                        format(cost$entities, big.mark = ","),
+                        format(cost$cells, big.mark = ","),
+                        cost$gb, comm_max_gb)),
+                  tags$p(if (is.na(fix))
+                        "Even the coarsest grain size will not fit this bounding box. Shrink the box under 'Study area' in the left sidebar."
+                        else sprintf("You could increase grain size to %d km or coarser, shrink the bounding box, or choose a single-species variable instead of `community composition`.", fix)),
+                  easyClose = TRUE,
+                  footer = tagList(
+                        # Acting on the advice directly, rather than sending the
+                        # user to find a slider in a panel they are not in.
+                        if (!is.na(fix))
+                              actionButton("comm_apply_grain",
+                                           sprintf("Set grain to %d km", fix)),
+                        modalButton("Close")
+                  )
+            ))
+      })
+
+      observeEvent(input$comm_apply_grain, {
+            cost <- comm_run_cost()
+            req(!is.na(cost$grain_that_fits))
+            updateSliderInput(session, "clim_agg", value = cost$grain_that_fits)
+            removeModal()
+      })
+
+      ## What the current settings will cost, shown before it is incurred rather
+      ## than only when it is refused. Silent for runs that are quick enough not
+      ## to warrant a warning: a notice on every community run would be noise,
+      ## and noise is what gets ignored when it matters.
+      output$comm_cost_note <- renderUI({
+            req(multi_mode())
+            cost <- comm_run_cost()
+            if (cost$gb <= comm_max_gb && cost$secs < 10) return(NULL)
+
+            if (cost$gb > comm_max_gb) {
+                  div(class = "ts-notice",
+                      sprintf("This query would model %s species/forest types over %s cells, which would need about %.1f GB of memory, exceeding this app's %.1f GB limit. The operation will not be run at these settings.",
+                              format(cost$entities, big.mark = ","),
+                              format(cost$cells, big.mark = ","),
+                              cost$gb, comm_max_gb,
+                              if (is.na(cost$grain_that_fits))
+                                    "Even the coarsest grain size will not fit this bounding box; shrink the box under 'Study area' in the left sidebar."
+                              else sprintf("Set the grain size to %d km or coarser, or shrink the bounding box, under 'Study area' in the left sidebar.",
+                                           cost$grain_that_fits)))
+            } else {
+                  div(class = "ts-notice",
+                      sprintf("Mapping %s entities over %s cells takes roughly %s and about %.1f GB. Coarsening the grain size is the quickest way to speed this up.",
+                              format(cost$entities, big.mark = ","),
+                              format(cost$cells, big.mark = ","),
+                              if (cost$secs < 90) sprintf("%.0f seconds", cost$secs)
+                              else sprintf("%.0f minutes", cost$secs / 60),
+                              cost$gb))
+            }
+      })
+
+      ## Only one case remains that the menu cannot express: no measure at all
+      ## applies, so there is nothing to select and the reason needs saying.
+      output$comm_note <- renderUI({
+            req(multi_mode(), isTruthy(input$fia_var))
+            req(length(comm_measure_choices(input$track, input$fia_var, input$time)) == 0)
+
+            msg <- if (!input$fia_var %in% multi_vars) {
+                  sprintf("'%s' has no per-entity form yet \u2014 the regeneration fractions are pooled ratios, which need three coupled columns per entity. Choose another variable, or switch back to a single entity.",
+                          input$fia_var)
+            } else {
+                  sprintf("Every FIA plot is assigned a single %s, so counting how many occur together at one plot always gives one. Set Timeframe to 'change' for the turnover measures, which compare how the mix of classes shifts over time and do work here.",
+                          tolower(input$track))
+            }
+            div(class = "ts-notice", msg)
+      })
+
+      ## Paired measures are their own quantity, not a delta of a per-timeframe
+      ## one, so they must not pick up the diverging zero-centered delta palette
+      ## even when input$time happens to be "delta". Expected gains and losses
+      ## are strictly non-negative; turnover runs 0 (identical) to 1 (no
+      ## overlap). None of them center on zero.
+      paired_layer <- reactive({
+            isTruthy(input$stat) && input$stat == "FIA variable" &&
+                  multi_mode() && isTruthy(input$comm_measure) &&
+                  input$comm_measure %in% paired_measures
+      })
+
+      ## Categorical layers: the value is an entity index, not a quantity.
+      ## Everything that assumes continuity has to branch on this -- palette,
+      ## reprojection method, scale transform, and the panels that plot value
+      ## distributions.
+      categorical_layer <- reactive({
+            isTruthy(input$stat) && input$stat == "FIA variable" &&
+                  multi_mode() && isTruthy(input$comm_measure) &&
+                  input$comm_measure %in% categorical_measures
+      })
+
+      ## Category codes, labels and colors for the categorical layers. Derived
+      ## from the raster's own factor levels so the markers cannot drift from the
+      ## surface they sit on: one mapping, two consumers.
+      comm_categories <- reactive({
+            req(categorical_layer())
+            comm_category_result()[c("codes", "labels", "colors")]
+      })
+
+      ## Layers bounded on [0, 1] that read better on a diverging palette than a
+      ## sequential one, with the domain pinned to the full range so the
+      ## midpoint stays put rather than floating with the observed max.
+      ##
+      ## Diversity is deliberately NOT here: it is exp(H) in effective-entity
+      ## units, unbounded, and shares units with richness -- keeping the two on
+      ## the same sequential palette is what makes them comparable.
+      bounded_ratio_layer <- reactive({
+            if (!isTruthy(input$stat) || input$stat != "FIA variable") return(FALSE)
+            if (multi_mode()) return(isTruthy(input$comm_measure) &&
+                                           input$comm_measure %in% c("evenness", "dominance"))
+            isTruthy(input$fia_var) && grepl("fraction", input$fia_var)
+      })
+
+      ## Layers whose NAs carry meaning -- a support mask or an entity not found
+      ## within range -- rather than merely marking the edge of the analog
+      ## domain. Filling these with 0 on a delta map would read as "no change"
+      ## instead of "no information", and for a ratio 0 is a real value at one
+      ## end of the scale.
+      masked_layer <- reactive({
+            if (!isTruthy(input$stat) || input$stat != "FIA variable") return(FALSE)
+            if (multi_mode()) return(isTruthy(input$comm_measure) &&
+                                           !identical(input$comm_measure, "richness"))
+            isTruthy(input$fia_var) && grepl("fraction", input$fia_var)
+      })
+
+
       display_layer <- reactive({
-            req(focal_id(), aim())  # only run once we have data
+            req(focal_id())
+
+            # In All mode the community reduction takes the place of the
+            # per-entity response. The model diagnostics (ESS, focal site
+            # similarity, connectivity) are entity-independent and keep working
+            # unchanged, so only the "FIA variable" branch is replaced -- and
+            # aim() is not required, so All mode does not also pay for a
+            # single-entity run it will not display.
+            if (multi_mode() && input$stat == "FIA variable") return(composition_layer())
+
+            req(aim())  # only run once we have data
 
             if(input$stat == "ESS"){
                   r <- switch(input$time,
@@ -2643,56 +4680,115 @@ server <- function(input, output, session) {
                   st <- cs_stats[cs_stat_names == input$cs_stat]
                   r <- connectivity()[[st]]
             }else{ # input$stat == "FIA variable"
+                  # For the pooled-ratio variables, aim() carries the occurrence
+                  # layer alongside the response; it is the denominator these
+                  # fractions are conditional on. Mask per timeframe, so a delta
+                  # is blank wherever either end is unsupported.
+                  is_frac <- isTruthy(input$fia_var) && grepl("fraction", input$fia_var)
+                  floor_at <- function(tf) {
+                        x <- tf$response
+                        if (is_frac && !is.null(tf$occ))
+                              x <- apply_support_floor(x, tf$occ, input$support_floor)
+                        x
+                  }
                   r <- switch(input$time,
-                              "delta" = aim()$fut$response - aim()$bsl$response,
-                              "historical" = aim()$bsl$response,
-                              "future" = aim()$fut$response)
+                              "delta" = floor_at(aim()$fut) - floor_at(aim()$bsl),
+                              "historical" = floor_at(aim()$bsl),
+                              "future" = floor_at(aim()$fut))
             }
 
             r
       })
 
       raster_title <- reactive({
-            ## legend title ##
-            if(input$stat == "ESS"){
-                  title <- input$stat
-            }else{
-                  pre <- paste0(focal_label(), "<br/>")
-                  title <- paste0(pre, input$time, "<br/>", tolower(sub(" ", "<br/>", input$fia_var)))
-                  if(input$fia_var == "total basal area"){
-                        title <- paste0(title, "<br/>(ft2 BA / acre)")
-                  }
-                  if(input$fia_var == "number of trees"){
-                        title <- paste0(title, "<br/>(trees / acre)")
-                  }
-                  if(input$fia_var == "number of saplings"){
-                        title <- paste0(title, "<br/>(saplings / acre)")
-                  }
-                  if(input$fia_var == "number of seedlings"){
-                        title <- paste0(title, "<br/>(seedlings / acre)")
-                  }
-                  if(input$stat == "connectivity"){
-                        title <- paste0(title, " --<br/>", input$cs_stat)
-                  }
-                  if(input$stat == "focal site similarity"){
-                        title <- paste0(gsub(" analogs", "", input$analog_direction), "<br>climate distance<br>from focal site")
-                  }
+            ## Legend title. Each semantic unit is its own block, so it starts on
+            ## a new line but WRAPS internally rather than being split at a
+            ## hard-coded point. The old version broke "presence probability"
+            ## after the first word regardless of available width; now that the
+            ## title sits in a flexible column beside the color bar, forced
+            ## breaks fight the layout instead of helping it.
+            lines <- character()
+            muted <- logical()
+            add <- function(txt, dim = FALSE){
+                  if (!length(txt) || is.na(txt) || !nzchar(txt)) return(invisible(NULL))
+                  lines <<- c(lines, txt)
+                  muted <<- c(muted, dim)
             }
 
-            title
+            if(input$stat == "ESS"){
+                  add(input$stat)
+
+            }else if(input$stat == "focal site similarity"){
+                  add(gsub(" analogs", "", input$analog_direction))
+                  add("climate distance from focal site")
+
+            }else if(multi_mode() && input$stat == "FIA variable"){
+                  # comm_label() already carries the life stage, so the
+                  # per-entity variable line would only repeat it.
+                  add(focal_label())
+                  add(time_label())
+                  add(comm_label())
+
+            }else{
+                  add(focal_label())
+                  add(time_label())
+                  add(tolower(input$fia_var))
+                  add(switch(input$fia_var,
+                             "total basal area"    = "(ft2 BA / acre)",
+                             "number of trees"     = "(trees / acre)",
+                             "number of saplings"  = "(saplings / acre)",
+                             "number of seedlings" = "(seedlings / acre)",
+                             NULL),
+                      dim = TRUE)
+                  if(input$stat == "connectivity") add(input$cs_stat)
+            }
+
+            # When the layer is categorical the marker legend is suppressed --
+            # the points reuse these same entity colors, so a second copy would
+            # repeat it verbatim. That leaves this legend serving both layers,
+            # which means it also has to say what the points are.
+            if (categorical_layer() && !is.null(analog_vector_note())) {
+                  add(paste("points:", analog_vector_note()), dim = TRUE)
+            }
+
+            # Support qualifier. Stated in the legend rather than only in a
+            # tooltip because the legend is what ends up in a screenshot in
+            # someone's planning document -- and "expected richness 8" over a
+            # 10 km cell will otherwise be read as eight species in 100 km2,
+            # which is wrong by a large factor rather than a subtlety.
+            #
+            # Not applied to the model diagnostics: ESS is a count of plots,
+            # focal site similarity is a climate distance, connectivity is a
+            # circuit quantity. None are estimated at plot support.
+            # In All mode this applies whatever the underlying variable: every
+            # community reduction describes the composition of a plot-sized
+            # footprint, and diversity in particular rises with area regardless
+            # of whether it was built from occurrence or basal area.
+            if (input$stat == "FIA variable" &&
+                (multi_mode() ||
+                 (isTruthy(input$fia_var) && input$fia_var %in% support_dependent_vars))) {
+                  add("(per ~0.07 ha plot)", dim = TRUE)
+            }
+
+            paste0("<div", ifelse(muted, " style='font-weight:400; opacity:.75;'", ""),
+                   ">", lines, "</div>", collapse = "")
       })
 
       observe({
             r <- display_layer()
             req(r)
 
-            trans <- switch(input$rast_transform,
-                            "identity" = identity,
-                            "log10" = log10,
-                            "sqrt" = sqrt,
-                            "uniform" = function(x) scales::rescale(rank(x, na.last = "keep")))
-            r <- setValues(r, trans(r[]))
-            r[!is.finite(r[])] <- NA
+            # Scale transforms are meaningless on category codes, and
+            # setValues() would drop the factor levels the legend reads from.
+            if (!categorical_layer()) {
+                  trans <- switch(input$rast_transform,
+                                  "identity" = identity,
+                                  "log10" = log10,
+                                  "sqrt" = sqrt,
+                                  "uniform" = function(x) scales::rescale(rank(x, na.last = "keep")))
+                  r <- setValues(r, trans(r[]))
+                  r[!is.finite(r[])] <- NA
+            }
 
             proxy <- leafletProxy("map") %>%
                   clearImages() %>%
@@ -2705,14 +4801,28 @@ server <- function(input, output, session) {
 
             choose_palette <- function(x) if(input$rast_palette == "default") x else input$rast_palette
 
-            if(input$time == "delta" && input$stat == "FIA variable"){
+            if(categorical_layer()){
+                  # Nearest neighbour: bilinear interpolation of category codes
+                  # invents indices that mean nothing. Same reason current
+                  # direction uses it.
+                  proj_method <- "ngb"
+                  cc <- comm_categories()
+                  # `levels`, not `domain`: colorFactor() builds its levels with
+                  # sort(unique(domain)), so passing the codes as a domain pairs
+                  # color k with the k-th SMALLEST entity index while the legend
+                  # labels it by frequency rank. Every name shifts. Supplying
+                  # levels explicitly keeps the given order.
+                  rast_pal <- colorFactor(palette = cc$colors, levels = cc$codes,
+                                          na.color = "transparent")
+                  dom <- cc$codes
+            } else if(input$time == "delta" && input$stat == "FIA variable" && !paired_layer()){
                   # units are deltas
                   r <- display_layer()
-                  # Fill non-analog NAs -- except for the regeneration fractions,
-                  # whose NAs are a deliberate mask (species not found within
-                  # range). Filling those would read as "no change" on the
+                  # Fill non-analog NAs -- except where the NAs are a deliberate
+                  # mask (species not found within range, or below the support
+                  # floor). Filling those would read as "no change" on the
                   # diverging scale rather than "no information".
-                  if(!grepl("fraction", input$fia_var)) r[is.na(r[])] <- 0
+                  if(!masked_layer()) r[is.na(r[])] <- 0
                   mm <- minmax(r)
                   dom <- max(abs(mm)) * c(-1, 1)
                   rast_pal <- colorNumeric(
@@ -2729,11 +4839,13 @@ server <- function(input, output, session) {
                   )
             } else if(input$stat == "FIA variable") {
                   # historical or future estimate: domain is unit except for total BA
-                  if(grepl("fraction", input$fia_var)){
-                        # Regeneration fractions diverge around 0.5 (relict <->
-                        # colonizing), so they default to RdBu. Fixing the domain to
-                        # the variable's full [0, 1] range keeps 0.5 on the palette
-                        # midpoint rather than floating with the observed max.
+                  if(bounded_ratio_layer()){
+                        # Bounded [0, 1] ratios -- the regeneration fractions
+                        # (relict <-> colonizing), and community evenness and
+                        # dominance -- default to RdBu. Fixing the domain to the
+                        # full [0, 1] range keeps the midpoint put rather than
+                        # floating with the observed max, so the same color means
+                        # the same value across species and scenarios.
                         if(input$rast_transform == "identity") dom <- c(0, 1)
                         rast_pal <- colorNumeric(
                               palette = "RdBu" %>% choose_palette(),
@@ -2781,15 +4893,33 @@ server <- function(input, output, session) {
                   )
 
             if(input$rast_opacity > 0){
-                  proxy <- proxy %>%
-                        addLegend(
-                              position = "topright",
-                              pal      = rast_pal,
-                              values   = dom,
-                              title    = HTML(raster_title()),
-                              layerId  = "raster_legend",
-                              opacity  = input$rast_opacity
-                        )
+                  # addLegend() derives its labels from `values` whenever `pal`
+                  # is supplied, and silently ignores a `labels` argument -- which
+                  # is why the categorical legend has to use the manual
+                  # colors/labels form instead. Entity names, not code numbers.
+                  proxy <- if (categorical_layer()) {
+                        cc <- comm_categories()
+                        proxy %>%
+                              addLegend(
+                                    position = "topright",
+                                    colors   = cc$colors,
+                                    labels   = cc$labels,
+                                    title    = HTML(raster_title()),
+                                    layerId  = "raster_legend",
+                                    opacity  = input$rast_opacity,
+                                    className = "info legend legend-discrete"
+                              )
+                  } else {
+                        proxy %>%
+                              addLegend(
+                                    position = "topright",
+                                    pal      = rast_pal,
+                                    values   = dom,
+                                    title    = HTML(raster_title()),
+                                    layerId  = "raster_legend",
+                                    opacity  = input$rast_opacity
+                              )
+                  }
             }
       })
 
@@ -2813,9 +4943,15 @@ server <- function(input, output, session) {
                   pd <- vector_points()
 
                   # Regeneration fractions get the variable's full [0, 1] range so
-                  # 0.5 stays on the diverging palette's midpoint.
-                  dom <- if(response_is_binary()) 0:1
-                  else if(grepl("fraction", input$fia_var)) c(0, 1)
+                  # 0.5 stays on the diverging palette's midpoint. Not in All
+                  # mode, where the fractions have no per-entity form and the
+                  # displayed value is a count.
+                  cat_layer <- categorical_layer()
+                  cc <- if (cat_layer) comm_categories() else NULL
+
+                  dom <- if(cat_layer) cc$codes
+                  else if(response_is_binary()) 0:1
+                  else if(bounded_ratio_layer()) c(0, 1)
                   else seq_domain(pd$display)
 
                   # Markers follow the raster palette only when the raster is
@@ -2828,14 +4964,24 @@ server <- function(input, output, session) {
                   marker_palette <- if(input$rast_palette != "default" &&
                                        marker_follows_raster_palette()){
                         input$rast_palette
-                  } else if(grepl("fraction", input$fia_var)){
+                  } else if(bounded_ratio_layer()){
                         "RdBu"
                   } else {
                         c("gray90", green)
                   }
-                  plot_pal <- colorNumeric(palette = marker_palette,
-                                           domain = dom)
-                  breaks <- pretty(seq(dom[1], dom[2], length.out = 100), n = 5)
+                  # Categorical layers key on entity codes, so the markers need
+                  # the raster's own colorFactor rather than a numeric ramp --
+                  # and its breaks are the categories themselves.
+                  plot_pal <- if(cat_layer){
+                        # levels, not domain -- see the raster palette above.
+                        colorFactor(palette = cc$colors, levels = cc$codes)
+                  } else {
+                        colorNumeric(palette = marker_palette, domain = dom)
+                  }
+                  # Only feeds the marker legend, which categorical layers do
+                  # not draw -- guarded so pretty() is not handed a code vector.
+                  breaks <- if(cat_layer) numeric(0)
+                  else pretty(seq(dom[1], dom[2], length.out = 100), n = 5)
 
                   proxy <- proxy %>%
                         addCircles(
@@ -2869,10 +5015,19 @@ server <- function(input, output, session) {
                   legend_labels <- c(breaks, "Non-sampled plot")
                   legend_colors <- c(plot_pal(breaks), "gray") # gray, to match the semi-transparent black markers
                   legend_radii <- c(rep(6, length(breaks)), 3)
-                  proxy <- proxy %>%
+                  # Categorical layers: markers use the raster's own colors and
+                  # categories, so a second legend would repeat it verbatim. The
+                  # raster legend serves both.
+                  if (!cat_layer) proxy <- proxy %>%
                         addControl(
                               circleLegend(
-                                    title  = HTML(paste("FIA plots: historical", input$fia_var, sep = "<br/>")),
+                                    # In All mode the markers show observed
+                                    # richness, not the per-entity variable.
+                                    title  = HTML(paste(c("FIA plots: historical",
+                                                          if (multi_mode()) paste("observed", comm_label())
+                                                          else input$fia_var,
+                                                          analog_vector_note()),
+                                                        collapse = "<br/>")),
                                     labels = legend_labels,
                                     colors = legend_colors,
                                     radii = legend_radii
@@ -2968,10 +5123,18 @@ server <- function(input, output, session) {
             d$v1 <- d$v1 * scl1$sd + scl1$mean
             d$v2 <- d$v2 * scl2$sd + scl2$mean
 
-            # See note in the FIA-plot marker layer: pool()$values has no
-            # `response` column for the pooled-ratio variables, so take the
-            # per-plot value from response_values() via analog_index.
-            d$value <- response_values()[d$analog_index]
+            # display_values(), not response_values(): the analog SET does not
+            # depend on the entity -- the same plots are near and climatically
+            # similar whichever species is selected -- but the point coloring
+            # does, and in community mode it should be the community measure, as
+            # on the map markers. Indexed via analog_index because pool()$values
+            # has no `response` column for the pooled-ratio variables.
+            dv <- display_values()
+            shiny::validate(need(
+                  !is.null(dv),
+                  "This community measure has no per-plot value, so the analog plots cannot be colored by it."))
+            req(length(dv) >= max(d$analog_index, na.rm = TRUE))
+            d$value <- dv[d$analog_index]
             d <- arrange(d, value) %>% mutate(panel = "Climate space")
 
 
@@ -2983,12 +5146,13 @@ server <- function(input, output, session) {
                                         c(scl1$mean, scl2$mean), c(scl1$sd, scl2$sd)) %>%
                                   mutate(r = "a"))
 
-            dom <- if(!response_is_binary()) seq_domain(d$value) else 0:1
+            fs <- analog_fill(d)
+            d <- fs$d
 
             p <- ggplot() +
                   geom_path(data = perims,
                             aes(v1, v2, group = r, linetype = r),
-                            color = "#4c32a8", linewidth = .5, alpha = .5) +
+                            color = site_color(), linewidth = .5, alpha = .5) +
                   geom_point(data = filter(d, samp_method_cd == 2),
                              aes(v1, v2, fill = value),
                              color = "gray70", size = 1.5) +
@@ -2999,8 +5163,8 @@ server <- function(input, output, session) {
                   geom_point(aes(x = s[[v1]] * scl1$sd + scl1$mean,
                                  y = s[[v2]] * scl2$sd + scl2$mean),
                              shape = 22,
-                             color = "#4c32a8", fill = "#4c32a8", size = 4, alpha = .5) +
-                  marker_fill_scale(limits = dom) +
+                             color = site_color(), fill = site_color(), size = 4, alpha = .5) +
+                  fs$scale +
                   scale_shape_manual(values = 21) +
                   scale_linetype(guide = "none") +
                   facet_wrap(~ panel) +
@@ -3020,7 +5184,7 @@ server <- function(input, output, session) {
                                  xend = f[[v1]] * scl1$sd + scl1$mean,
                                  yend = f[[v2]] * scl2$sd + scl2$mean,
                                  arrow = arrow(angle = 15, type = "closed"),
-                                 color = "#4c32a8", alpha = .5)
+                                 color = site_color(), alpha = .5)
             }
 
             if(nrow(filter(d, env_dist <= input$theta_clim * 3)) == 0){
@@ -3044,17 +5208,56 @@ server <- function(input, output, session) {
                         "Reverse analogs" = site_analogs()$rev_analogs,
                         "Forward analogs" = site_analogs()$fwd_analogs,
                         "Contemporary analogs" = site_analogs()$bsl_analogs)
-            d$value <- response_values()[d$analog_index]
+            # display_values(), not response_values(): the analog SET does not
+            # depend on the entity -- the same plots are near and climatically
+            # similar whichever species is selected -- but the point coloring
+            # does, and in community mode it should be the community measure, as
+            # on the map markers. Indexed via analog_index because pool()$values
+            # has no `response` column for the pooled-ratio variables.
+            dv <- display_values()
+            shiny::validate(need(
+                  !is.null(dv),
+                  "This community measure has no per-plot value, so the analog plots cannot be colored by it."))
+            req(length(dv) >= max(d$analog_index, na.rm = TRUE))
+            d$value <- dv[d$analog_index]
             d <- arrange(d, value) %>% mutate(panel = "Distance space")
 
-            dom <- if(!response_is_binary()) seq_domain(d$value) else 0:1
+            fs <- analog_fill(d)
+            d <- fs$d
 
             ymax <- if(input$filter_clim) input$theta_clim * 3.3 else NA
+
+            # Both axes here ARE the two distances, so the weight is a function
+            # of position and can be drawn as a field. That says what the scheme
+            # is regardless of which points are shown -- point size alone goes
+            # silent when the displayed plots all fall outside the cutoff, which
+            # is exactly when someone has turned the filter off to look at them.
+            #
+            xmax_g <- input$theta_geog * 3.3
+            ymax_g <- if (is.na(ymax)) max(d$env_dist, na.rm = TRUE) else ymax
+            wfield <- expand.grid(
+                  geog_dist = seq(0, xmax_g, length.out = 140),
+                  env_dist  = seq(0, ymax_g, length.out = 140))
+            wfield$w <- analog_weight(wfield$geog_dist, wfield$env_dist)
+
             ggplot(d, aes(geog_dist, env_dist, fill = value)) +
-                  geom_vline(xintercept = input$theta_geog, linetype = "longdash", color = "#4c32a8", alpha = .5) +
-                  geom_vline(xintercept = input$theta_geog * 3, color = "#4c32a8", alpha = .5) +
-                  geom_hline(yintercept = input$theta_clim, linetype = "longdash", color = "#4c32a8", alpha = .5) +
-                  geom_hline(yintercept = input$theta_clim * 3, color = "#4c32a8", alpha = .5) +
+                  # Now the only representation of the weighting, so it spans a
+                  # wide value range rather than a light tint. Stopping short of
+                  # pure black and pure white at the ends keeps the black-outlined
+                  # points legible over the darkest corner and leaves the panel
+                  # background distinguishable from a zero-weight region.
+                  #
+                  # alpha rather than fill, because fill already carries the
+                  # response value and a second fill scale would need another
+                  # package.
+                  geom_raster(data = wfield, aes(geog_dist, env_dist, alpha = w),
+                              fill = "black", inherit.aes = FALSE) +
+                  scale_alpha_continuous(range = c(0.05, 0.95), limits = c(0, 1),
+                                         guide = "none") +
+                  geom_vline(xintercept = input$theta_geog, linetype = "longdash", color = site_color(), alpha = .5) +
+                  geom_vline(xintercept = input$theta_geog * 3, color = site_color(), alpha = .5) +
+                  geom_hline(yintercept = input$theta_clim, linetype = "longdash", color = site_color(), alpha = .5) +
+                  geom_hline(yintercept = input$theta_clim * 3, color = site_color(), alpha = .5) +
                   scale_x_continuous(expand = c(0, 0), limits = c(0, input$theta_geog * 3.3)) +
                   scale_y_continuous(expand = c(0, 0), limits = c(0, ymax)) +
 
@@ -3065,10 +5268,10 @@ server <- function(input, output, session) {
                                                    shape_label = paste0("selected site,\n",
                                                                         eras()[2], " climate")),
                              aes(x = geog_dist, y = env_dist, shape = shape_label),
-                             color = "#4c32a8", fill = "#4c32a8",
+                             color = site_color(), fill = site_color(),
                              size = 10, alpha = .5, inherit.aes = FALSE) +
 
-                  marker_fill_scale(limits = dom) +
+                  fs$scale +
                   scale_shape_manual(values = 22) +
                   facet_wrap(~ panel) +
                   theme(legend.position = "top") +
@@ -3079,186 +5282,106 @@ server <- function(input, output, session) {
       })
 
       ### forest composition --------------------------------
-      output$comp_plot <- renderPlot({
-            # Pool analog rows from the three analog directions with their weights.
-            d <- bind_rows(site_analogs()$rev_analogs %>% mutate(type = "reverse"),
-                           site_analogs()$fwd_analogs %>% mutate(type = "forward"),
-                           site_analogs()$bsl_analogs %>% mutate(type = "contemporary")) %>%
-                  filter(env_dist <= input$theta_clim * 3)
+      ## Composition profile: what the community IS, historical and future.
+      ##
+      ## Informationally this is the same two numbers per entity as the
+      ## scatterplot -- (hst, fut) versus (hst, change) -- but the encoding
+      ## carries something neither of the plots above does: because the bands are
+      ## stacked, the total height of each column is the COMMUNITY SUM. So
+      ## per-entity change and aggregate change are legible in one figure, and a
+      ## community that reshuffles without changing size looks different from one
+      ## that shrinks.
+      ##
+      ## Built from the model stack rather than from the analog plots, so it
+      ## follows the "Summarize over" control like the rest of the panel. The
+      ## previous version was site-only and silently ignored it.
+      ##
+      ## Forward analogs are gone: "where does this site's climate go" is a
+      ## question about the analog machinery, not about composition, and it has
+      ## no counterpart in the AIM surfaces.
+      output$comm_composition <- renderPlot({
+            shiny::validate(need(is.null(comm_profile_ready()), comm_profile_ready()))
+            cb <- comm_bands()
+            cols <- cb$cols
 
-            # Plot-level analog set: one row per (analog plot × analog direction),
-            # joined to plot_occ for plot-level attributes (forest_type, forest_group).
-            plot_analogs <- plot_occ()[d$analog_index, ] %>%
-                  select(x, y, forest_type, forest_group) %>%
-                  bind_cols(select(d, env_dist, geog_dist, type)) %>%
-                  mutate(weight = dnorm(env_dist, sd = input$theta_clim) *
-                               dnorm(geog_dist, sd = input$theta_geog))
+            # Stack positions; "other" is last in the band order so it ends up
+            # on top rather than displacing the dominant entities' baseline.
+            bands <- cb$bands %>%
+                  mutate(hst_top = cumsum(hst), hst_bot = hst_top - hst,
+                         fut_top = cumsum(fut), fut_bot = fut_top - fut)
 
-            # SPECIES MODE: per-species decomposition using tree-level data.
-            # Shows the selected response variable (presence / BA / BA proportion)
-            # broken down by species across analog plots.
-            if (input$track == "Species") {
+            # Smoothstep between the two columns, which is what gives the
+            # ribbons their shape. Straight edges read as a chart of two bars;
+            # the curve reads as flow.
+            tt <- seq(0, 1, length.out = 60)
+            sm <- tt * tt * (3 - 2 * tt)
+            rib <- purrr::map_dfr(seq_len(nrow(bands)), function(i) {
+                  b <- bands[i, ]
+                  tibble::tibble(entity = b$entity, t = tt,
+                                 ymin = b$hst_bot + (b$fut_bot - b$hst_bot) * sm,
+                                 ymax = b$hst_top + (b$fut_top - b$hst_top) * sm)
+            })
+            rib$entity <- factor(rib$entity, levels = bands$entity)
 
-                  analogs <- plot_analogs %>%
-                        select(x, y, weight, type) %>%
-                        left_join(fia_plots_species_all(), by = join_by(x, y),
-                                  relationship = "many-to-many")
+            # Label side. Left is the default because the left column IS the
+            # current-day composition, and reading it as a list is the
+            # first-order thing this plot is for. Entities that grow move to the
+            # right, where their band is thicker and the label has room -- an
+            # arriving entity has almost no historical band to sit against.
+            lab <- bands %>%
+                  mutate(side = ifelse(fut > hst, "right", "left"),
+                         y_anchor = ifelse(side == "right",
+                                           (fut_bot + fut_top) / 2,
+                                           (hst_bot + hst_top) / 2))
 
-                  stat <- weighted.mean
-
-                  a <- analogs %>%
-                        select(x, y, weight, species, type) %>%
-                        tidyr::expand(tidyr::nesting(x, y, weight, type), species) %>%
-                        left_join(analogs, by = join_by(x, y, weight, species, type)) %>%
-                        mutate(basal_area = ifelse(is.na(basal_area), 0, basal_area),
-                               n_trees = ifelse(is.na(n_trees), 0, n_trees),
-                               n_saplings = ifelse(is.na(n_saplings), 0, n_saplings),
-                               n_seedlings = ifelse(is.na(n_seedlings), 0, n_seedlings)) %>%
-                        group_by(x, y, type) %>%
-                        mutate(baplot = sum(basal_area),
-                               baprop = basal_area / sum(basal_area),
-                               baprop = ifelse(is.finite(baprop), baprop, 0)) %>%
-                        group_by(species, type) %>%
-                        summarize(
-                              pres = stat((n_trees + n_saplings) > 0 | n_seedlings > 0, weight), # any life stage
-                              pres_seed = stat(n_seedlings > 0, weight),
-                              pres_sap = stat(n_saplings > 0, weight),
-                              pres_tree = stat(n_trees > 0, weight),
-                              batot = stat(basal_area, weight),
-                              baprop = stat(baprop, weight),
-                              nttot = stat(n_trees, weight),
-                              satot = stat(n_saplings, weight),
-                              nstot = stat(n_seedlings, weight),
-                              .groups = "drop"
-                        ) %>%
-                        filter(!is.na(species)) %>%
-                        # Per-species regeneration fractions, on the same
-                        # occurrence basis as the map (see ratio_pieces): the
-                        # weighted presence terms above are exactly the occurrence
-                        # weights, so the fraction is one over their sum.
-                        mutate(seed_frac = ifelse((pres_seed + pres_tree) > 0,
-                                                  pres_seed / (pres_seed + pres_tree), NA_real_),
-                               sap_frac  = ifelse((pres_sap + pres_tree) > 0,
-                                                  pres_sap / (pres_sap + pres_tree), NA_real_))
-
-                  v <- switch(input$fia_var,
-                              "presence probability"  = "pres",
-                              "seedling presence"      = "pres_seed",
-                              "sapling presence"       = "pres_sap",
-                              "tree presence"          = "pres_tree",
-                              "proportion basal area" = "baprop",
-                              "total basal area"      = "batot",
-                              "number of trees"       = "nttot",
-                              "number of saplings"    = "satot",
-                              "number of seedlings"   = "nstot",
-                              "seedling fraction"      = "seed_frac",
-                              "sapling fraction"       = "sap_frac")
-                  a$value <- a[[v]]
-                  a$category <- a$species
-                  lab <- paste("historical", input$fia_var)
-
-            } else {
-                  # TYPE / GROUP / ALL-TREES MODES: weighted prevalence of the
-                  # relevant categorical unit (forest type, forest group, or
-                  # species) across the analog plots, computed per analog
-                  # direction.
-                  if (input$track == "Forest type") {
-                        a <- plot_analogs %>%
-                              group_by(type, category = forest_type) %>%
-                              summarize(value = sum(weight), .groups = "drop_last") %>%
-                              mutate(value = value / sum(value)) %>%   # normalize within analog direction
-                              ungroup() %>%
-                              mutate(category = ft_name(category))
-                  } else if (input$track == "Forest group") {
-                        a <- plot_analogs %>%
-                              group_by(type, category = forest_group) %>%
-                              summarize(value = sum(weight), .groups = "drop_last") %>%
-                              mutate(value = value / sum(value)) %>%
-                              ungroup() %>%
-                              mutate(category = fg_name(category))
-                  } else {
-                        # All trees: per-species prevalence (presence-weighted by analog weight)
-                        analogs <- plot_analogs %>%
-                              select(x, y, weight, type) %>%
-                              left_join(fia_plots_species_all(),
-                                        by = join_by(x, y),
-                                        relationship = "many-to-many") %>%
-                              filter(!is.na(species))
-                        # Total analog weight per direction (denominator)
-                        totals <- plot_analogs %>%
-                              group_by(type) %>%
-                              summarize(total_weight = sum(weight), .groups = "drop")
-                        # Weight of analog plots where each species is present
-                        a <- analogs %>%
-                              distinct(x, y, weight, type, species) %>%   # one row per (plot × species × direction)
-                              group_by(type, category = species) %>%
-                              summarize(value = sum(weight), .groups = "drop") %>%
-                              left_join(totals, by = "type") %>%
-                              mutate(value = value / total_weight) %>%
-                              select(-total_weight)
-                  }
-
-                  # Expand to every (category × analog direction) combination,
-                  # filling categories absent from a direction with 0. Without
-                  # this, missing combinations render as blank tiles rather
-                  # than explicit zeros.
-                  a <- a %>%
-                        tidyr::complete(category, type, fill = list(value = 0))
-
-                  # Drop categories with zero weighted prevalence everywhere
-                  a <- a %>%
-                        group_by(category) %>%
-                        filter(any(value > 0)) %>%
-                        ungroup()
-
-                  lab <- "historical weighted prevalence"
+            # Every entity gets a label, so they have to be pushed apart rather
+            # than dropped. One pass per side: sort by anchor, then walk upward
+            # enforcing a minimum gap. The gap is sized so the labels always fit
+            # in the panel, and a leader line ties each back to its band.
+            y_max <- max(bands$hst_top, bands$fut_top, 0, na.rm = TRUE)
+            spread <- function(y) {
+                  if (!length(y)) return(y)
+                  gap <- y_max / max(26, length(y) + 1)
+                  o <- order(y)
+                  ys <- y[o]
+                  for (i in seq_along(ys)[-1]) ys[i] <- max(ys[i], ys[i - 1] + gap)
+                  # A long run can push the top label past the panel; slide the
+                  # whole stack down by the overshoot rather than let it clip.
+                  over <- max(0, ys[length(ys)] - y_max)
+                  ys <- ys - over
+                  out <- numeric(length(y))
+                  out[o] <- ys
+                  out
             }
+            lab <- lab %>%
+                  group_by(side) %>%
+                  mutate(y_label = spread(y_anchor)) %>%
+                  ungroup() %>%
+                  mutate(x_anchor = ifelse(side == "right", 1, 0),
+                         x_label  = ifelse(side == "right", 1.03, -0.03),
+                         hjust    = ifelse(side == "right", 0, 1))
 
-            req(nrow(a) > 0)
-
-            a <- a %>%
-                  arrange(category) %>%
-                  mutate(svalue = value / max(value, na.rm = TRUE))
-
-            b <- a %>%
-                  select(type, category, value) %>%
-                  mutate(value = value / max(value),
-                         type = factor(type, levels = c("reverse", "contemporary", "forward")),
-                         itype = as.integer(type) - 0.4,
-                         itype2 = itype + 0.8,
-                         icat = as.integer(factor(category))) %>%
-                  group_by(type) %>%
-                  mutate(pad = .05,
-                         ymax = cumsum(value) + cumsum(pad) - pad,
-                         ymin = lag(ymax) + pad,
-                         ymin = ifelse(is.na(ymin), 0, ymin),
-                         y = ymin/2 + ymax/2) %>%
-                  tidyr::gather(rep, itype, itype, itype2)
-
-            labs <- b %>%
-                  group_by(category) %>%
-                  filter(value == max(value)) %>%
-                  summarize(itype = mean(itype),
-                            y = mean(y))
-
-            ggplot() +
-                  geom_ribbon(data = b,
-                              aes(itype, ymin = ymin, ymax = ymax,
-                                  group = category, fill = category, color = category),
-                              alpha = .7, linewidth = 0.05) +
-                  geom_rect(data = b %>% tidyr::spread(rep, itype),
-                            aes(xmin = itype, xmax = itype2, ymin = ymin, ymax = ymax,
-                                group = category, fill = category, color = category)) +
-                  geom_text(data = labs,
-                            aes(itype, y, label = category),
-                            hjust = .5, vjust = .5, fontface = "bold.italic") +
-                  scale_x_continuous(breaks = 1:3,
-                                     labels = c("reverse\nanalogs", "contemporary\nanalogs", "forward\nanalogs")) +
-                  theme(legend.position = "none",
-                        panel.grid = element_blank(),
-                        axis.text.y = element_blank(),
-                        axis.ticks.y = element_blank()) +
-                  labs(y = "weighted composition of analog plots")
+            ggplot(rib, aes(t, ymin = ymin, ymax = ymax, fill = entity, group = entity)) +
+                  geom_ribbon(color = "white", linewidth = .2) +
+                  # Leader lines, in the band's own color, so a displaced label
+                  # is still unambiguously attached to its band.
+                  geom_segment(data = lab, inherit.aes = FALSE,
+                               aes(x = x_anchor, xend = x_label,
+                                   y = y_anchor, yend = y_label, color = entity),
+                               linewidth = .3, alpha = .6) +
+                  geom_text(data = lab, inherit.aes = FALSE,
+                            aes(x = x_label, y = y_label, label = entity,
+                                hjust = hjust, color = entity),
+                            size = 3.1) +
+                  scale_fill_manual(values = cols, guide = "none") +
+                  scale_color_manual(values = cols, guide = "none") +
+                  scale_x_continuous(breaks = c(0, 1),
+                                     labels = c("historical", "future"),
+                                     expand = ggplot2::expansion(mult = c(0.42, 0.42))) +
+                  theme_bw() +
+                  theme(panel.grid.major.x = element_blank(),
+                        panel.grid.minor = element_blank()) +
+                  labs(x = NULL, y = tolower(input$fia_var))
       })
 
 
@@ -3281,6 +5404,22 @@ server <- function(input, output, session) {
                   st_union() %>%
                   st_buffer(dist = input$theta_geog * 3 * 1000) %>%   # km -> m
                   st_transform(4326)
+      })
+
+      ## Raster values within the focal site's analog neighborhood. The site was
+      ## the only area this module treated as a single cell rather than a
+      ## distribution, which made it the odd one out against every other module
+      ## and gave it a vertical line where the others get a curve. The single
+      ## cell is still marked, so "where my site sits within its neighborhood"
+      ## stays readable.
+      site_raster_values <- reactive({
+            req(!is.null(site$x), !is.null(site$y), display_layer(),
+                isTruthy(input$theta_geog))
+            b <- terra::buffer(terra::vect(cbind(site$x, site$y), crs = "EPSG:4326"),
+                               width = input$theta_geog * 3 * 1000)
+            terra::extract(display_layer(), b, na.rm = TRUE) %>%
+                  pull(2) %>%
+                  na.omit()
       })
 
       polygon_raster_values <- reactive({
@@ -3313,20 +5452,83 @@ server <- function(input, output, session) {
       output$polygon_density <- renderPlot({
             req(display_layer())
 
+            # A categorical layer has no distribution to draw a density of --
+            # entity codes are labels, not magnitudes. The question transposes
+            # instead: what share of each area does each entity account for.
+            # Same areas, same colors, a composition bar apiece.
+            if (categorical_layer()) {
+                  cc <- comm_categories()
+                  share <- function(v) {
+                        v <- v[!is.na(v)]
+                        if (!length(v)) return(NULL)
+                        tibble::tibble(label = cc$labels[match(v, cc$codes)]) %>%
+                              filter(!is.na(label)) %>%
+                              count(label) %>%
+                              mutate(share = n / sum(n))
+                  }
+
+                  areas <- list("Model bounding box" = na.omit(values(display_layer(), mat = FALSE)))
+                  if (isTruthy(polygon_upload_active())) {
+                        areas[["Buffered polygon"]] <- polygon_buffered_raster_values()
+                        areas[["Focal polygon"]]    <- polygon_raster_values()
+                  }
+                  if (!is.null(site$x) && !is.null(site$y)) {
+                        areas[["Focal site neighborhood"]] <- site_raster_values()
+                        # The single clicked cell, as its own bar. It is one
+                        # entity so the bar is solid, which is the point: it says
+                        # which entity holds the site, in the same colors as
+                        # every other row.
+                        areas[["Focal site"]] <- terra::extract(
+                              display_layer(), cbind(site$x, site$y))[1, 1]
+                  }
+
+                  db <- bind_rows(lapply(names(areas), function(nm) {
+                        sh <- share(areas[[nm]])
+                        if (is.null(sh)) NULL else mutate(sh, source = nm)
+                  }))
+                  shiny::validate(need(nrow(db) > 0, "No values to summarize over these areas."))
+
+                  db$source <- factor(db$source, levels = names(areas))
+                  # Vertical bars, so the stacking order runs down the page in
+                  # the same direction as the legend beside it -- the eye can
+                  # match a band to its key entry by height alone. Reversed
+                  # levels put the first legend entry at the top of the stack.
+                  db$label <- factor(db$label, levels = rev(cc$labels))
+
+                  return(
+                        ggplot(db, aes(source, share, fill = label)) +
+                              geom_col(width = 0.7) +
+                              scale_fill_manual(values = stats::setNames(cc$colors, cc$labels),
+                                                breaks = cc$labels, name = NULL) +
+                              scale_y_continuous(labels = scales::percent, expand = expansion(0, 0)) +
+                              theme_bw() +
+                              theme(axis.text.x = element_text(angle = 20, hjust = 1)) +
+                              labs(x = NULL, y = "share of area",
+                                   subtitle = raster_title_text())
+                  )
+            }
+
             domain_vals <- na.omit(values(display_layer(), mat = FALSE))
 
             # Polygon-dependent values: NULL when no polygon is uploaded. The
-            # corresponding curves (study area, buffer) are then simply absent
+            # corresponding curves (focal polygon, buffer) are then simply absent
             # from the plot. Check the upload input directly to avoid
             # triggering user_polygon()'s internal req() short-circuit.
             has_polygon <- isTruthy(polygon_upload_active())
             poly_vals   <- if (has_polygon) polygon_raster_values() else NULL
             buffer_vals <- if (has_polygon) polygon_buffered_raster_values() else NULL
 
-            study_color   <- "darkred"   # matches the map polygon
-            buffer_color  <- "#e05c00"   # matches the buffer outline on the map
+            has_site  <- !is.null(site$x) && !is.null(site$y)
+            site_vals <- if (has_site) site_raster_values() else NULL
+
+            # Follow the user's overlay colors, so a curve here and the boundary
+            # it describes on the map are recognizably the same thing.
+            study_color   <- polygon_color()
+            buffer_color  <- lighten_color(polygon_color())
             domain_color  <- "gray60"
-            focal_color   <- "#4c32a8"   # matches the focal site marker elsewhere
+            # Follows the user's focal-site color, so the marker here and the
+            # marker on the map are the same thing to look at.
+            focal_color   <- site_color()
 
             # Focal site value: extract from the displayed raster at the click
             # location. NA if no site selected or if the point falls on a
@@ -3346,13 +5548,14 @@ server <- function(input, output, session) {
             # common [0, 1] axis. Done in data space (ggplot scale_x_*
             # transforms operate on the visual layer only, which would distort
             # density estimates by squishing them after they're computed).
-            x_lab <- gsub("<br/>", " ", raster_title())
+            x_lab <- raster_title_text()
             if (input$density_transform == "uniform") {
                   ecdf_ref <- ecdf(domain_vals)
                   if (has_polygon) {
                         poly_vals   <- ecdf_ref(poly_vals)
                         buffer_vals <- ecdf_ref(buffer_vals)
                   }
+                  if (has_site && length(site_vals)) site_vals <- ecdf_ref(site_vals)
                   domain_vals <- ecdf_ref(domain_vals)
                   if (!is.na(focal_val)) focal_val <- ecdf_ref(focal_val)
                   x_lab <- paste0(x_lab, " (uniform rank)")
@@ -3364,35 +5567,36 @@ server <- function(input, output, session) {
             # Build the long data frame, including only the curves we have data
             # for.
             parts <- list(
-                  tibble::tibble(value = domain_vals, source = "Modeling domain")
+                  tibble::tibble(value = domain_vals, source = "Model bounding box")
             )
             if (has_polygon) {
                   parts <- c(parts, list(
-                        tibble::tibble(value = buffer_vals, source = "Buffered area"),
-                        tibble::tibble(value = poly_vals,   source = "Study area")
+                        tibble::tibble(value = buffer_vals, source = "Buffered polygon"),
+                        tibble::tibble(value = poly_vals,   source = "Focal polygon")
+                  ))
+            }
+            if (has_site && length(site_vals)) {
+                  parts <- c(parts, list(
+                        tibble::tibble(value = site_vals, source = "Focal site neighborhood")
                   ))
             }
             d <- bind_rows(parts) %>%
-                  mutate(source = factor(source,
-                                         levels = c("Modeling domain",
-                                                    "Buffered area",
-                                                    "Study area",
-                                                    "Focal site")))
+                  mutate(source = factor(source, levels = c("Model bounding box",
+                                                            "Buffered polygon",
+                                                            "Focal polygon",
+                                                            "Focal site neighborhood",
+                                                            "Focal site")))
 
-            pal <- c("Modeling domain" = domain_color,
-                     "Buffered area"   = buffer_color,
-                     "Study area"      = study_color,
-                     "Focal site"      = focal_color)
-            ltypes <- c("Modeling domain" = "solid",
-                        "Buffered area"   = "dashed",
-                        "Study area"      = "solid",
-                        "Focal site"      = "solid")
-
-            panel_levels <- c("Relative density", "ECDF")
-            factor_panel <- function(df, lvl) {
-                  df$panel <- factor(lvl, levels = panel_levels)
-                  df
-            }
+            pal <- c("Model bounding box"      = domain_color,
+                     "Buffered polygon"        = buffer_color,
+                     "Focal polygon"           = study_color,
+                     "Focal site neighborhood" = lighten_color(focal_color),
+                     "Focal site"              = focal_color)
+            ltypes <- c("Model bounding box"      = "solid",
+                        "Buffered polygon"        = "dashed",
+                        "Focal polygon"           = "solid",
+                        "Focal site neighborhood" = "dashed",
+                        "Focal site"              = "solid")
 
             # Optional focal-site reference line. Skipped (NULL → no-op when
             # added to ggplot) if no focal site is selected or the cell value
@@ -3401,9 +5605,10 @@ server <- function(input, output, session) {
             focal_layer <- if (!is.na(focal_val)) {
                   geom_vline(data = tibble::tibble(xint = focal_val,
                                                    source = factor("Focal site",
-                                                                   levels = c("Modeling domain",
-                                                                              "Buffered area",
-                                                                              "Study area",
+                                                                   levels = c("Model bounding box",
+                                                                              "Buffered polygon",
+                                                                              "Focal polygon",
+                                                                              "Focal site neighborhood",
                                                                               "Focal site"))),
                              aes(xintercept = xint, color = source,
                                  linetype = source),
@@ -3415,39 +5620,32 @@ server <- function(input, output, session) {
             }
 
             # Legend break order: include Focal site only when one is active.
-            legend_breaks <- c("Modeling domain", "Buffered area", "Study area")
+            legend_breaks <- c("Model bounding box", "Buffered polygon", "Focal polygon")
+            if (has_site && length(site_vals))
+                  legend_breaks <- c(legend_breaks, "Focal site neighborhood")
             if (!is.na(focal_val)) legend_breaks <- c(legend_breaks, "Focal site")
 
-            p <- ggplot(d, aes(x = value, color = source,
-                               fill = source, linetype = source)) +
-                  geom_density(aes(group = source, y = after_stat(scaled)),
-                               data = ~ factor_panel(., "Relative density"),
-                               alpha = 0.25, linewidth = 0.6,
-                               bounds = d_bounds) +
+            # ECDF only. The paired density and ECDF panels showed the same
+            # comparison twice, and the density was the weaker of the two here:
+            # what the module is for is reading off how one area sits relative to
+            # another at a given value, which is the cumulative curve. Two panels
+            # also halved the width available for either.
+            p <- ggplot(d, aes(x = value, color = source, linetype = source)) +
                   stat_ecdf(aes(group = source),
-                            data = ~ factor_panel(., "ECDF"),
                             geom = "step", linewidth = 0.7, pad = FALSE) +
                   focal_layer +
-                  facet_wrap(~ panel, nrow = 1) +
                   scale_y_continuous(
                         breaks = c(0, 0.25, 0.5, 0.75, 1),
                         expand = expansion(0, 0)
                   ) +
-                  scale_fill_manual(values = c("Modeling domain" = domain_color,
-                                               "Buffered area"   = buffer_color,
-                                               "Study area"      = study_color,
-                                               "Focal site"      = NA),
-                                    breaks = legend_breaks,
-                                    guide = "none") +
                   scale_color_manual(values = pal,
                                      breaks = legend_breaks) +
                   scale_linetype_manual(values = ltypes,
                                         breaks = legend_breaks) +
                   theme(legend.position = "top") +
-                  strip_style +
                   labs(x = x_lab,
-                       y = NULL,
-                       fill = NULL, color = NULL, linetype = NULL)
+                       y = "cumulative share of area",
+                       color = NULL, linetype = NULL)
 
             # X-axis limits from the active variable's natural bounds. Infinite
             # bounds become NA so ggplot auto-scales that side from data.
@@ -3473,6 +5671,36 @@ server <- function(input, output, session) {
 
       ## MODEL EVALUATION ----------------------------
 
+      ## What the evaluation cross-validates.
+      ##
+      ## In single-entity mode this is just the focal entity's response. In
+      ## community mode it is the plot-level counterpart of the selected
+      ## community measure -- observed richness at each plot, for instance --
+      ## so the module scores the surface the map is actually showing rather
+      ## than a species the user cannot even see.
+      ##
+      ## Only linear measures can be handled this way, and richness is the one
+      ## that qualifies. Because AIM is a weighted mean with entity-independent
+      ## weights, reducing then interpolating equals interpolating then
+      ## reducing, so the held-out prediction of plot richness IS the held-out
+      ## Sum(p_s). A non-linear measure would need each entity predicted
+      ## separately at each held-out plot, and analog_cv() scores one response
+      ## at a time -- 143 CV runs, not the cheap multi-outcome trick.
+      eval_response <- reactive({
+            if (!multi_mode()) return(response_values())
+            req(identical(input$comm_measure, "richness"))
+            req(isTruthy(input$fia_var), input$fia_var %in% multi_vars)
+            comm_reduce_rows(multi_values(), "richness")
+      })
+
+      ## Measures the evaluation cannot score, and why. Returned as a message so
+      ## the panel explains itself rather than rendering empty.
+      eval_unsupported <- reactive({
+            if (!multi_mode()) return(NULL)
+            if (identical(input$comm_measure, "richness")) return(NULL)
+            "Accuracy can only be measured for richness. Switch the community measure to richness, or switch back to a single species."
+      })
+
       model_eval <- reactiveValues(comparison = NULL,
                                    scatter = NULL,
                                    stamp = NULL,
@@ -3486,8 +5714,8 @@ server <- function(input, output, session) {
       # precondition is also more useful than hiding the option.
       eval_scope_missing_msg <- function(scope){
             switch(scope,
-                   "polygon"  = "Upload a study area polygon under 'Study area' in the left sidebar to evaluate over it.",
-                   "buffered" = "Upload a study area polygon under 'Study area' in the left sidebar to evaluate over its buffered neighborhood.",
+                   "polygon"  = "Upload a focal polygon under 'Study area' in the left sidebar to evaluate over it.",
+                   "buffered" = "Upload a focal polygon under 'Study area' in the left sidebar to evaluate over its buffered neighborhood.",
                    "site"     = "Click the map to set a focal site, then this scope evaluates the plots within its geographic cutoff.",
                    "This evaluation scope is not available.")
       }
@@ -3510,6 +5738,9 @@ server <- function(input, output, session) {
       eval_model_stamp <- function(){
             list(track      = input$track,
                  focal      = focal_id(),
+                 # focal_id() already distinguishes community mode from a single
+                 # entity, but not which measure is being scored.
+                 measure    = if (multi_mode()) input$comm_measure else NA_character_,
                  fia_var    = input$fia_var,
                  bbox       = c(input$bbox_x, input$bbox_y),
                  clim_vars  = paste(sort(input$clim_vars), collapse = "_"),
@@ -3590,14 +5821,14 @@ server <- function(input, output, session) {
 
             # Build pool (x/y + climate) and response from a SINGLE plot_occ()
             # snapshot so the two are row-aligned. Capture plot_occ() once and
-            # derive the response from that same object rather than calling
-            # response_values() (which re-derives from plot_occ() and could,
-            # in principle, see a different value).
+            # derive the response from that same object rather than re-deriving
+            # it, which could in principle see a different value.
             po <- plot_occ()
             xy <- as.data.frame(po[, c("x", "y")])
             clim_hst <- terra::extract(clim_r, xy, ID = FALSE, method = "bilinear")
             d <- cbind(xy, clim_hst)
-            values <- response_values()
+            values <- eval_response()
+            req(!is.null(values), length(values) == nrow(po))
 
             # analog_cv() coerces `pool` internally and requires `y` to have
             # exactly nrow(pool) rows. bilinear extraction yields NA climate
@@ -3715,6 +5946,12 @@ server <- function(input, output, session) {
       }
 
       observeEvent(input$run_eval, {
+            # Refuse rather than sweeping bandwidths against a response the
+            # module cannot score.
+            if (!is.null(eval_unsupported())) {
+                  showNotification(eval_unsupported(), type = "warning", duration = 10)
+                  return()
+            }
 
             if("vars" %in% input$eval_params){
                   cv <- input$clim_vars
@@ -3787,7 +6024,7 @@ server <- function(input, output, session) {
                   filter(value == max(value))
 
             shiny::validate(need(nrow(opt) > 0,
-                                 "No results for the selected evaluation scope."))
+                                 "No results for this area. Re-run the evaluations, or choose a larger area."))
 
             updateSliderInput(session, "theta_geog", value = opt$theta_geog)
             updateSliderInput(session, "theta_clim", value = opt$theta_clim)
@@ -3795,6 +6032,7 @@ server <- function(input, output, session) {
       })
 
       output$eval_heatmap <- renderPlot({
+            shiny::validate(need(is.null(eval_unsupported()), eval_unsupported()))
             req(model_eval$comparison)
 
             metric <- switch(input$eval_stat,
@@ -3824,7 +6062,7 @@ server <- function(input, output, session) {
             shiny::validate(need(
                   nrow(e) > 0,
                   if (!scope_set) eval_scope_missing_msg(input$eval_scope)
-                  else sprintf("No evaluation results for '%s'. Either the last run predates this selection, or fewer than %d plots fall inside it.",
+                  else sprintf("No results for '%s'. Either the last run was done before you chose this area, or fewer than %d plots fall inside it.",
                                scope_label, eval_min_n)))
 
             # cv_performance() reports n alongside the requested metric. It can
@@ -3847,7 +6085,7 @@ server <- function(input, output, session) {
                          n_vars = stringr::str_count(clim_vars, "\\+") + 1)
 
             shiny::validate(need(nrow(e) > 0,
-                                 sprintf("'%s' is not defined for this response within '%s'.",
+                                 sprintf("'%s' cannot be calculated for this variable within '%s'.",
                                          input$eval_stat, scope_label)))
 
             subtitle <- paste0(scope_label, " \u2014 ", n_text,
@@ -3867,7 +6105,7 @@ server <- function(input, output, session) {
                   labs(y = "climate bandwidth (z)",
                        x = "geographic bandwidth (km)",
                        subtitle = subtitle,
-                       fill = paste0(input$eval_stat, " (", input$fia_var, ")"))
+                       fill = paste0(input$eval_stat, " (", eval_response_label(), ")"))
 
             # `%>%` binds tighter than `+`, so this cannot be chained onto the
             # ggplot expression above -- it would pipe only the labs() object.
@@ -3897,6 +6135,7 @@ server <- function(input, output, session) {
       })
 
       output$eval_scatter <- renderPlot({
+            shiny::validate(need(is.null(eval_unsupported()), eval_unsupported()))
             e <- eval_scatter_data()
             s <- eval_scatter_scope()
             req(e, s)
@@ -3906,36 +6145,142 @@ server <- function(input, output, session) {
                                 in_scope = s$keep) %>%
                   filter(!is.na(obs), !is.na(pred))
 
-            focus <- d[d$in_scope, , drop = FALSE]
-
             shiny::validate(need(
-                  nrow(focus) >= eval_min_n,
-                  sprintf("Only %d plot(s) fall within '%s' \u2014 too few to read a fit from.",
-                          nrow(focus), s$label)))
+                  sum(d$in_scope) >= eval_min_n,
+                  sprintf("Only %d plot(s) fall within '%s' \u2014 too few to judge accuracy from.",
+                          sum(d$in_scope), s$label)))
 
-            # The domain cloud stays visible underneath. Seeing that a unit's
-            # plots sit in the tail of the domain's error distribution says more
-            # than seeing those plots alone.
-            p <- ggplot(mapping = aes(obs, pred))
-            if (!all(d$in_scope)) {
-                  p <- p + geom_point(data = d[!d$in_scope, , drop = FALSE],
-                                      color = "gray80", size = 1)
+            # One calibration plot for every response type: bin the predictions,
+            # and for each bin show what was actually observed.
+            #
+            # Predicted on the x axis, not observed, because that is the direction
+            # the tool is used in. "Given a plot with 7 species, what does the
+            # model say" is the inverse of anyone's question; "the map reads 3.2
+            # here, what is really there" is the question, and this answers it
+            # directly. It also reframes shrinkage as a usable correction rather
+            # than an alarm: predictions that plateau at 3.2 against observations
+            # running to 10 read as "when it says 3.2, expect about 5".
+            #
+            # Equal-COUNT bins, so every point carries the same standard error and
+            # none is more trustworthy than another. That is also why the points
+            # are not sized: sizing by bin count stretched a range of 1,142 to
+            # 1,143 plots across the full radius scale, turning rounding noise
+            # into apparently dramatic differences. The rug shows where the
+            # predictions actually fall, which is the real density question.
+            discrete_obs <- all(abs(d$obs - round(d$obs)) < 1e-8, na.rm = TRUE)
+            binary_obs   <- all(d$obs %in% c(0, 1))
+
+            # Equal-count bins via explicit quantile breaks, de-duplicated.
+            # cut_number() fails outright when quantiles tie, and many responses
+            # have a large spike of identical predictions -- proportion basal area
+            # is zero wherever the species is absent. Falling back to equal-width
+            # there produced one bin of 77,000 plots and others of 8, which is
+            # what made the tail of the curve fly around.
+            #
+            # Merging tied breaks instead gives one wide bin covering the spike
+            # and equal-count bins across the rest: counts still vary, but by a
+            # factor rather than by four orders of magnitude.
+            calib <- function(x) {
+                  nb <- max(3, min(20, floor(nrow(x) / 200)))
+                  qs <- unique(stats::quantile(x$pred, seq(0, 1, length.out = nb + 1),
+                                               na.rm = TRUE))
+                  x$bin <- if (length(qs) >= 4) cut(x$pred, qs, include.lowest = TRUE)
+                  else cut(x$pred, min(nb, 5))
+                  x %>%
+                        group_by(bin) %>%
+                        summarize(p  = mean(pred),
+                                  o  = mean(obs),
+                                  lo = stats::quantile(obs, 0.25),
+                                  hi = stats::quantile(obs, 0.75),
+                                  n  = dplyr::n(),
+                                  .groups = "drop") %>%
+                        # A mean of a handful of plots is noise dressed as a
+                        # calibration point.
+                        filter(n >= 30)
             }
+
+            f_in  <- d[d$in_scope, , drop = FALSE]
+            f_out <- d[!d$in_scope, , drop = FALSE]
+            b <- calib(f_in)
+
+            shiny::validate(need(nrow(b) >= 3,
+                                 "Not enough spread in the predictions to assess calibration."))
+
+            # Equal-count binning can fail when many predictions tie -- a
+            # presence/absence response has thousands at effectively zero -- in
+            # which case the fallback is equal-width and the counts vary widely.
+            # Report which happened rather than claiming a per-point sample size
+            # that is not true.
+            n_per_bin <- if (diff(range(b$n)) <= 0.02 * stats::median(b$n))
+                  sprintf("~%s plots", format(round(stats::median(b$n)), big.mark = ","))
+            else sprintf("%s-%s plots",
+                         format(min(b$n), big.mark = ","),
+                         format(max(b$n), big.mark = ","))
+
+            p <- ggplot(b, aes(p, o)) +
+                  geom_abline(intercept = 0, slope = 1, linetype = "dashed",
+                              color = "dodgerblue")
+
+            # Raw points for continuous responses only. Their observed values are
+            # spread out, so the cloud shows the joint distribution the bins
+            # summarize; a discrete response would just stack them into stripes.
+            if (!discrete_obs) p <- p +
+                  geom_point(data = f_in, aes(pred, obs), inherit.aes = FALSE,
+                             color = "gray55",
+                             # Floor at 0.12, not 0.03: the low floor was carried
+                             # over from a version where points stacked on top of
+                             # each other and reinforced. Here they are spread
+                             # across a cloud, so each one has to be visible on
+                             # its own.
+                             alpha = max(0.12, min(0.5, 8000 / max(nrow(f_in), 1))),
+                             size = 0.8)
+
+            p <- p +
+                  geom_rug(data = f_in, aes(x = pred), inherit.aes = FALSE,
+                           alpha = max(0.01, min(0.3, 2000 / nrow(f_in))),
+                           sides = "b", color = "gray30")
+
+            # When a scope narrows the evaluation, the same curve for everything
+            # OUTSIDE it goes underneath in gray. That answers the question the
+            # scope selector exists to raise -- is the model as well calibrated
+            # here as it is elsewhere -- which a single curve cannot.
+            if (nrow(f_out) >= 200) {
+                  b_out <- calib(f_out)
+                  if (nrow(b_out) >= 3) p <- p +
+                              geom_line(data = b_out, color = "gray65", linewidth = 0.7)
+            }
+
+            # Interquartile spread of what was observed in each bin, as a band
+            # rather than bars on the points. The point is the MEAN, which for a
+            # skewed response legitimately falls outside the quartiles -- drawn as
+            # bars attached to each point that reads as an error bar that has come
+            # adrift. A band reads as what it is: the spread of outcomes behind
+            # the curve, a separate quantity from the calibration estimate.
+            #
+            # Skipped for presence/absence, where the quartiles of a 0/1 variable
+            # carry nothing the mean does not.
+            if (!binary_obs) p <- p +
+                  geom_ribbon(aes(ymin = lo, ymax = hi), fill = "red", alpha = 0.12)
+
+            p <- p +
+                  geom_line(color = "red", linewidth = 0.9) +
+                  geom_point(color = "red", size = 2.2)
+
+            # sqrt axes tame the skew of abundance variables; on counts of 1-12 or
+            # a probability they buy nothing.
+            if (!discrete_obs) p <- p + scale_x_sqrt() + scale_y_sqrt()
+
             p +
-                  geom_point(data = focus) +
-                  geom_abline(intercept = 0, slope = 1, linetype = "dashed", color = "dodgerblue") +
-                  geom_smooth(data = focus, method = lm, se = F, color = "red", formula = 'y ~ x') +
-                  annotate(geom = "point", color = "red", size = 4,
-                           x = mean(focus$obs), y = mean(focus$pred)) +
-                  scale_x_sqrt() +
-                  scale_y_sqrt() +
                   coord_fixed() +
                   theme_bw() +
-                  labs(x = paste0("observed ", input$fia_var),
-                       y = paste0("predicted ", input$fia_var),
-                       subtitle = if (all(d$in_scope)) s$label
-                       else sprintf("%s \u2014 %d of %d plots",
-                                    s$label, nrow(focus), nrow(d)))
+                  labs(x = paste0("predicted ", eval_response_label()),
+                       y = if (binary_obs) "observed frequency"
+                       else paste0("observed ", eval_response_label()),
+                       subtitle = paste0(
+                             s$label, " \u2014 calibration\n",
+                             n_per_bin, " per point",
+                             if (!binary_obs) "; band is the interquartile range" else "",
+                             if (nrow(f_out) >= 200) "; gray line is everything outside the scope" else ""))
       })
 
       # Held-out accuracy for the current settings, over the selected scope.
@@ -3946,6 +6291,7 @@ server <- function(input, output, session) {
       # section is computed from current settings, so unlike the heatmap it is
       # never stale, and that contrast is the point.
       output$eval_scatter_stats <- renderUI({
+            req(is.null(eval_unsupported()))
             e <- eval_scatter_data()
             s <- eval_scatter_scope()
             req(e, s)
@@ -3979,59 +6325,121 @@ server <- function(input, output, session) {
       output$climate_response <- renderPlot({
             req(display_layer(), clim())
 
-            # cr_v1/cr_v2 track input$clim_vars via an observer; guard against the
-            # brief flush after a climate-variable change where the previous pick
-            # isn't yet in the layer set.
-            req(input$cr_v1 %in% input$clim_vars, input$cr_v2 %in% input$clim_vars)
-
+            req(isTruthy(input$cr_v1), input$cr_v1 %in% display_vars())
             v1 <- input$cr_v1
-            v2 <- input$cr_v2
-            n_groups <- input$cr_n
 
+            cr_scope <- if (isTruthy(input$cr_scope)) input$cr_scope else "domain"
+            scope_set <- switch(cr_scope,
+                                "polygon"  = ,
+                                "buffered" = isTruthy(polygon_upload_active()),
+                                "site"     = !is.null(site$x) && !is.null(site$y),
+                                TRUE)
+            shiny::validate(need(scope_set, eval_scope_missing_msg(cr_scope)))
+            scope_label <- names(eval_scope_names)[eval_scope_names == cr_scope]
 
-            # Climate for the x-axis and grouping variable. Historical by default;
-            # 'future' lets you pair a future prediction with the future climate
-            # that produced it, rather than reading it against current climate.
+            # Climate for the x-axis. Historical by default; 'future' lets you
+            # pair a future prediction with the future climate that produced it,
+            # rather than reading it against current climate.
             use_fut <- isTRUE(input$cr_clim == "future")
 
             if(input$cr_data == "modeled grid cells"){
-                  cr <- if (use_fut) clim()$fut else clim()$hst
-                  d <- rast(c(y = display_layer(),
-                              clim1 = cr[[v1]],
-                              clim2 = cr[[v2]])) %>%
+                  cr <- if (use_fut) cr_grid()$fut else cr_grid()$hst
+                  d <- rast(c(y = display_layer(), clim1 = cr)) %>%
+                        cr_scope_mask() %>%
                         as.data.frame()
             }
 
             if(input$cr_data == "FIA plots"){
-                  # response_values() is the per-plot value for every variable
-                  # (including the pooled-ratio variables, whose pool()$values
-                  # carries occ/num/denom rather than a `response` column). It is
-                  # the raw historical plot observation.
-                  cp <- if (use_fut) pool()$clim_fut else pool()$clim_hst
-                  d <- data.frame(y = response_values(),
-                                  clim1 = cp[[v1]],
-                                  clim2 = cp[[v2]])
+                  # display_values(), not response_values(): in community mode the
+                  # per-plot counterpart of the community measure -- observed
+                  # richness, say -- so this path describes the same quantity the
+                  # grid-cell path does. response_values() would silently plot the
+                  # focal species the entity picker still holds while hidden.
+                  #
+                  # It also covers the pooled-ratio variables, whose pool()$values
+                  # carries occ/num/denom rather than a `response` column.
+                  dv <- display_values()
+                  shiny::validate(need(
+                        !is.null(dv),
+                        "This community measure has no per-plot counterpart. Switch the data to 'modeled grid cells'."))
+                  cv <- cr_plot_values()
+                  req(length(cv) == length(dv))
+                  d <- data.frame(y = dv, clim1 = cv)
+
+                  # Same membership test the evaluation module uses, so "focal
+                  # polygon" selects the same plots in both.
+                  keep <- eval_scope_membership(plot_occ()[, c("x", "y")],
+                                                which = cr_scope)[[cr_scope]]
+                  req(!is.null(keep), length(keep) == nrow(d))
+                  d <- d[keep, , drop = FALSE]
             }
 
             # Climate rasters are stored standardized, so back-convert to native
-            # units (z * sd + mean) before grouping and plotting -- this puts both
-            # the x-axis and the legend's interval labels in mm / degrees C. Falls
-            # back to leaving a variable standardized if it has no scale entry.
+            # units (z * sd + mean) before plotting -- this puts the x-axis in
+            # mm / degrees C. Falls back to leaving a variable standardized if it
+            # has no scale entry.
             back_transform <- function(x, v) {
                   s <- clim_scales[[v]]
                   if (is.null(s) || !is.finite(s$sd)) return(x)
                   x * s$sd + s$mean
             }
             d$clim1 <- back_transform(d$clim1, v1)
-            d$clim2 <- back_transform(d$clim2, v2)
 
-            # Group clim2 into equal-COUNT (quantile) bins rather than equal-width
-            # bins: skewed climate variables leave equal-width tail bins too sparse
-            # (or empty) to fit a smooth, which drops groups from the plot. Fall
-            # back to equal-width if the data can't support n distinct quantiles.
-            if(n_groups > 1) d$group <- tryCatch(cut_number(d$clim2, n_groups),
-                                                 error = function(e) cut(d$clim2, n_groups))
-            if(n_groups == 1) d$group <- "All values"
+            # A categorical layer inverts the plot rather than adapting it. There
+            # is no curve to fit through entity identities, but the question
+            # transposes cleanly: instead of "how does the value change along this
+            # gradient", it becomes "where along this gradient does each entity
+            # win". Horizontal violins answer that -- one distribution of the
+            # climate variable per entity, read down the page.
+            if (categorical_layer()) {
+                  cc <- comm_categories()
+                  d$label <- cc$labels[match(d$y, cc$codes)]
+                  d <- d[!is.na(d$label) & is.finite(d$clim1), , drop = FALSE]
+
+                  shiny::validate(need(nrow(d) > 0,
+                                       "No values to plot for this layer over the current area."))
+
+                  # Ordered by median position along the climate gradient, so the
+                  # violins step across the panel and the axis itself reads as the
+                  # gradient. Frequency order left the entities scattered, which
+                  # made the sequence -- the point of the plot -- something the
+                  # reader had to reconstruct.
+                  #
+                  # Median rather than mean: these distributions are often skewed
+                  # or bimodal for a species spanning two climate zones, and the
+                  # mean can land between the modes, in a range the entity does
+                  # not actually occupy.
+                  #
+                  # "other" stays pinned to the bottom regardless. It is a pooled
+                  # remainder with no meaningful position on the gradient, and
+                  # letting it sort among the entities would imply it had one.
+                  med <- d %>%
+                        filter(label != "other") %>%
+                        group_by(label) %>%
+                        summarize(m = stats::median(clim1, na.rm = TRUE), .groups = "drop") %>%
+                        arrange(m)
+                  lev <- c(if ("other" %in% d$label) "other", as.character(med$label))
+                  d$label <- factor(d$label, levels = lev)
+
+                  p_main <- ggplot(d, aes(clim1, label, fill = label)) +
+                        geom_violin(scale = "width", color = NA) +
+                        # Same entity colors as the map and the composition panel,
+                        # so an entity is recognizable across all of them.
+                        scale_fill_manual(values = stats::setNames(cc$colors, cc$labels),
+                                          guide = "none") +
+                        theme_bw() +
+                        labs(x = paste0(input$cr_clim, " ", v1, " (", unit_lab(v1), ")"),
+                             y = NULL,
+                             subtitle = scope_label,
+                             caption = if (!cr_var_in_model())
+                                   paste0(v1, " is not one of the variables the model was fitted on; this relationship comes from its correlation with those that were."))
+
+                  p_dens <- ggplot(d, aes(clim1)) +
+                        geom_density(fill = "#2b6a4d", color = NA, alpha = .35) +
+                        theme_void()
+
+                  return(p_dens / p_main + plot_layout(heights = c(1, 8)))
+            }
 
             # Smooth on a link scale so fitted curves respect each variable's
             # natural bounds: logit for [0, 1] variables, log for non-negative
@@ -4040,7 +6448,15 @@ server <- function(input, output, session) {
             # integer/proportion warnings. The FIA-plots dataset is the raw
             # historical per-plot variable, so its family depends on the variable
             # alone; only the modeled-grid dataset honors the raster stat and time.
-            bounded01 <- grepl("presence|fraction", input$fia_var) ||
+            # In community mode the plotted quantity is the community measure,
+            # not the per-entity variable: richness and diversity are unbounded
+            # counts however they were built, while evenness, dominance, turnover
+            # and the two change fractions live on [0, 1].
+            bounded01 <- if (multi_mode())
+                  isTruthy(input$comm_measure) &&
+                  input$comm_measure %in% c("evenness", "dominance", "turnover",
+                                            "colonization demand", "loss fraction")
+            else grepl("presence|fraction", input$fia_var) ||
                   input$fia_var == "proportion basal area"
             fam <- if (input$cr_data == "FIA plots") {
                   if (bounded01) quasibinomial() else quasipoisson()
@@ -4064,44 +6480,47 @@ server <- function(input, output, session) {
             # geom_smooth fit itself still uses all the data; only the view is
             # bounded).
             dd <- d[is.finite(d$y) & is.finite(d$clim1), ]
-            fits <- unlist(lapply(split(dd, dd$group), function(g) {
-                  tryCatch(fitted(glm(y ~ splines::ns(clim1, 4), family = fam, data = g)),
-                           error = function(e) numeric(0))
-            }))
-            ylim <- if (length(fits)) range(fits, na.rm = TRUE) else NULL
+            shiny::validate(need(
+                  nrow(dd) > 0,
+                  "No values to plot for this layer over the current area."))
+            fits <- tryCatch(fitted(glm(y ~ splines::ns(clim1, 4), family = fam, data = dd)),
+                             error = function(e) numeric(0))
+            # range() of an all-NA vector returns c(Inf, -Inf), and handing that
+            # to coord_cartesian() blanks the panel with no error -- the plot
+            # renders, the axes render, and nothing is drawn.
+            ylim <- if (length(fits) && any(is.finite(fits)))
+                  range(fits[is.finite(fits)]) else NULL
+            if (!is.null(ylim) && (!all(is.finite(ylim)) || diff(ylim) == 0)) ylim <- NULL
 
-            p_main <- ggplot(d, aes(clim1, y, color = group, fill = group)) +
+            p_main <- ggplot(d, aes(clim1, y)) +
                   geom_smooth(method = "glm",
                               formula = y ~ splines::ns(x, 4),
-                              method.args = list(family = fam)) +
-                  scale_fill_viridis_d() +
-                  scale_color_viridis_d() +
+                              method.args = list(family = fam),
+                              color = "#2b6a4d", fill = "#2b6a4d") +
                   coord_cartesian(ylim = ylim) +
                   # Label the climate axes with their timeframe (so historical vs
                   # future is never ambiguous) and their native units.
                   labs(x = paste0(input$cr_clim, " ", v1, " (", unit_lab(v1), ")"),
-                       fill = paste0(input$cr_clim, "\n", v2, " (", unit_lab(v2), ")"),
-                       color = paste0(input$cr_clim, "\n", v2, " (", unit_lab(v2), ")"),
+                       subtitle = scope_label,
                        # FIA-plots data is raw historical observation, so label it
                        # by the variable rather than the (stat/time-aware) raster title.
-                       y = if (input$cr_data == "FIA plots") paste("observed", input$fia_var)
-                       else gsub("<br/>", " ", raster_title()))
+                       y = if (input$cr_data == "FIA plots")
+                             paste("observed", if (multi_mode()) comm_label() else input$fia_var)
+                       else raster_title_text(),
+                       caption = if (!cr_var_in_model() && input$cr_data != "FIA plots")
+                             paste0(v1, " is not one of the variables the model was fitted on; this relationship comes from its correlation with those that were."))
 
-            # Marginal density of the x variable, split by group. This shows each
-            # clim2 bin's coverage along clim1, which is what explains sparse-tail
-            # extrapolation in the smooths below. It carries its own y-scale, so it
-            # doesn't interact with the fitted-line ylim on the main panel.
-            p_dens <- ggplot(d, aes(clim1, fill = group, color = group)) +
-                  geom_density(alpha = .3, linewidth = .3, position = "stack") +
-                  scale_fill_viridis_d() +
-                  scale_color_viridis_d() +
-                  theme_void() +
-                  theme(legend.position = "none")
+            # Marginal density along the x variable: shows where the data
+            # actually is, which is what explains any wandering at the ends of the
+            # smooth. It carries its own y-scale, so it does not interact with the
+            # fitted-line ylim on the main panel.
+            p_dens <- ggplot(d, aes(clim1)) +
+                  geom_density(fill = "#2b6a4d", color = NA, alpha = .35) +
+                  theme_void()
 
-            # patchwork aligns the two panels on a shared x-axis (both are built
-            # from the same clim1), and collects the single legend from p_main.
-            p_dens / p_main +
-                  plot_layout(heights = c(1, 8), guides = "collect")
+            # patchwork aligns the two panels on a shared x-axis; both are built
+            # from the same clim1.
+            p_dens / p_main + plot_layout(heights = c(1, 8))
       })
 
 
