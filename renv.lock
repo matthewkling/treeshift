@@ -336,6 +336,7 @@
       "Maintainer": "Matthew Kling <mattkling@berkeley.edu>",
       "Description": "Analyze spatial climate change patterns using fast climate analog queries, including analog velocity, analog availability, analog intensity, and analog impact assessment.",
       "License": "MIT + file LICENSE",
+      "Copyright": "Matthew Kling; src/pocketfft_hdronly.h is copyright its authors (see inst/COPYRIGHTS).",
       "Encoding": "UTF-8",
       "LazyData": "true",
       "Roxygen": "list(markdown = TRUE)",
@@ -370,7 +371,7 @@
       "RemoteUsername": "matthewkling",
       "RemoteRepo": "analogs",
       "RemoteRef": "main",
-      "RemoteSha": "6211a7ab617e73258b9ab2a5d185709cefc1fc66"
+      "RemoteSha": "d705b6f90e1358309d8fdf0504d1f36032e2bd6c"
     },
     "askpass": {
       "Package": "askpass",

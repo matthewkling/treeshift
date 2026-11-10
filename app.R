@@ -511,6 +511,119 @@ rast_palettes_continuous  <- c("default", "viridis", "magma", "plasma", "inferno
 rast_palettes_categorical <- c("default", "Polychrome", "Alphabet", "Tableau",
                                "Set 3", "Okabe-Ito")
 
+# Analog impact surfaces --------------------------------------------------------
+#
+# AIM surfaces are computed on plot and cell coordinates in CONUS Albers
+# equal-area (EPSG:5070), in km so the geographic bandwidth keeps its units. The
+# FFT method needs planar coordinates, and planar distance also makes the exact
+# method about 1.5x faster than great-circle distance; over CONUS the two differ
+# by about 1%. Results are written back onto the lon/lat modeling grid.
+aim_crs <- "EPSG:5070"
+
+aim_xy <- function(xy) {
+      p <- terra::project(as.matrix(xy[, c("x", "y")]), "EPSG:4326", aim_crs) / 1000
+      colnames(p) <- c("x", "y")
+      p
+}
+
+aim_kernels <- function(theta_clim, theta_geog) {
+      list(env  = analogs::kernel(max = theta_clim * 3, weight = "gaussian", theta = theta_clim),
+           geog = analogs::kernel(max = theta_geog * 3, weight = "gaussian", theta = theta_geog))
+}
+
+# FFT runs are tiled geographically, so each tile's grid spans only the climates
+# found there. ~300 km tiles were fastest in benchmarks.
+aim_tile_km <- 300
+
+# Which method a run uses: "exact" visits every cell-plot pair, "fft" (binned
+# convolution) costs about the same whatever the grain, and its error is small
+# (99.9th percentile ~0.007 on a 0-1 occurrence scale; identical NA cells). Exact
+# wins at coarse grain or narrow bandwidths, FFT at fine grain and wide ones.
+#
+# The choice must be a deterministic function of the settings, so that the same
+# settings always give the same map -- hence estimated work, not timings. Exact
+# work is the number of cell-plot pairs within the kernel limits, from analog
+# counts at a fixed sample of cells. FFT work is the number of grid nodes, from
+# each tile's extent in geography and climate (nodes are a quarter-bandwidth
+# apart, plus a 3-bandwidth halo), times the number of kernel sums. The
+# coefficients were fitted on runs at 1-10 km over 6-20 degree domains with
+# 1-80 outcome columns; only their ratio matters, so machine speed cancels.
+# One method serves every timeframe of a run, so differences between timeframes
+# never mix methods.
+aim_method <- function(pts_list, index, theta_clim, theta_geog, n_y, n_sums) {
+      env_vars <- setdiff(names(pts_list[[1]]), c("x", "y"))
+      if (length(env_vars) > 3) return("exact")   # FFT supports up to 3
+
+      est <- vapply(pts_list, function(pts) {
+            n <- nrow(pts)
+            probe <- pts[unique(round(seq(1, n, length.out = min(n, 2000)))), , drop = FALSE]
+            count <- suppressWarnings(analogs::analog_search(
+                  x = probe, pool = index, select = "all", stat = "count",
+                  env = analogs::kernel(max = theta_clim * 3),
+                  geog = analogs::kernel(max = theta_geog * 3)))$count
+            pairs <- n * mean(count, na.rm = TRUE)
+
+            spans <- pts %>%
+                  group_by(tx = floor(x / aim_tile_km), ty = floor(y / aim_tile_km)) %>%
+                  summarise(across(everything(), ~ max(.x) - min(.x)), .groups = "drop")
+            nodes_along <- function(span, theta) (span + 6 * theta) / (0.25 * theta) + 1
+            nodes <- sum(nodes_along(spans$x, theta_geog) * nodes_along(spans$y, theta_geog) *
+                         Reduce(`*`, lapply(spans[env_vars], nodes_along, theta = theta_clim)))
+
+            c(exact = 5.0e-6 * n + 4.5e-9 * pairs * (1 + 0.20 * (n_y - 1)),
+              fft   = 1.8e-6 * n + 2.1e-9 * nodes * (1 + 0.42 * n_sums))
+      }, numeric(2))
+      if (sum(est["fft", ]) < sum(est["exact", ])) "fft" else "exact"
+}
+
+# AIM surfaces for several focal rasters (e.g. historical and future climate)
+# against one pool, on each raster's own grid. `pool` is pool()'s list, of which
+# this uses the AIM-coordinate plot table (`aim_pts`) and its index
+# (`aim_index`). Returns a list of SpatRasters named like `focals`, with the
+# layers analog_impact() would give for a raster.
+aim_surfaces <- function(focals, pool, y, theta_clim, theta_geog, stat) {
+      k <- aim_kernels(theta_clim, theta_geog)
+      cells <- lapply(focals, function(r) as.data.frame(r, xy = TRUE, cells = TRUE, na.rm = TRUE))
+      pts <- lapply(cells, function(fd) data.frame(aim_xy(fd), fd[, setdiff(names(fd), c("cell", "x", "y")), drop = FALSE]))
+
+      run <- function(method) lapply(pts, function(p) {
+            if (method == "exact") {
+                  suppressWarnings(analogs::analog_impact(
+                        x = p, pool = pool$aim_index, env = k$env, geog = k$geog,
+                        stat = stat, y = y, coord_type = "projected"))
+            } else {
+                  span <- vapply(p[, c("x", "y")], function(v) diff(range(v)), numeric(1))
+                  suppressWarnings(analogs::tiled_analog_search(
+                        x = p, pool = pool$aim_pts, y = y,
+                        n_tiles = max(1, round(prod(span) / aim_tile_km^2)),
+                        fun = analogs::analog_impact, env = k$env, geog = k$geog,
+                        stat = stat, method = "fft", coord_type = "projected",
+                        progress = FALSE))
+            }
+      })
+
+      # Kernel sums FFT computes: one per outcome column, the weights, and the
+      # squared weights if ess is requested
+      method <- aim_method(pts, pool$aim_index, theta_clim, theta_geog,
+                           n_y = ncol(y), n_sums = ncol(y) + 1 + ("ess" %in% stat))
+      res <- if (method == "fft") tryCatch(run("fft"), error = function(e) {
+            # A tile whose FFT grid exceeds the size limit (narrow bandwidths
+            # over climatically varied ground) sends the whole run to exact,
+            # rather than mixing methods between tiles. Any other error is real.
+            if (!grepl("max_cells", conditionMessage(e))) stop(e)
+            message("AIM: FFT grid too large for a tile; using the exact method")
+            NULL
+      })
+      if (is.null(res)) res <- run("exact")
+
+      Map(function(r, fd, out) {
+            cols <- setdiff(names(out), c("index", "x", "y"))
+            s <- terra::rast(r, nlyrs = length(cols), names = cols, vals = NA)
+            s[fd$cell] <- as.matrix(out[, cols, drop = FALSE])
+            s
+      }, focals, cells, res)
+}
+
 # Ceiling on a community-composition run, in gigabytes of per-entity surface
 # held at once (both timeframes).
 #
@@ -1234,7 +1347,7 @@ ui <- page_sidebar(
                                     tooltip(HTML("How many entities (species or forest types) to model at once.<br><br>
                                                 <dl style='margin:0;'>
                                                     <dt>Single</dt> <dd>Model one focal species, forest type, or group.</dd>
-                                                    <dt>Community composition</dt> <dd>Modeel every entity in the region at once, reducing results to a community-level summary.</dd>
+                                                    <dt>Community composition</dt> <dd>Model every entity in the region at once, reducing results to a community-level summary.</dd>
                                                 </dl>
                                                 The life stage and variable settings apply either way."))
                         ),
@@ -1757,7 +1870,12 @@ ui <- page_sidebar(
                                     "Model evaluation",
                                     helpText("This module uses 'leave-one-out cross validation' to quantify the accuracy of the model's present-day predictions.
                                              Each FIA plot is held out in turn, predicted from the others, and compared against what was actually measured there.
-                                             You can choose the area accuracy is measured over."), hr(),
+                                             The first plot below shows accuracy for the currently-displayed results, while the second section shows how accuracy
+                                             varies over a range of alternative model parameters you could select.
+                                             You can choose the spatial area ('evaluation scope') that accuracy is measured over."),
+                                    br(),
+                                    helpText("Note that these accuracy estimates and optimal parameter recommendations DO NOT apply to future predictions."),
+                                    br(),
 
                                     selectInput("eval_scope", "Evaluation scope",
                                                 choices = eval_scope_names,
@@ -1771,16 +1889,18 @@ ui <- page_sidebar(
                                                        </dl>
                                                        Scopes whose input is not yet set under 'Study area' in the left sidebar will say so when selected.")),
 
-                                    helpText("This first plot compares predictions against what was actually measured, using your current
-                                             settings. Each red point is a group of plots with similar predicted values, placed against what
+                                    hr(),
+
+                                    helpText("This plot compares model predictions against what was actually measured at each plot, using your current
+                                             settings. Each red point is a group of plots with similar predicted values, plotted against what
                                              was really found there. Points on the dashed 1:1 line mean the predictions are unbiased, while
                                              deviations from the 1:1 line indicate bias; the shaded band is the IQR of observed values. Marks along the
-                                             bottom show where the predictions actually fall. When you narrow the spatial scope a gray line
-                                             shows the same curve for everything outside it."), br(),
+                                             bottom show where the predictions actually fall. When you narrow the spatial scope, a gray line
+                                             shows the same curve for plots in the model domain that are outside your scope."), br(),
                                     plotOutput("eval_scatter"),
                                     uiOutput("eval_scatter_stats"), hr(),
 
-                                    helpText("The tool below helps you explore how different parameter values affect predictive accuracy.
+                                    helpText("This tool helps you explore how different parameter values affect predictive accuracy.
                                              For bandwidth parameters, it tests five values bracketing the value selected under 'Analog bandwidths'.
                                              For climate variables, it tests all combinations of the variables selected under 'Climate data'.
                                              The scatterplot above always reflects your current settings; the heatmap below shows the last completed
@@ -2201,7 +2321,7 @@ server <- function(input, output, session) {
       # cutoff-only kernels -- so nothing upstream knows about weighting. It has
       # to be recomputed here.
       #
-      # *** THIS FORMULA MUST MATCH THE KERNELS aim() PASSES TO analog_impact():
+      # *** THIS FORMULA MUST MATCH THE KERNELS IN aim_kernels():
       #     kernel(max = theta * 3, weight = "gaussian", theta = theta)
       # Assumed Gaussian with theta as the standard deviation, and the joint
       # weight the product across the two dimensions. That reading comes from the
@@ -3487,9 +3607,18 @@ server <- function(input, output, session) {
                                  samp_method_cd = plot_occ()$samp_method_cd)
             }
 
+            # The same plots, in the same rows, in AIM coordinates (see
+            # aim_surfaces()), as a table for the FFT method and an index for
+            # the exact one. index_hst/index_fut stay lon/lat for the focal-site
+            # analog search.
+            aim_pts <- data.frame(aim_xy(xy), clim_hst)
+
             list(index_hst = build_analog_index(cbind(xy, clim_hst), coord_type = "lonlat",
                                                 geog_res_adj = 4),
                  index_fut = build_analog_index(cbind(xy, clim_fut), coord_type = "lonlat",
+                                                geog_res_adj = 4),
+                 aim_pts = aim_pts,
+                 aim_index = build_analog_index(aim_pts, coord_type = "projected",
                                                 geog_res_adj = 4),
                  clim_hst = clim_hst,
                  clim_fut = clim_fut,
@@ -3521,16 +3650,6 @@ server <- function(input, output, session) {
             # unread layer on every run.
             y_cols <- setdiff(names(pool()$values), "samp_method_cd")
 
-            aim_query <- function(x){
-                  suppressWarnings(analogs::analog_impact(
-                        x = x,
-                        pool = pool()$index_hst,
-                        env =  analogs::kernel(max = input$theta_clim * 3, weight = "gaussian", theta = input$theta_clim),
-                        geog = analogs::kernel(max = input$theta_geog * 3, weight = "gaussian", theta = input$theta_geog),
-                        stat = c("weighted_mean", weight_stats),
-                        y = pool()$values[, y_cols, drop = FALSE]))
-            }
-
             # analog_impact() names outcome layers `weighted_mean_<column>` when
             # `y` has two or more columns, but bare `weighted_mean` when it has
             # exactly one. Stripping the prefix with gsub() therefore yields
@@ -3547,8 +3666,12 @@ server <- function(input, output, session) {
                   r
             }
 
-            aim_bsl <- name_outcomes(aim_query(clim()$hst))
-            aim_fut <- name_outcomes(aim_query(clim()$fut))
+            surf <- aim_surfaces(list(bsl = clim()$hst, fut = clim()$fut), pool(),
+                                 y = pool()$values[, y_cols, drop = FALSE],
+                                 theta_clim = input$theta_clim, theta_geog = input$theta_geog,
+                                 stat = c("weighted_mean", weight_stats))
+            aim_bsl <- name_outcomes(surf$bsl)
+            aim_fut <- name_outcomes(surf$fut)
 
             # Pooled-ratio surface: ratio-of-means from the weighted_mean layers
             # occ/num/denom, combined into the standard `response` layer so all
@@ -3997,16 +4120,6 @@ server <- function(input, output, session) {
             # filter or rare-entity floor will be built on.
             weight_stats <- "sum_weights"
 
-            aim_query <- function(x){
-                  suppressWarnings(analogs::analog_impact(
-                        x = x,
-                        pool = pool()$index_hst,
-                        env =  analogs::kernel(max = input$theta_clim * 3, weight = "gaussian", theta = input$theta_clim),
-                        geog = analogs::kernel(max = input$theta_geog * 3, weight = "gaussian", theta = input$theta_geog),
-                        stat = c("weighted_mean", weight_stats),
-                        y = y))
-            }
-
             # Same positional rename as aim(): outcome layers are whatever isn't
             # a weight stat, returned in y-column order.
             name_outcomes <- function(r){
@@ -4016,8 +4129,10 @@ server <- function(input, output, session) {
                   r
             }
 
-            list(bsl = name_outcomes(aim_query(clim()$hst)),
-                 fut = name_outcomes(aim_query(clim()$fut)))
+            surf <- aim_surfaces(list(bsl = clim()$hst, fut = clim()$fut), pool(), y = y,
+                                 theta_clim = input$theta_clim, theta_geog = input$theta_geog,
+                                 stat = c("weighted_mean", weight_stats))
+            lapply(surf, name_outcomes)
       })
 
       ## Reduce the per-entity stack to one community surface. Reduction reads
@@ -4723,11 +4838,37 @@ server <- function(input, output, session) {
                   add("climate distance from focal site")
 
             }else if(multi_mode() && input$stat == "FIA variable"){
-                  # comm_label() already carries the life stage, so the
-                  # per-entity variable line would only repeat it.
                   add(focal_label())
                   add(time_label())
                   add(comm_label())
+
+                  # Which per-entity variable the measure was computed FROM.
+                  # Only richness implies it -- richness is defined over
+                  # occurrence and nothing else, and comm_label() already folds
+                  # the life stage into its name. Every other measure can be
+                  # built from any variable, so "diversity" alone names two
+                  # different maps: the diversity of occurrence probabilities and
+                  # the diversity of basal area.
+                  if (!identical(input$comm_measure, "richness"))
+                        add(paste0("of ", tolower(input$fia_var)), dim = TRUE)
+
+                  # The measures that keep the variable's units. Most reduce to a
+                  # dimensionless quantity -- diversity and richness are effective
+                  # entity counts, and evenness, dominance, turnover and the two
+                  # change fractions are ratios in which the units cancel. The
+                  # expected gains and losses are sums of per-entity change, so
+                  # they are still in whatever the variable measures.
+                  if (input$comm_measure %in% c("expected gains", "expected losses"))
+                        add(switch(input$fia_var,
+                                   "total basal area"    = "(ft2 BA / acre)",
+                                   "number of trees"     = "(trees / acre)",
+                                   "number of saplings"  = "(saplings / acre)",
+                                   "number of seedlings" = "(seedlings / acre)",
+                                   # Summed change in occurrence probability is a
+                                   # count of entities, like richness.
+                                   if (identical(input$track, "Species")) "(species)"
+                                   else "(classes)"),
+                            dim = TRUE)
 
             }else{
                   add(focal_label())
@@ -5841,6 +5982,10 @@ server <- function(input, output, session) {
             values <- values[complete]
             stopifnot(nrow(d) == length(values))
 
+            # The CV pool in AIM coordinates, so held-out predictions use the
+            # same distances as the maps. `d` stays lon/lat for scopes and plots.
+            d_aim <- data.frame(aim_xy(d), d[, clim_vars, drop = FALSE])
+
             # Scope membership, aligned with the filtered rows -- and therefore
             # with the rows analog_cv() returns. Computed once per variable set
             # rather than per bandwidth cell, since it depends on neither.
@@ -5879,14 +6024,16 @@ server <- function(input, output, session) {
             # equivalent: AIC is an in-sample criterion and cv_performance()
             # is a held-out CV tool, so `delta AIC` was dropped from the UI.
             eval <- function(theta_clim, theta_geog, summarize = TRUE){
+                  k <- aim_kernels(theta_clim, theta_geog)
                   cv <- suppressWarnings(analogs::analog_cv(
-                        fun       = analogs::analog_impact,
-                        pool      = d,
-                        y         = values,
-                        cv_method = "loo",
-                        env = analogs::kernel(max = theta_clim * 3, weight = "gaussian", theta = theta_clim),
-                        geog = analogs::kernel(max = theta_geog * 3, weight = "gaussian", theta = theta_geog),
-                        stat      = "weighted_mean"))
+                        fun        = analogs::analog_impact,
+                        pool       = d_aim,
+                        y          = values,
+                        cv_method  = "loo",
+                        env        = k$env,
+                        geog       = k$geog,
+                        stat       = "weighted_mean",
+                        coord_type = "projected"))
 
                   if(!summarize){
                         # Scatterplot path: return the cv object itself plus the
@@ -6276,11 +6423,9 @@ server <- function(input, output, session) {
                   labs(x = paste0("predicted ", eval_response_label()),
                        y = if (binary_obs) "observed frequency"
                        else paste0("observed ", eval_response_label()),
-                       subtitle = paste0(
-                             s$label, " \u2014 calibration\n",
-                             n_per_bin, " per point",
-                             if (!binary_obs) "; band is the interquartile range" else "",
-                             if (nrow(f_out) >= 200) "; gray line is everything outside the scope" else ""))
+                       title = paste0(
+                             "Model calibration curve\n(", s$label, "; ",
+                             n_per_bin, " per point)"))
       })
 
       # Held-out accuracy for the current settings, over the selected scope.
