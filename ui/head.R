@@ -19,7 +19,7 @@ ui_head <- function() {
      Pitched between the two extremes it replaced: colored enough to register as
      something to read rather than blending into body text, but without the
      solid fill of an alert box. Most of these report an unmet precondition -- no polygon
-     uploaded, no focal site set -- which is a normal state on the way to using
+     selected, no focal site set -- which is a normal state on the way to using
      the tool, and a full-width warning flag overstates it. */
   .ts-notice,
   .shiny-output-error-validation {

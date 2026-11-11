@@ -493,49 +493,37 @@ ratio_pieces <- reactive({
 
 clim_scales <- readRDS("data/clim_scales.rds")
 
-# Tracks whether the user has clicked Clear after the most recent upload.
-# The Clear button sets this to TRUE; a fresh upload resets it to FALSE.
-# polygon_upload_active() returns input$polygon_upload only when not
-# cleared, so downstream polygon reactives see "no polygon" after Clear
-# without needing to actually reset the fileInput widget.
-polygon_cleared <- reactiveVal(FALSE)
-
-observeEvent(input$polygon_upload, {
-      polygon_cleared(FALSE)
+# The focal polygon is a unit from the boundary library (helpers/boundaries.R),
+# chosen by its stable id. Users cannot upload their own: reading user-supplied
+# files on the server was ruled an IT security risk.
+#
+# polygon_active() is the selected unit id, or NULL when none is selected; it is
+# what the rest of the app tests for "is there a polygon".
+polygon_active <- reactive({
+      if (isTruthy(input$polygon_unit)) input$polygon_unit else NULL
 })
 
 observeEvent(input$polygon_clear, {
-      polygon_cleared(TRUE)
-})
-
-polygon_upload_active <- reactive({
-      if (isTRUE(polygon_cleared())) NULL else input$polygon_upload
+      updateSelectizeInput(session, "polygon_unit", selected = "")
 })
 
 user_polygon <- reactive({
-      req(polygon_upload_active())
-      files <- polygon_upload_active()
-      exts <- tolower(tools::file_ext(files$name))
-
-      tryCatch({
-            if("shp" %in% exts){
-                  tmpdir <- tempfile()
-                  dir.create(tmpdir)
-                  file.copy(files$datapath, file.path(tmpdir, files$name))
-                  shp_path <- file.path(tmpdir, files$name[exts == "shp"])
-                  st_read(shp_path, quiet = TRUE)
-            } else if(any(exts %in% c("kml", "kmz", "gpkg", "geojson"))){
-                  st_read(files$datapath[1], quiet = TRUE)
-            } else {
-                  showNotification("Unsupported file format.", type = "error")
-                  NULL
-            }
-      }, error = function(e){
-            showNotification(paste("Error reading polygon:", conditionMessage(e)), type = "error")
-            NULL
-      }) %>%
-            st_transform(4326)
+      req(polygon_active())
+      boundary_units[boundary_units$id == polygon_active(), ]
 })
+
+# Summaries over the polygon (or its buffer) only see the part inside the model
+# bounding box: the modeled grid and the analog pool are both cut to it. With
+# the library one click away, a polygon entirely outside the box is an ordinary
+# case, so every module says so rather than failing or coming up empty.
+# Geometry, not extent: a polygon's bounding rectangle can touch the box when
+# the polygon itself does not.
+polygon_in_domain <- function(scope = "polygon") {
+      g <- if (identical(scope, "buffered")) user_polygon_buffered() else user_polygon()
+      terra::is.related(terra::vect(g), terra::ext(c(input$bbox_x, input$bbox_y)), "intersects")
+}
+
+polygon_outside_msg <- "The focal polygon is outside the model bounding box. Use 'Snap box to polygon' under 'Study area' to move the box to it."
 
 
 ## focal site

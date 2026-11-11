@@ -131,7 +131,7 @@ cr_plot_values <- reactive({
 ## without adding a color-picker dependency, and `create = TRUE` still
 ## accepts any R color name or hex typed straight in.
 output$polygon_color_ui <- renderUI({
-      req(isTruthy(polygon_upload_active()))
+      req(isTruthy(polygon_active()))
       # isolate: this renderUI CREATES polygon_color, so reading it
       # reactively would rebuild the widget on every change -- resetting
       # the dropdown and stealing focus mid-selection. The read is only to
@@ -168,7 +168,7 @@ cr_scope_mask <- function(r) {
       if (identical(sc, "domain")) return(r)
 
       if (sc %in% c("polygon", "buffered")) {
-            req(isTruthy(polygon_upload_active()))
+            req(isTruthy(polygon_active()))
             pv <- terra::vect(if (identical(sc, "polygon")) user_polygon()
                               else user_polygon_buffered())
             return(terra::mask(terra::crop(r, pv), pv))

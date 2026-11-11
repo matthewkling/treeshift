@@ -81,7 +81,7 @@ output$polygon_density <- renderPlot({
             }
 
             areas <- list("Model bounding box" = na.omit(values(display_layer(), mat = FALSE)))
-            if (isTruthy(polygon_upload_active())) {
+            if (isTruthy(polygon_active())) {
                   areas[["Buffered polygon"]] <- polygon_buffered_raster_values()
                   areas[["Focal polygon"]]    <- polygon_raster_values()
             }
@@ -115,19 +115,27 @@ output$polygon_density <- renderPlot({
                                           breaks = cc$labels, name = NULL) +
                         scale_y_continuous(labels = scales::percent, expand = expansion(0, 0)) +
                         theme_bw() +
-                        theme(axis.text.x = element_text(angle = 20, hjust = 1)) +
+                        theme(axis.text.x = element_text(angle = 20, hjust = 1),
+                              plot.caption = element_text(hjust = 0),
+                              plot.caption.position = "plot") +
                         labs(x = NULL, y = "share of area",
-                             subtitle = raster_title_text())
+                             subtitle = raster_title_text(),
+                             caption = if (isTruthy(polygon_active()) && !polygon_in_domain())
+                                   stringr::str_wrap(polygon_outside_msg, 45))
             )
       }
 
       domain_vals <- na.omit(values(display_layer(), mat = FALSE))
 
-      # Polygon-dependent values: NULL when no polygon is uploaded. The
+      # Polygon-dependent values: NULL when no polygon is selected. The
       # corresponding curves (focal polygon, buffer) are then simply absent
-      # from the plot. Check the upload input directly to avoid
+      # from the plot. Check polygon_active() directly to avoid
       # triggering user_polygon()'s internal req() short-circuit.
-      has_polygon <- isTruthy(polygon_upload_active())
+      has_polygon <- isTruthy(polygon_active())
+      # Outside the box the polygon curve has no values to draw; say why
+      # rather than leaving it silently missing. (Its buffer can still reach
+      # into the box, and is drawn if so.)
+      polygon_outside <- has_polygon && !polygon_in_domain()
       poly_vals   <- if (has_polygon) polygon_raster_values() else NULL
       buffer_vals <- if (has_polygon) polygon_buffered_raster_values() else NULL
 
@@ -255,10 +263,13 @@ output$polygon_density <- renderPlot({
                                breaks = legend_breaks) +
             scale_linetype_manual(values = ltypes,
                                   breaks = legend_breaks) +
-            theme(legend.position = "top") +
+            theme(legend.position = "top",
+                  plot.caption = element_text(hjust = 0),
+                  plot.caption.position = "plot") +
             labs(x = x_lab,
                  y = "cumulative share of area",
-                 color = NULL, linetype = NULL)
+                 color = NULL, linetype = NULL,
+                 caption = if (polygon_outside) stringr::str_wrap(polygon_outside_msg, 45))
 
       # X-axis limits from the active variable's natural bounds. Infinite
       # bounds become NA so ggplot auto-scales that side from data.

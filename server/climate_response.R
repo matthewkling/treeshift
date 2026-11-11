@@ -8,10 +8,13 @@ output$climate_response <- renderPlot({
       cr_scope <- if (isTruthy(input$cr_scope)) input$cr_scope else "domain"
       scope_set <- switch(cr_scope,
                           "polygon"  = ,
-                          "buffered" = isTruthy(polygon_upload_active()),
+                          "buffered" = isTruthy(polygon_active()),
                           "site"     = !is.null(site$x) && !is.null(site$y),
                           TRUE)
       shiny::validate(need(scope_set, eval_scope_missing_msg(cr_scope)))
+      if (cr_scope %in% c("polygon", "buffered")) {
+            shiny::validate(need(polygon_in_domain(cr_scope), polygon_outside_msg))
+      }
       scope_label <- names(eval_scope_names)[eval_scope_names == cr_scope]
 
       # Climate for the x-axis. Historical by default; 'future' lets you

@@ -35,6 +35,11 @@ for (.src in list.files(c("helpers", "ui"), pattern = "[.]R$", full.names = TRUE
 # presence and returns immediately.
 ensure_climate_data()
 
+# The focal-polygon library (see helpers/boundaries.R). Small enough to hold in
+# memory: one row per unit, EPSG:4326.
+ensure_boundaries()
+boundary_units <- st_read("data/boundaries.gpkg", layer = "units", quiet = TRUE)
+
 bbox_res <- 1
 clim_bbox <- as.vector(ext(rast("data/clim_historical.tif")))
 clim_bbox <- c(floor(clim_bbox[c(1, 3)] / bbox_res) * bbox_res, ceiling(clim_bbox[c(2, 4)] / bbox_res) * bbox_res)

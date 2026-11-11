@@ -14,7 +14,7 @@
 #
 # The region over which each delta is summarized is user-controlled
 # (input$model_delta_region): the modeling-domain bbox, the focal site,
-# or the uploaded study-area polygon.
+# or the selected focal polygon.
 #
 # Cost: one raw future-raster read per future file -- the full ensemble,
 # so this is heavy. It is therefore gated behind the "Update chart"
@@ -41,8 +41,8 @@ model_deltas <- reactive({
             shiny::validate(need(!is.null(site$x) && !is.null(site$y),
                                  "Click the map to select a focal site, or choose a different summary region."))
       } else if (region %in% c("polygon", "buffered")) {
-            shiny::validate(need(isTruthy(polygon_upload_active()),
-                                 "Upload a focal polygon, or choose a different summary region."))
+            shiny::validate(need(isTruthy(polygon_active()),
+                                 "Choose a focal polygon under 'Study area', or choose a different summary region."))
       }
 
       # Extract ALL climate variables (not just the current axis pair),
@@ -132,7 +132,7 @@ model_deltas <- reactive({
                 input$bbox_x, input$bbox_y,
                 site$x, site$y,
                 input$theta_geog,
-                polygon_upload_active()) %>%
+                polygon_active()) %>%
       bindEvent(input$model_delta_update)
 
 output$model_delta_plot <- renderPlot({

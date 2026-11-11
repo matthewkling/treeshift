@@ -43,8 +43,8 @@ model_eval <- reactiveValues(comparison = NULL,
 # precondition is also more useful than hiding the option.
 eval_scope_missing_msg <- function(scope){
       switch(scope,
-             "polygon"  = "Upload a focal polygon under 'Study area' in the left sidebar to evaluate over it.",
-             "buffered" = "Upload a focal polygon under 'Study area' in the left sidebar to evaluate over its buffered neighborhood.",
+             "polygon"  = "Choose a focal polygon under 'Study area' in the left sidebar to evaluate over it.",
+             "buffered" = "Choose a focal polygon under 'Study area' in the left sidebar to evaluate over its buffered neighborhood.",
              "site"     = "Click the map to set a focal site, then this scope evaluates the plots within its geographic cutoff.",
              "This evaluation scope is not available.")
 }
@@ -55,8 +55,8 @@ eval_scope_missing_msg <- function(scope){
 # click re-render the heatmap and its warning banner, even under a scope
 # that ignores the site entirely.
 eval_polygon_id <- function(){
-      f <- polygon_upload_active()
-      if (isTruthy(f)) paste(f$name, f$size, collapse = "|") else NA_character_
+      id <- polygon_active()
+      if (isTruthy(id)) id else NA_character_
 }
 eval_site_id <- function(){
       if (is.null(site$x) || is.null(site$y)) NA_character_
@@ -123,11 +123,11 @@ eval_scope_membership <- function(xy, which = unname(eval_scope_names)){
       keep <- list()
       if ("domain" %in% which) keep$domain <- rep(TRUE, nrow(xy))
 
-      # Check the upload input directly rather than calling user_polygon(),
+      # Check polygon_active() directly rather than calling user_polygon(),
       # whose internal req() would silently cancel the whole evaluation
       # when no polygon is loaded. Same guard as polygon_density().
       if (any(c("polygon", "buffered") %in% which) &&
-          isTruthy(polygon_upload_active())) {
+          isTruthy(polygon_active())) {
             pts <- st_as_sf(as.data.frame(xy), coords = c("x", "y"), crs = 4326)
             if ("polygon" %in% which)
                   keep$polygon <- lengths(st_intersects(pts, st_union(user_polygon()))) > 0
@@ -391,12 +391,14 @@ output$eval_heatmap <- renderPlot({
       # is the only one the user can act on immediately.
       scope_set <- switch(input$eval_scope,
                           "polygon"  = ,
-                          "buffered" = isTruthy(polygon_upload_active()),
+                          "buffered" = isTruthy(polygon_active()),
                           "site"     = !is.null(site$x) && !is.null(site$y),
                           TRUE)
       shiny::validate(need(
             nrow(e) > 0,
             if (!scope_set) eval_scope_missing_msg(input$eval_scope)
+            else if (input$eval_scope %in% c("polygon", "buffered") &&
+                     !polygon_in_domain(input$eval_scope)) polygon_outside_msg
             else sprintf("No results for '%s'. Either the last run was done before you chose this area, or fewer than %d plots fall inside it.",
                          scope_label, eval_min_n)))
 
@@ -464,6 +466,9 @@ eval_scatter_scope <- reactive({
       # every plot would label domain-wide results with the selected
       # scope's name, which is worse than showing nothing.
       shiny::validate(need(!is.null(keep), eval_scope_missing_msg(scope)))
+      if (scope %in% c("polygon", "buffered")) {
+            shiny::validate(need(polygon_in_domain(scope), polygon_outside_msg))
+      }
       list(scope = scope,
            label = names(eval_scope_names)[eval_scope_names == scope],
            keep  = keep)

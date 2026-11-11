@@ -80,18 +80,6 @@ output$site_status <- renderUI({
       }
 })
 
-output$polygon_status <- renderUI({
-      f <- polygon_upload_active()
-      if (!isTruthy(f)) {
-            helpText("None uploaded.")
-      } else {
-            # A shapefile arrives as several sibling files; name the layer
-            # rather than listing .dbf / .shx / .prj back at the user.
-            nm <- f$name[tolower(tools::file_ext(f$name)) %in%
-                               c("shp", "kml", "kmz", "gpkg", "geojson")]
-            helpText(if (length(nm)) nm[1] else paste(length(f$name), "files"))
-      }
-})
 
 ## Dynamic snap-to-range button (label reflects focal entity)
 output$snap_focal_btn <- renderUI({
@@ -134,6 +122,15 @@ observeEvent(input$focal_domain, {
       # something to rely on.
       updateSliderInput(session, "bbox_x", value = c(bb$xmin, bb$xmax))
       updateSliderInput(session, "bbox_y", value = c(bb$ymin, bb$ymax))
+})
+
+## Snap domain to the focal polygon. Covers the buffer too, since the buffered
+## summaries need it inside the box; whole degrees, like the species snap.
+observeEvent(input$polygon_snap, {
+      req(user_polygon_buffered())
+      bb <- sf::st_bbox(user_polygon_buffered())
+      updateSliderInput(session, "bbox_x", value = c(floor(bb[["xmin"]]), ceiling(bb[["xmax"]])))
+      updateSliderInput(session, "bbox_y", value = c(floor(bb[["ymin"]]), ceiling(bb[["ymax"]])))
 })
 
 ## Snap domain to current map view
@@ -268,6 +265,6 @@ observe({
                   fillOpacity = 0.1,
                   fillColor = polygon_color(),
                   group = "user_polygon",
-                  label = if(!is.null(poly$Name)) ~Name else NULL
+                  label = ~name
             )
 })

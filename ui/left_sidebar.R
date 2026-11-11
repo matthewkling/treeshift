@@ -299,16 +299,19 @@ ui_panel_study_area <- function() {
             hr(),
 
             tags$strong("Focal polygon"),
-            helpText("A spatial polygon of your area of interest. Optional."),
-            uiOutput("polygon_status"),
-            fileInput("polygon_upload", NULL,
-                      multiple = TRUE,
-                      accept = c(".shp", ".dbf", ".shx", ".prj", ".kml", ".kmz",
-                                 ".gpkg", ".geojson"),
-                      placeholder = "Shapefile, KML, GPKG, or GeoJSON") %>%
-                  tooltip("Upload a polygon layer. For shapefiles, select all component files (.shp, .dbf, .shx, .prj)."),
-            actionButton("polygon_clear", "Clear") %>%
-                  tooltip("Remove the polygon from the map and plots."),
+            helpText("A management unit to summarize results within. Optional."),
+            selectizeInput("polygon_unit", NULL,
+                           choices = c(list("None" = ""), boundary_choices(boundary_units)),
+                           selected = "",
+                           options = list(placeholder = "Search parks, forests, and districts")) %>%
+                  tooltip("Choose a National Park Service unit, national forest or grassland, or Forest Service ranger district. Type to search by name. Boundaries are the agencies' administrative boundaries, which can include private inholdings."),
+            layout_column_wrap(
+                  width = 1/2,
+                  actionButton("polygon_snap", "Snap box to polygon") %>%
+                        tooltip("Set the model bounding box to cover the polygon and its buffer, so summaries over them use the whole area."),
+                  actionButton("polygon_clear", "Clear") %>%
+                        tooltip("Remove the polygon from the map and plots.")
+            ),
 
             hr(),
 
@@ -430,10 +433,8 @@ ui_panel_cartography <- function() {
             uiOutput("site_color_ui"),
             input_switch("show_polygon", "Show focal polygon", TRUE),
 
-            ## Hidden until a polygon exists -- an outline color for
-            ## nothing is just clutter. Rendered server-side rather
-            ## than with a conditionalPanel because the condition is
-            ## "a file has been uploaded", which is not visible to JS.
+            ## Hidden until a polygon is selected -- an outline color
+            ## for nothing is just clutter.
             uiOutput("polygon_color_ui")
       )
 }

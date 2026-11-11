@@ -188,7 +188,8 @@ comm_profile <- reactive({
                                            "mean", na.rm = TRUE)[, 1])
 
             if (scope %in% c("polygon", "buffered")) {
-                  req(isTruthy(polygon_upload_active()))
+                  # comm_profile_ready() explains both conditions to the user
+                  req(isTruthy(polygon_active()), polygon_in_domain(scope))
                   return(mean_over(terra::vect(
                         if (scope == "polygon") user_polygon() else user_polygon_buffered())))
             }
@@ -270,12 +271,14 @@ comm_bands <- reactive({
 comm_profile_ready <- reactive({
       # Most fundamental precondition first: someone in single-entity mode
       # with the scope on "focal polygon" should be told about the entity
-      # setting, not sent off to upload a polygon that would not help.
+      # setting, not sent off to choose a polygon that would not help.
       if (!multi_mode())
             return("This panel doesn't work in single-entity mode. Under 'Entity' in the left sidebar, switch from a single species or type to 'community composition'.")
       scope <- if (isTruthy(input$comm_scope)) input$comm_scope else "domain"
-      if (scope %in% c("polygon", "buffered") && !isTruthy(polygon_upload_active()))
-            return("No focal polygon yet. Upload one under 'Study area' in the left sidebar, or summarize over the whole bounding box instead.")
+      if (scope %in% c("polygon", "buffered") && !isTruthy(polygon_active()))
+            return("No focal polygon yet. Choose one under 'Study area' in the left sidebar, or summarize over the whole bounding box instead.")
+      if (scope %in% c("polygon", "buffered") && !polygon_in_domain(scope))
+            return(polygon_outside_msg)
       if (scope %in% c("site", "cell") && (is.null(site$x) || is.null(site$y)))
             return("No focal site yet. Click anywhere on the map to set one.")
       NULL

@@ -204,7 +204,7 @@ comm_reduce_rows <- function(y, measure) {
 # combinations are made unselectable rather than selectable-and-warned: these
 # are permanent incompatibilities, not preconditions the user could satisfy by
 # supplying something. (Contrast eval_scope, where an unavailable option means
-# "no polygon uploaded yet" and saying so is more useful than hiding it.)
+# "no polygon selected yet" and saying so is more useful than hiding it.)
 comm_measure_choices <- function(track, fia_var, time = "historical") {
       if (!isTruthy(fia_var) || !fia_var %in% multi_vars) return(character(0))
 

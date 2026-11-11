@@ -173,7 +173,7 @@ ui_panel_model_evaluation <- function() {
                   tooltip(HTML("Which held-out plots the accuracy metrics are computed from. The model itself is unchanged.<br><br>
                                                        <dl style='margin:0;'>
                                                            <dt>Model bounding box</dt> <dd>Every plot in the analog pool.</dd>
-                                                           <dt>Focal polygon</dt> <dd>Plots inside the uploaded polygon. Often few; check the reported n.</dd>
+                                                           <dt>Focal polygon</dt> <dd>Plots inside the focal polygon. Often few; check the reported n.</dd>
                                                            <dt>Buffered polygon</dt> <dd>Plots within 3 geographic bandwidths of the polygon &mdash; the neighborhood predictions there are actually drawn from. Usually the better choice for a small unit.</dd>
                                                            <dt>Focal site neighborhood</dt> <dd>Plots within the geographic cutoff of the clicked site.</dd>
                                                        </dl>
@@ -239,7 +239,7 @@ ui_panel_climate_models <- function() {
                               selected = "domain") %>%
                         tooltip("Region over which deltas are summarized. 'Model bounding box'
                                                         averages over the current bounding box; 'Focal site' samples
-                                                        at the clicked site; 'Focal polygon' averages over the uploaded
+                                                        at the clicked site; 'Focal polygon' averages over the selected
                                                         polygon."),
                   div(style = "padding-top: 1.9rem;",
                       actionButton("model_delta_update", "Update chart") %>%

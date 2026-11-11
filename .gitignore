@@ -10,3 +10,5 @@ sandbox
 data/clim_future
 data/clim_historical.tif
 data/wind_quantized.tif
+data/boundaries.gpkg
+CLAUDE.md
