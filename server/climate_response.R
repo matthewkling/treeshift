@@ -136,8 +136,8 @@ output$climate_response <- renderPlot({
             isTruthy(input$comm_measure) &&
             input$comm_measure %in% c("evenness", "dominance", "turnover",
                                       "colonization demand", "loss fraction")
-      else grepl("presence|fraction", input$fia_var) ||
-            input$fia_var == "proportion basal area"
+      else grepl("presence|fraction", model$fia_var) ||
+            model$fia_var == "proportion basal area"
       fam <- if (input$cr_data == "FIA plots") {
             if (bounded01) quasibinomial() else quasipoisson()
       } else if (input$stat == "connectivity" &&
@@ -185,7 +185,7 @@ output$climate_response <- renderPlot({
                  # FIA-plots data is raw historical observation, so label it
                  # by the variable rather than the (stat/time-aware) raster title.
                  y = if (input$cr_data == "FIA plots")
-                       paste("observed", if (multi_mode()) comm_label() else input$fia_var)
+                       paste("observed", if (multi_mode()) comm_label() else model$fia_var)
                  else raster_title_text(),
                  caption = if (!cr_var_in_model() && input$cr_data != "FIA plots")
                        paste0(v1, " is not one of the variables the model was fitted on; this relationship comes from its correlation with those that were."))

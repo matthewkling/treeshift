@@ -12,8 +12,8 @@ output$clim_plot <- renderPlot({
       req(site_analogs())
       a <- site_analogs()
 
-      v1 <- input$clim_vars[1]
-      v2 <- tail(input$clim_vars, 1) # if only one var selected, v2 == v1
+      v1 <- model$clim_vars[1]
+      v2 <- tail(model$clim_vars, 1) # if only one var selected, v2 == v1
       scl1 <- clim_scales[[v1]]
       scl2 <- clim_scales[[v2]]
 
@@ -55,10 +55,10 @@ output$clim_plot <- renderPlot({
 
 
       # search perimeters
-      perims <- rbind(clim_circle(c(s[[v1]], s[[v2]]), input$theta_clim,
+      perims <- rbind(clim_circle(c(s[[v1]], s[[v2]]), model$theta_clim,
                                   c(scl1$mean, scl2$mean), c(scl1$sd, scl2$sd)) %>%
                             mutate(r = "b"),
-                      clim_circle(c(s[[v1]], s[[v2]]), input$theta_clim * 3,
+                      clim_circle(c(s[[v1]], s[[v2]]), model$theta_clim * 3,
                                   c(scl1$mean, scl2$mean), c(scl1$sd, scl2$sd)) %>%
                             mutate(r = "a"))
 
@@ -103,7 +103,7 @@ output$clim_plot <- renderPlot({
                            color = site_color(), alpha = .5)
       }
 
-      if(nrow(filter(d, env_dist <= input$theta_clim * 3)) == 0){
+      if(nrow(filter(d, env_dist <= model$theta_clim * 3)) == 0){
             p <- p +
                   annotate(geom = "text", color = "red",
                            label = "No FIA plots found\nwithin geographic & climatic range\nof focal site",
@@ -141,7 +141,7 @@ output$dist_plot <- renderPlot({
       fs <- analog_fill(d)
       d <- fs$d
 
-      ymax <- if(input$filter_clim) input$theta_clim * 3.3 else NA
+      ymax <- if(input$filter_clim) model$theta_clim * 3.3 else NA
 
       # Both axes here ARE the two distances, so the weight is a function
       # of position and can be drawn as a field. That says what the scheme
@@ -149,7 +149,7 @@ output$dist_plot <- renderPlot({
       # silent when the displayed plots all fall outside the cutoff, which
       # is exactly when someone has turned the filter off to look at them.
       #
-      xmax_g <- input$theta_geog * 3.3
+      xmax_g <- model$theta_geog * 3.3
       ymax_g <- if (is.na(ymax)) max(d$env_dist, na.rm = TRUE) else ymax
       wfield <- expand.grid(
             geog_dist = seq(0, xmax_g, length.out = 140),
@@ -170,11 +170,11 @@ output$dist_plot <- renderPlot({
                         fill = "black", inherit.aes = FALSE) +
             scale_alpha_continuous(range = c(0.05, 0.95), limits = c(0, 1),
                                    guide = "none") +
-            geom_vline(xintercept = input$theta_geog, linetype = "longdash", color = site_color(), alpha = .5) +
-            geom_vline(xintercept = input$theta_geog * 3, color = site_color(), alpha = .5) +
-            geom_hline(yintercept = input$theta_clim, linetype = "longdash", color = site_color(), alpha = .5) +
-            geom_hline(yintercept = input$theta_clim * 3, color = site_color(), alpha = .5) +
-            scale_x_continuous(expand = c(0, 0), limits = c(0, input$theta_geog * 3.3)) +
+            geom_vline(xintercept = model$theta_geog, linetype = "longdash", color = site_color(), alpha = .5) +
+            geom_vline(xintercept = model$theta_geog * 3, color = site_color(), alpha = .5) +
+            geom_hline(yintercept = model$theta_clim, linetype = "longdash", color = site_color(), alpha = .5) +
+            geom_hline(yintercept = model$theta_clim * 3, color = site_color(), alpha = .5) +
+            scale_x_continuous(expand = c(0, 0), limits = c(0, model$theta_geog * 3.3)) +
             scale_y_continuous(expand = c(0, 0), limits = c(0, ymax)) +
 
             geom_point(data = filter(d, samp_method_cd == 2), color = "gray70", size = 1.5) +
@@ -297,5 +297,5 @@ output$comm_composition <- renderPlot({
             theme_bw() +
             theme(panel.grid.major.x = element_blank(),
                   panel.grid.minor = element_blank()) +
-            labs(x = NULL, y = tolower(input$fia_var))
+            labs(x = NULL, y = tolower(model$fia_var))
 })

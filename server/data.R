@@ -7,9 +7,9 @@
 # 1° lon at 50° N ≈ 71 km. Using /100 overestimates the pad by 10–30% at
 # CONUS latitudes, which is harmless.
 pool_bbox <- reactive({
-      pad_deg <- input$theta_geog * 3 / 100
-      list(x = c(input$bbox_x[1] - pad_deg, input$bbox_x[2] + pad_deg),
-           y = c(input$bbox_y[1] - pad_deg, input$bbox_y[2] + pad_deg))
+      pad_deg <- model$theta_geog * 3 / 100
+      list(x = c(model$bbox_x[1] - pad_deg, model$bbox_x[2] + pad_deg),
+           y = c(model$bbox_y[1] - pad_deg, model$bbox_y[2] + pad_deg))
 })
 
 # all plots within padded bbox (the analog pool)
@@ -41,7 +41,7 @@ plot_occ <- reactive({
       fia_plots_species_all() %>%
             filter(between(x, pb$x[1], pb$x[2]),
                    between(y, pb$y[1], pb$y[2])) %>%
-            mutate(focal = species == input$species & !is.na(species)) %>%
+            mutate(focal = species == model$species & !is.na(species)) %>%
             group_by(x, y) %>%
             summarize(
                   samp_method_cd = mean(samp_method_cd),
@@ -91,10 +91,10 @@ plot_occ <- reactive({
 # Computed from the (track, fia_var, focal_id) tuple.
 response_values <- reactive({
       po <- plot_occ()
-      req(isTruthy(input$track), isTruthy(input$fia_var))
+      req(isTruthy(model$track), isTruthy(model$fia_var))
 
-      v <- if (input$track == "Species") {
-            switch(input$fia_var,
+      v <- if (model$track == "Species") {
+            switch(model$fia_var,
                    "presence probability"  = po$pres,
                    "seedling presence"      = po$pres_seed,
                    "sapling presence"       = po$pres_sap,
@@ -106,16 +106,16 @@ response_values <- reactive({
                    "number of seedlings"   = po$nstot,
                    "seedling fraction"      = po$seed_frac,
                    "sapling fraction"       = po$sap_frac)
-      } else if (input$track == "Forest type") {
-            req(isTruthy(input$forest_type))
+      } else if (model$track == "Forest type") {
+            req(isTruthy(model$forest_type))
             as.integer(!is.na(po$forest_type) &
-                             po$forest_type == as.integer(input$forest_type))
-      } else if (input$track == "Forest group") {
-            req(isTruthy(input$forest_group))
+                             po$forest_type == as.integer(model$forest_type))
+      } else if (model$track == "Forest group") {
+            req(isTruthy(model$forest_group))
             as.integer(!is.na(po$forest_group) &
-                             po$forest_group == as.integer(input$forest_group))
-      } else if (input$track == "All trees") {
-            switch(input$fia_var,
+                             po$forest_group == as.integer(model$forest_group))
+      } else if (model$track == "All trees") {
+            switch(model$fia_var,
                    "presence probability" = as.integer((po$ntplot + po$saplot) > 0 | po$nsplot > 0),
                    "seedling presence"    = as.integer(po$nsplot > 0),
                    "sapling presence"     = as.integer(po$saplot > 0),
@@ -164,7 +164,7 @@ display_values <- reactive({
       # as.matrix()'s S4 dispatch as an error rather than a silent cancel.
       # Forcing it here, in this reactive's own frame, keeps a cancellation
       # a cancellation.
-      if (!isTruthy(input$fia_var) || !input$fia_var %in% multi_vars) return(NULL)
+      if (!isTruthy(model$fia_var) || !model$fia_var %in% multi_vars) return(NULL)
       y <- multi_values()
       req(!is.null(y), ncol(y) > 0)
 
@@ -189,7 +189,7 @@ display_values <- reactive({
 
 occupied_values <- reactive({
       po <- plot_occ()
-      req(isTruthy(input$track))
+      req(isTruthy(model$track))
 
       # In All mode "occupied" means any entity is present -- a forested
       # plot -- since there is no focal entity to be occupied by.
@@ -198,23 +198,23 @@ occupied_values <- reactive({
       # multi_values() inside an operator means a failed req() escapes from
       # dispatch as an error rather than cancelling.
       if (multi_mode()) {
-            if (!isTruthy(input$fia_var) || !input$fia_var %in% multi_vars)
+            if (!isTruthy(model$fia_var) || !model$fia_var %in% multi_vars)
                   return(rep(FALSE, nrow(po)))
             y <- multi_values()
             return(rowSums(y > 0, na.rm = TRUE) > 0)
       }
 
-      v <- if (input$track == "Species") {
+      v <- if (model$track == "Species") {
             po$pres
-      } else if (input$track == "Forest type") {
-            req(isTruthy(input$forest_type))
+      } else if (model$track == "Forest type") {
+            req(isTruthy(model$forest_type))
             as.integer(!is.na(po$forest_type) &
-                             po$forest_type == as.integer(input$forest_type))
-      } else if (input$track == "Forest group") {
-            req(isTruthy(input$forest_group))
+                             po$forest_type == as.integer(model$forest_type))
+      } else if (model$track == "Forest group") {
+            req(isTruthy(model$forest_group))
             as.integer(!is.na(po$forest_group) &
-                             po$forest_group == as.integer(input$forest_group))
-      } else if (input$track == "All trees") {
+                             po$forest_group == as.integer(model$forest_group))
+      } else if (model$track == "All trees") {
             as.integer((po$ntplot + po$saplot) > 0 | po$nsplot > 0)
       }
 
@@ -303,8 +303,8 @@ export_points <- reactive({
             entity = focal_label(),
             # The forest-type/group tracks ignore fia_var: their response is
             # membership in the type named by `entity`.
-            variable = if(input$track %in% c("Forest type", "Forest group")) "presence"
-            else input$fia_var,
+            variable = if(model$track %in% c("Forest type", "Forest group")) "presence"
+            else model$fia_var,
             value = pd$display,
             # Focal entity presence, independent of `variable`. Not the same
             # question as value > 0: for the regeneration fractions that
@@ -324,8 +324,8 @@ export_points <- reactive({
             out <- out %>%
                   mutate(climate_distance = pd$env_dist,
                          geographic_distance = pd$geog_dist,
-                         weight = dnorm(pd$env_dist, sd = input$theta_clim) *
-                               dnorm(pd$geog_dist, sd = input$theta_geog))
+                         weight = dnorm(pd$env_dist, sd = model$theta_clim) *
+                               dnorm(pd$geog_dist, sd = model$theta_geog))
       }
 
       out
@@ -352,15 +352,15 @@ export_points <- reactive({
 ## runs FROM plot_occ()'s coordinates) and then asserted on the coordinates
 ## themselves rather than on row counts.
 multi_values <- reactive({
-      req(isTruthy(input$track))
+      req(isTruthy(model$track))
       po <- plot_occ()
       xy <- po[, c("x", "y")]
 
-      if (input$track %in% c("Forest type", "Forest group")) {
+      if (model$track %in% c("Forest type", "Forest group")) {
             # Membership is plot-level -- one type per plot -- so the wide
             # form is an indicator matrix and fia_var does not apply. Same
             # reason response_values() ignores fia_var for these tracks.
-            key <- if (input$track == "Forest type") po$forest_type else po$forest_group
+            key <- if (model$track == "Forest type") po$forest_type else po$forest_group
             lvls <- sort(unique(key[!is.na(key)]))
             req(length(lvls) > 0)
             w <- as.data.frame(
@@ -373,13 +373,13 @@ multi_values <- reactive({
             # downstream -- legend, category table, and any future ranking
             # -- so resolving them here fixes all of those at once rather
             # than translating codes at each display site.
-            nm <- if (input$track == "Forest type") ft_name(as.integer(lvls))
+            nm <- if (model$track == "Forest type") ft_name(as.integer(lvls))
             else fg_name(as.integer(lvls))
-            nm[is.na(nm)] <- paste(input$track, lvls[is.na(nm)])
+            nm[is.na(nm)] <- paste(model$track, lvls[is.na(nm)])
             names(w) <- make.unique(as.character(nm))
 
       } else {
-            req(isTruthy(input$fia_var), input$fia_var %in% multi_vars)
+            req(isTruthy(model$fia_var), model$fia_var %in% multi_vars)
             pb <- pool_bbox()
 
             # Same summaries plot_occ() computes, but grouped by entity as
@@ -405,7 +405,7 @@ multi_values <- reactive({
                         nstot     = sum(n_seedlings),
                         .groups = "drop")
 
-            val_col <- switch(input$fia_var,
+            val_col <- switch(model$fia_var,
                               "presence probability"  = "pres",
                               "seedling presence"     = "pres_seed",
                               "sapling presence"      = "pres_sap",
@@ -434,7 +434,7 @@ multi_values <- reactive({
                                check.names = FALSE)
             w[is.na(w)] <- 0
 
-            if (identical(input$fia_var, "proportion basal area")) {
+            if (identical(model$fia_var, "proportion basal area")) {
                   # Denominator is the plot total across ALL entities, so
                   # it is shared. Plots with no basal area get 0 rather
                   # than NaN, matching plot_occ()'s baprop guard.
@@ -452,7 +452,7 @@ multi_values <- reactive({
 })
 
 ratio_pieces <- reactive({
-      req(isTruthy(input$track), isTruthy(input$fia_var))
+      req(isTruthy(model$track), isTruthy(model$fia_var))
       po <- plot_occ()
       # Regeneration fractions are a fraction of OCCURRENCE weight, not of
       # stem density. Seedlings and saplings are tallied on the microplot
@@ -469,8 +469,8 @@ ratio_pieces <- reactive({
       # focal BA over stand BA, with each stem's own TPA applied to both
       # sides, so it never crosses the microplot/subplot boundary and isn't
       # distorted the way the regen fractions are.
-      if (input$track == "Species") {
-            switch(input$fia_var,
+      if (model$track == "Species") {
+            switch(model$fia_var,
                    "proportion basal area" = list(num = po$batot, denom = po$baplot),
                    "seedling fraction"     = list(num = as.integer(po$nstot > 0),
                                                   denom = as.integer(po$nstot > 0) +
@@ -479,8 +479,8 @@ ratio_pieces <- reactive({
                                                   denom = as.integer(po$satot > 0) +
                                                         as.integer(po$nttot > 0)),
                    NULL)
-      } else if (input$track == "All trees") {
-            switch(input$fia_var,
+      } else if (model$track == "All trees") {
+            switch(model$fia_var,
                    "seedling fraction" = list(num = as.integer(po$nsplot > 0),
                                               denom = as.integer(po$nsplot > 0) +
                                                     as.integer(po$ntplot > 0)),
@@ -533,7 +533,7 @@ user_polygon <- reactive({
 # the polygon itself does not.
 polygon_in_domain <- function(scope = "polygon") {
       g <- if (identical(scope, "buffered")) user_polygon_buffered() else user_polygon()
-      terra::is.related(terra::vect(g), terra::ext(c(input$bbox_x, input$bbox_y)), "intersects")
+      terra::is.related(terra::vect(g), terra::ext(c(model$bbox_x, model$bbox_y)), "intersects")
 }
 
 polygon_outside_msg <- "The focal polygon is outside the model bounding box. Use 'Snap box to polygon' under 'Study area' to move the box to it."

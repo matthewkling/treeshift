@@ -12,34 +12,34 @@ green <- "darkgreen"
 ## try to run a community reduction over a track that is already an
 ## aggregate.
 multi_mode <- reactive({
-      isTruthy(input$entity_scope) && input$entity_scope == "multi" &&
-            isTruthy(input$track) && input$track != "All trees"
+      isTruthy(model$entity_scope) && model$entity_scope == "multi" &&
+            isTruthy(model$track) && model$track != "All trees"
 })
 
 focal_id <- reactive({
       if (multi_mode())
-            return(paste0("all_", tolower(gsub(" ", "_", input$track))))
-      switch(input$track,
-             "Species"      = input$species,
-             "Forest type"  = input$forest_type,
-             "Forest group" = input$forest_group,
+            return(paste0("all_", tolower(gsub(" ", "_", model$track))))
+      switch(model$track,
+             "Species"      = model$species,
+             "Forest type"  = model$forest_type,
+             "Forest group" = model$forest_group,
              "All trees"    = "all_trees")
 })
 
 focal_label <- reactive({
-      if (multi_mode()) return(switch(input$track,
+      if (multi_mode()) return(switch(model$track,
                                       "Species"      = "All species",
                                       "Forest type"  = "All forest types",
                                       "Forest group" = "All forest groups"))
-      switch(input$track,
-             "Species"      = input$species,
+      switch(model$track,
+             "Species"      = model$species,
              "Forest type"  = {
-                   nm <- ft_name(as.integer(input$forest_type))
-                   if (is.na(nm)) paste("Forest type", input$forest_type) else nm
+                   nm <- ft_name(as.integer(model$forest_type))
+                   if (is.na(nm)) paste("Forest type", model$forest_type) else nm
              },
              "Forest group" = {
-                   nm <- fg_name(as.integer(input$forest_group))
-                   if (is.na(nm)) paste("Forest group", input$forest_group) else nm
+                   nm <- fg_name(as.integer(model$forest_group))
+                   if (is.na(nm)) paste("Forest group", model$forest_group) else nm
              },
              "All trees"    = "All trees")
 })
@@ -51,7 +51,7 @@ response_is_binary <- reactive({
       # A community reduction is never binary even though it is built from
       # presence columns: richness is a count.
       if (multi_mode()) return(FALSE)
-      isTruthy(input$fia_var) && grepl("presence", input$fia_var)
+      isTruthy(model$fia_var) && grepl("presence", model$fia_var)
 })
 
 # Sequential color domain c(0, max) for markers/points, robust to the case
@@ -84,7 +84,7 @@ display_bounds <- reactive({
                   c(-Inf, Inf)
             } else if (response_is_binary()) {
                   c(0, 1)
-            } else if (grepl("fraction", input$fia_var)) {
+            } else if (grepl("fraction", model$fia_var)) {
                   c(0, 1)  # regeneration fractions are bounded [0, 1]
             } else {
                   c(0, Inf)
@@ -237,13 +237,13 @@ marker_fill_scale <- function(limits, guide = "none") {
 # constant, the point sizes here are subtly wrong while everything still
 # looks reasonable -- so this is the line to check against the package. ***
 analog_weight <- function(geog_dist, env_dist) {
-      w <- exp(-0.5 * (geog_dist / input$theta_geog)^2) *
-            exp(-0.5 * (env_dist / input$theta_clim)^2)
+      w <- exp(-0.5 * (geog_dist / model$theta_geog)^2) *
+            exp(-0.5 * (env_dist / model$theta_clim)^2)
       # The cutoff is hard, not a tail: kernel(max = theta * 3) drops a
       # plot entirely rather than down-weighting it. Without this a plot
       # just past the cutoff gets exp(-4.5), which is small but not zero,
       # and is drawn as though it still counts for something.
-      w[geog_dist > input$theta_geog * 3 | env_dist > input$theta_clim * 3] <- 0
+      w[geog_dist > model$theta_geog * 3 | env_dist > model$theta_clim * 3] <- 0
       w
 }
 

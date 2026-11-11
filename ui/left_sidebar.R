@@ -10,6 +10,14 @@ ui_left_sidebar <- function(s) {
             open = "always",
             width = 320,
 
+            ## Applies the model settings (server/model_settings.R). Starts
+            ## up to date: the page was built from the settings the model
+            ## runs with.
+            div(class = "ts-update",
+                actionButton("update_model", "Map is up to date", class = "btn-dark w-100",
+                             disabled = TRUE),
+                uiOutput("pending_note")),
+
             accordion(
                   id = "sidebar_acc",
                   open = "FIA variable",

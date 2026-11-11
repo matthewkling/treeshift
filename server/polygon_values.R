@@ -11,11 +11,11 @@
 # Returned in WGS84 to match the user polygon's CRS so map and raster
 # operations are consistent.
 user_polygon_buffered <- reactive({
-      req(user_polygon(), isTruthy(input$theta_geog))
+      req(user_polygon(), isTruthy(model$theta_geog))
       poly <- user_polygon()
       st_transform(poly, .buffer_crs) %>%
             st_union() %>%
-            st_buffer(dist = input$theta_geog * 3 * 1000) %>%   # km -> m
+            st_buffer(dist = model$theta_geog * 3 * 1000) %>%   # km -> m
             st_transform(4326)
 })
 
@@ -27,9 +27,9 @@ user_polygon_buffered <- reactive({
 ## stays readable.
 site_raster_values <- reactive({
       req(!is.null(site$x), !is.null(site$y), display_layer(),
-          isTruthy(input$theta_geog))
+          isTruthy(model$theta_geog))
       b <- terra::buffer(terra::vect(cbind(site$x, site$y), crs = "EPSG:4326"),
-                         width = input$theta_geog * 3 * 1000)
+                         width = model$theta_geog * 3 * 1000)
       terra::extract(display_layer(), b, na.rm = TRUE) %>%
             pull(2) %>%
             na.omit()

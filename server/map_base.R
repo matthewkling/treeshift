@@ -45,9 +45,9 @@ observeEvent(input$site_clear, {
 # Draw focal site whenever relevant inputs change
 observe({
       # Dependencies that should trigger redraw
-      input$bbox_x
-      input$bbox_y
-      input$theta_geog
+      model$bbox_x
+      model$bbox_y
+      model$theta_geog
       input$show_site
       site_color()
       site$x
@@ -57,12 +57,12 @@ observe({
             clearGroup("focal_site")
 
       if(input$show_site && !is.null(site$x)){
-            r1 <- geo_circle(cbind(site$x, site$y), input$theta_geog)
-            r3 <- geo_circle(cbind(site$x, site$y), input$theta_geog * 3)
+            r1 <- geo_circle(cbind(site$x, site$y), model$theta_geog)
+            r3 <- geo_circle(cbind(site$x, site$y), model$theta_geog * 3)
 
             leafletProxy("map") %>%
                   addCircles(lng = site$x, lat = site$y,
-                             radius = input$theta_geog / 10,
+                             radius = model$theta_geog / 10,
                              opacity = 1, fillOpacity = .5, color = site_color(),
                              group = "focal_site") %>%
                   addPolygons(lng = r1[,1], lat = r1[,2],
@@ -128,7 +128,7 @@ time_label <- reactive({
 ## community measure in community mode, the variable otherwise.
 eval_response_label <- reactive({
       if (multi_mode() && isTruthy(input$comm_measure)) comm_label()
-      else tolower(input$fia_var)
+      else tolower(model$fia_var)
 })
 
 ## Display name for the community measure, with the life stage folded in
@@ -136,7 +136,7 @@ eval_response_label <- reactive({
 ## says everything "richness (sapling presence)" said, on one line.
 comm_label <- reactive({
       req(isTruthy(input$comm_measure))
-      stage <- switch(input$fia_var,
+      stage <- switch(model$fia_var,
                       "seedling presence" = "seedling ",
                       "sapling presence"  = "sapling ",
                       "tree presence"     = "adult ",

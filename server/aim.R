@@ -38,7 +38,7 @@ aim <- reactive({
 
       surf <- aim_surfaces(list(bsl = clim()$hst, fut = clim()$fut), pool(),
                            y = pool()$values[, y_cols, drop = FALSE],
-                           theta_clim = input$theta_clim, theta_geog = input$theta_geog,
+                           theta_clim = model$theta_clim, theta_geog = model$theta_geog,
                            stat = c("weighted_mean", weight_stats))
       aim_bsl <- name_outcomes(surf$bsl)
       aim_fut <- name_outcomes(surf$fut)
@@ -65,7 +65,7 @@ aim <- reactive({
       # both read as "the species isn't here", so collapsing them costs
       # little, and the unconditional surface is better behaved.
       if (is_ratio) {
-            conditional <- grepl("fraction", input$fia_var)
+            conditional <- grepl("fraction", model$fia_var)
             combine_ratio <- function(r){
                   resp <- r[["num"]] / r[["denom"]]
                   if (!conditional) resp <- r[["occ"]] * resp
@@ -93,7 +93,7 @@ site_analogs <- reactive({
       hst <- cbind(xy, terra::extract(cp$hst, xy, method = "bilinear"))
       fut <- cbind(xy, terra::extract(cp$fut, xy, method = "bilinear"))
 
-      max_clim <- if(input$filter_clim) input$theta_clim * 3 else NULL
+      max_clim <- if(input$filter_clim) model$theta_clim * 3 else NULL
 
       # Hoist the pool reactive's result so the inner function doesn't
       # shadow it with its `index` argument.
@@ -113,7 +113,7 @@ site_analogs <- reactive({
                   x = x,
                   pool = index,
 
-                  geog = analogs::kernel(max = input$theta_geog * 3),
+                  geog = analogs::kernel(max = model$theta_geog * 3),
                   env  = analogs::kernel(max = max_clim),
                   select = "all",
                   stat = NULL,

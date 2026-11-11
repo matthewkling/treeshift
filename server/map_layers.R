@@ -41,7 +41,7 @@ bounded_ratio_layer <- reactive({
       if (!isTruthy(input$stat) || input$stat != "FIA variable") return(FALSE)
       if (multi_mode()) return(isTruthy(input$comm_measure) &&
                                      input$comm_measure %in% c("evenness", "dominance"))
-      isTruthy(input$fia_var) && grepl("fraction", input$fia_var)
+      isTruthy(model$fia_var) && grepl("fraction", model$fia_var)
 })
 
 ## Layers whose NAs carry meaning -- a support mask or an entity not found
@@ -53,7 +53,7 @@ masked_layer <- reactive({
       if (!isTruthy(input$stat) || input$stat != "FIA variable") return(FALSE)
       if (multi_mode()) return(isTruthy(input$comm_measure) &&
                                      !identical(input$comm_measure, "richness"))
-      isTruthy(input$fia_var) && grepl("fraction", input$fia_var)
+      isTruthy(model$fia_var) && grepl("fraction", model$fia_var)
 })
 
 
@@ -85,7 +85,7 @@ display_layer <- reactive({
             # layer alongside the response; it is the denominator these
             # fractions are conditional on. Mask per timeframe, so a delta
             # is blank wherever either end is unsupported.
-            is_frac <- isTruthy(input$fia_var) && grepl("fraction", input$fia_var)
+            is_frac <- isTruthy(model$fia_var) && grepl("fraction", model$fia_var)
             floor_at <- function(tf) {
                   x <- tf$response
                   if (is_frac && !is.null(tf$occ))
@@ -136,7 +136,7 @@ raster_title <- reactive({
             # different maps: the diversity of occurrence probabilities and
             # the diversity of basal area.
             if (!identical(input$comm_measure, "richness"))
-                  add(paste0("of ", tolower(input$fia_var)), dim = TRUE)
+                  add(paste0("of ", tolower(model$fia_var)), dim = TRUE)
 
             # The measures that keep the variable's units. Most reduce to a
             # dimensionless quantity -- diversity and richness are effective
@@ -145,22 +145,22 @@ raster_title <- reactive({
             # expected gains and losses are sums of per-entity change, so
             # they are still in whatever the variable measures.
             if (input$comm_measure %in% c("expected gains", "expected losses"))
-                  add(switch(input$fia_var,
+                  add(switch(model$fia_var,
                              "total basal area"    = "(ft2 BA / acre)",
                              "number of trees"     = "(trees / acre)",
                              "number of saplings"  = "(saplings / acre)",
                              "number of seedlings" = "(seedlings / acre)",
                              # Summed change in occurrence probability is a
                              # count of entities, like richness.
-                             if (identical(input$track, "Species")) "(species)"
+                             if (identical(model$track, "Species")) "(species)"
                              else "(classes)"),
                       dim = TRUE)
 
       }else{
             add(focal_label())
             add(time_label())
-            add(tolower(input$fia_var))
-            add(switch(input$fia_var,
+            add(tolower(model$fia_var))
+            add(switch(model$fia_var,
                        "total basal area"    = "(ft2 BA / acre)",
                        "number of trees"     = "(trees / acre)",
                        "number of saplings"  = "(saplings / acre)",
@@ -193,7 +193,7 @@ raster_title <- reactive({
       # of whether it was built from occurrence or basal area.
       if (input$stat == "FIA variable" &&
           (multi_mode() ||
-           (isTruthy(input$fia_var) && input$fia_var %in% support_dependent_vars))) {
+           (isTruthy(model$fia_var) && model$fia_var %in% support_dependent_vars))) {
             add("(per ~0.07 ha plot)", dim = TRUE)
       }
 
@@ -452,7 +452,7 @@ observe({
                               # richness, not the per-entity variable.
                               title  = HTML(paste(c("FIA plots: historical",
                                                     if (multi_mode()) paste("observed", comm_label())
-                                                    else input$fia_var,
+                                                    else model$fia_var,
                                                     analog_vector_note()),
                                                   collapse = "<br/>")),
                               labels = legend_labels,
@@ -488,7 +488,7 @@ observe({
             mag <- connectivity()[["current_flow"]]
             mag <- mag / minmax(mag)[2]
             spokes <- make_spokes(mag, connectivity()[["current_direction"]],
-                                  subsample = 11 - input$clim_agg,
+                                  subsample = 11 - model$clim_agg,
                                   arrow_scale = 10^input$vector_scale * .1)
 
             line_pal <- colorNumeric(palette = c("gray90", "black"), domain = sqrt(spokes$lines$mag))

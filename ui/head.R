@@ -94,6 +94,42 @@ ui_head <- function() {
                   font-weight: 600;
               }
       "))
-            )
+            ),
+
+            tags$style(HTML("
+  /* Update map button (server/model_settings.R). Solid dark when settings
+     are waiting to be applied; when the map is up to date it is disabled and
+     drawn as a quiet outline rather than as a faded solid button. */
+  .ts-update { margin-bottom: 0.5rem; }
+  #update_model {
+    /* the header's dark gray; Flatly's own btn-dark is a gray-green */
+    background-color: #212529;
+    border-color: #212529;
+    color: #fff;
+  }
+  #update_model:not(:disabled):hover { background-color: #000; border-color: #000; }
+  #update_model:disabled {
+    background-color: transparent;
+    border-color: #ced4da;
+    color: #6c757d;
+    opacity: 1;
+  }
+  .ts-pending-note {
+    font-size: 0.85rem;
+    color: #495057;
+    margin-top: 0.4rem;
+  }
+
+  /* Wash over the map while settings are pending. Above the legends
+     (Leaflet's controls sit at z-index 1000) so they fade with the layers
+     they describe; clicks pass through to the map. */
+  .ts-map-stale {
+    position: absolute;
+    inset: 0;
+    z-index: 1001;
+    background: rgba(255, 255, 255, 0.65);
+    pointer-events: none;
+  }
+"))
       )
 }

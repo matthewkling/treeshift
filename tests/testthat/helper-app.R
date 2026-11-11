@@ -34,6 +34,12 @@ set_in_order <- function(app, ...) {
       }
 }
 
+# Press Update map, applying the model settings set so far
+apply_settings <- function(app) {
+      app$click("update_model")
+      settle(app)
+}
+
 click_map <- function(app, lon, lat) {
       app$run_js(sprintf("Shiny.setInputValue('map_click', {lng: %s, lat: %s, '.nonce': Math.random()});", lon, lat))
       settle(app)

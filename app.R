@@ -208,7 +208,9 @@ ui <- function(request) {
                                     sidebar = ui_right_sidebar(s),
 
                                     ## MAP ---------------------------------------
-                                    leafletOutput("map", height = "100%")
+                                    div(class = "h-100 position-relative",
+                                        leafletOutput("map", height = "100%"),
+                                        uiOutput("map_pending"))
                               )
                         )
                   )
@@ -226,7 +228,7 @@ ui <- function(request) {
 # this function's environment, in the order below, so the files share reactives
 # exactly as if they were written inline. The order matters: observers run in
 # the order they are created, and some files use objects defined in earlier ones.
-server_files <- c("shared", "url_state", "data", "controls", "climate", "climate_models",
+server_files <- c("shared", "url_state", "model_settings", "data", "controls", "climate", "climate_models",
                   "aim", "connectivity", "map_base", "community", "map_layers",
                   "site_plots", "polygon_values", "evaluation", "climate_response", "downloads")
 

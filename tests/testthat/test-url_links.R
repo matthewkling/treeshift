@@ -16,6 +16,7 @@ check_link <- function(make_settings) {
       a <- open_session(base)
       on.exit(a$stop(), add = TRUE)
       make_settings(a)
+      apply_settings(a)
       query <- address_bar(a)
       b <- open_session(paste0(base, query))
       on.exit(b$stop(), add = TRUE)

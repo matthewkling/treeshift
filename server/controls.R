@@ -37,14 +37,14 @@ observeEvent(list(input$track, input$metric, input$stage), {
 
 ## Seed the climate-model chart's x/y axis variables from the user's
 ## left-sidebar climate-variable selection. Done once, on the first
-## populated value of input$clim_vars, so it provides a sensible default
+## applied value of the climate variables, so it provides a sensible default
 ## (the first two analog variables) without clobbering a deliberate axis
 ## choice the user makes later. The dropdowns still offer all six
 ## variables -- only the initial default tracks the sidebar.
 .model_delta_axes_seeded <- reactiveVal(FALSE)
-observeEvent(input$clim_vars, {
+observeEvent(model$clim_vars, {
       if (isTRUE(.model_delta_axes_seeded())) return()
-      cv <- input$clim_vars
+      cv <- model$clim_vars
       req(length(cv) >= 1)
       vx <- cv[1]
       vy <- if (length(cv) >= 2) cv[2] else cv[1]
@@ -218,7 +218,7 @@ observeEvent(input$highlight_site, {
       updateSelectInput(session, "vector", selected = "focal site analogs")
 
       if(!is.null(site$y)){
-            circle <- geo_circle(cbind(site$x, site$y), input$theta_geog * 3) %>%
+            circle <- geo_circle(cbind(site$x, site$y), model$theta_geog * 3) %>%
                   as.data.frame()
 
             leafletProxy("map") %>%

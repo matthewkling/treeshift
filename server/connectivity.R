@@ -7,9 +7,9 @@ wind <- reactive({
 
 ### Sources and targets ----------
 electrodes <- reactive({
-      if(input$cs_sources == "grid cells"){
+      if(model$cs_sources == "grid cells"){
             sources <- aim()$bsl$response
-      }else if(input$cs_sources == "selected site" && !is.null(site$y)){
+      }else if(model$cs_sources == "selected site" && !is.null(site$y)){
             xy <- matrix(c(site$x, site$y), nrow = 1)
             sources <- aim()$bsl$response
             sources <- rasterize(xy, sources) # * extract(sources, xy)[1,1]
@@ -25,9 +25,9 @@ electrodes <- reactive({
       sources[is.na(sources[])] <- 0
       sources <- sources / global(sources, "sum")$sum
 
-      if(input$cs_targets == "grid cells"){
+      if(model$cs_targets == "grid cells"){
             destinations <- aim()$fut$response
-      }else if(input$cs_targets == "selected site" && !is.null(site$y)){
+      }else if(model$cs_targets == "selected site" && !is.null(site$y)){
             xy <- matrix(c(site$x, site$y), nrow = 1)
             destinations <- aim()$fut$response
             destinations <- rasterize(xy, destinations)
@@ -56,8 +56,8 @@ suitability <- reactive({
 ### Resistance --------------
 resistance <- reactive({
 
-      if(grepl("wind", input$cs_conductance_layer)){
-            if(input$cs_sources == "grid cells"){
+      if(grepl("wind", model$cs_conductance_layer)){
+            if(model$cs_sources == "grid cells"){
                   bearing <- gradient_bearing(electrodes()$destinations)
             }else{
                   # convert points to smooth surface for bearing computations
@@ -68,19 +68,19 @@ resistance <- reactive({
             }
       }
 
-      if(input$cs_conductance_layer == "wind"){
+      if(model$cs_conductance_layer == "wind"){
             conductance <- aligned_flux(bearing, wind())
             # note: consider adding a minimum conductance to account for local diffusion
-      } else if(input$cs_conductance_layer == "suitability") {
+      } else if(model$cs_conductance_layer == "suitability") {
             conductance <- suitability()
-      } else if(input$cs_conductance_layer == "suitability * wind") {
+      } else if(model$cs_conductance_layer == "suitability * wind") {
             conductance <- aligned_flux(bearing, wind()) * suitability()
       } else { # uniform conductance
             # v <- 10^input$cs_conductance
             conductance <- setValues(electrodes()$sources, 1)
       }
 
-      mean_cond <- 10 ^ input$cs_conductance_scale
+      mean_cond <- 10 ^ model$cs_conductance_scale
       conductance <- conductance / global(conductance, "mean", na.rm = T)$mean * mean_cond
       conductance <- setNames(conductance, "conductance")
       resistance <- (1 / (conductance + 1e-3)) %>% setNames("resistance")
@@ -89,15 +89,15 @@ resistance <- reactive({
 
 ### Loss ---------------------
 leakage <- reactive({
-      loss <- switch(input$cs_loss_layer,
+      loss <- switch(model$cs_loss_layer,
                      "none" = setValues(electrodes()$sources, 1e-6),
                      "uniform" = setValues(electrodes()$sources, 1),
                      "mean suitability" = (1 - sqrt(electrodes()$sources * electrodes()$destinations)),
                      "max suitability" = (1 - max(electrodes())),
                      "min suitability" = (1 - min(electrodes()))) %>%
             setNames("loss")
-      mean_loss <- 10 ^ input$cs_loss_scale
-      if(input$cs_loss_layer != "none") loss <- loss / global(loss, "mean", na.rm = T)$mean * mean_loss
+      mean_loss <- 10 ^ model$cs_loss_scale
+      if(model$cs_loss_layer != "none") loss <- loss / global(loss, "mean", na.rm = T)$mean * mean_loss
       loss
 })
 

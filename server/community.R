@@ -25,7 +25,7 @@ comm_run_cost <- reactive({
       # Smallest grain that would fit, so a refusal can say what to do
       # rather than leaving the user to bisect the slider. Cells scale as
       # the inverse square of grain, so gb(g) = gb_now * (agg_now/g)^2.
-      agg <- input$clim_agg
+      agg <- model$clim_agg
       fits <- ceiling(agg / sqrt(comm_max_gb / gb))
       list(entities = n_ent, cells = n_cells, gb = gb, secs = secs,
            # NA when even the coarsest grain the slider offers is not
@@ -64,7 +64,7 @@ multi_aim <- reactive({
       }
 
       surf <- aim_surfaces(list(bsl = clim()$hst, fut = clim()$fut), pool(), y = y,
-                           theta_clim = input$theta_clim, theta_geog = input$theta_geog,
+                           theta_clim = model$theta_clim, theta_geog = model$theta_geog,
                            stat = c("weighted_mean", weight_stats))
       lapply(surf, name_outcomes)
 })
@@ -195,10 +195,10 @@ comm_profile <- reactive({
             }
 
             if (scope == "site") {
-                  req(site$x, site$y, isTruthy(input$theta_geog))
+                  req(site$x, site$y, isTruthy(model$theta_geog))
                   return(mean_over(terra::buffer(
                         terra::vect(cbind(site$x, site$y), crs = "EPSG:4326"),
-                        width = input$theta_geog * 3 * 1000)))
+                        width = model$theta_geog * 3 * 1000)))
             }
 
             as.numeric(terra::global(v, "mean", na.rm = TRUE)[, 1])
@@ -311,7 +311,7 @@ output$comm_scatter <- renderPlot({
             scale_x_sqrt() +
             ggplot2::expand_limits(x = max(d$hst, na.rm = TRUE) * 1.35) +
             theme_bw() +
-            labs(x = paste("historical", tolower(input$fia_var)),
+            labs(x = paste("historical", tolower(model$fia_var)),
                  y = "change",
                  subtitle = names(area_names)[match(
                        if (isTruthy(input$comm_scope)) input$comm_scope else "domain",
@@ -352,7 +352,7 @@ composition_layer <- reactive({
       req(multi_mode(), isTruthy(input$comm_measure))
       if (input$comm_measure %in% categorical_measures)
             return(comm_category_result()$raster)
-      req(input$comm_measure %in% comm_measure_choices(input$track, input$fia_var, input$time))
+      req(input$comm_measure %in% comm_measure_choices(model$track, model$fia_var, input$time))
       m <- multi_aim()
 
       reduce <- function(r){
@@ -531,9 +531,9 @@ composition_layer <- reactive({
 ## keeps the starting value -- a linked support floor in particular.
 support_floor_units <- reactiveVal(
       support_floor_spec(url_multi(link$state), link$state$fia_var, link$state$track)$label)
-observeEvent(list(multi_mode(), input$fia_var, input$track), {
-      req(isTruthy(input$fia_var))
-      sp <- support_floor_spec(multi_mode(), input$fia_var, input$track)
+observeEvent(list(multi_mode(), model$fia_var, model$track), {
+      req(isTruthy(model$fia_var))
+      sp <- support_floor_spec(multi_mode(), model$fia_var, model$track)
       units_changed <- !identical(support_floor_units(), sp$label)
       support_floor_units(sp$label)
       updateNumericInput(session, "support_floor",
@@ -545,9 +545,9 @@ observeEvent(list(multi_mode(), input$fia_var, input$track), {
 ## Invalid combinations are removed from the menu rather than flagged
 ## after selection. observeEvent so the handler's read of
 ## input$comm_measure is isolated and cannot re-trigger its own write.
-observeEvent(list(input$track, input$fia_var, input$time), {
+observeEvent(list(model$track, model$fia_var, input$time), {
       req(multi_mode())
-      ch <- comm_measure_choices(input$track, input$fia_var, input$time)
+      ch <- comm_measure_choices(model$track, model$fia_var, input$time)
       req(length(ch) > 0)
       cur <- if (isTruthy(input$comm_measure)) input$comm_measure else ""
       updateSelectInput(session, "comm_measure", choices = ch,
@@ -642,15 +642,15 @@ output$comm_cost_note <- renderUI({
 ## Only one case remains that the menu cannot express: no measure at all
 ## applies, so there is nothing to select and the reason needs saying.
 output$comm_note <- renderUI({
-      req(multi_mode(), isTruthy(input$fia_var))
-      req(length(comm_measure_choices(input$track, input$fia_var, input$time)) == 0)
+      req(multi_mode(), isTruthy(model$fia_var))
+      req(length(comm_measure_choices(model$track, model$fia_var, input$time)) == 0)
 
-      msg <- if (!input$fia_var %in% multi_vars) {
+      msg <- if (!model$fia_var %in% multi_vars) {
             sprintf("'%s' has no per-entity form yet \u2014 the regeneration fractions are pooled ratios, which need three coupled columns per entity. Choose another variable, or switch back to a single entity.",
-                    input$fia_var)
+                    model$fia_var)
       } else {
             sprintf("Every FIA plot is assigned a single %s, so counting how many occur together at one plot always gives one. Set Timeframe to 'change' for the turnover measures, which compare how the mix of classes shifts over time and do work here.",
-                    tolower(input$track))
+                    tolower(model$track))
       }
       div(class = "ts-notice", msg)
 })

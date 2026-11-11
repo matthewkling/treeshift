@@ -16,12 +16,12 @@
 # Downstream outputs (the map, the focal-site plots, etc.) display the
 # message instead of erroring.
 scenario_file <- reactive({
-      req(isTruthy(input$scenario_ssp),
-          isTruthy(input$scenario_period),
-          isTruthy(input$scenario_model))
-      f <- paste0(input$scenario_ssp, "_",
-                  input$scenario_period, "_",
-                  input$scenario_model, ".tif")
+      req(isTruthy(model$scenario_ssp),
+          isTruthy(model$scenario_period),
+          isTruthy(model$scenario_model))
+      f <- paste0(model$scenario_ssp, "_",
+                  model$scenario_period, "_",
+                  model$scenario_model, ".tif")
       paths <- file.path("data/clim_future", f)
       exists <- file.exists(paths)
 
@@ -31,7 +31,7 @@ scenario_file <- reactive({
                   "Selected scenario combination is not available. Try a different emissions pathway, era, or climate model."
             } else {
                   paste0("No data for these model(s) at the selected pathway/era: ",
-                         paste(toupper(input$scenario_model[!exists]), collapse = ", "),
+                         paste(toupper(model$scenario_model[!exists]), collapse = ", "),
                          ". Deselect them or choose a different pathway/era.")
             }))
       paths
@@ -43,7 +43,7 @@ clim_pool <- reactive({
       # exists on disk) propagates as a clean reactive cancellation
       # rather than an rast() argument-evaluation error.
       sf <- scenario_file()
-      r_hst <- rast("data/clim_historical.tif")[[input$clim_vars]]
+      r_hst <- rast("data/clim_historical.tif")[[model$clim_vars]]
 
       # scenario_file() may return multiple paths (one per selected GCM).
       # Read each, subset to the active climate variables, and average
@@ -52,22 +52,22 @@ clim_pool <- reactive({
       # raster addition is positional. Reduce() (vs. do.call("+", ...))
       # is used so the single-model case is a clean no-op rather than an
       # error from calling `+` with one argument.
-      fut_list <- lapply(sf, function(p) rast(p)[[input$clim_vars]])
+      fut_list <- lapply(sf, function(p) rast(p)[[model$clim_vars]])
       r_fut <- Reduce(`+`, fut_list) / length(fut_list)
-      names(r_fut) <- input$clim_vars   # Reduce()/`+` can drop layer names
+      names(r_fut) <- model$clim_vars   # Reduce()/`+` can drop layer names
 
       list(hst = r_hst, fut = r_fut)
 })
 
 clim <- reactive({
       cp <- clim_pool()
-      bb_ext <- ext(c(input$bbox_x, input$bbox_y))
+      bb_ext <- ext(c(model$bbox_x, model$bbox_y))
       clim_hst <- cp$hst %>%
             crop(bb_ext) %>%
-            aggregate(input$clim_agg, na.rm = TRUE)
+            aggregate(model$clim_agg, na.rm = TRUE)
       clim_fut <- cp$fut %>%
             crop(bb_ext) %>%
-            aggregate(input$clim_agg, na.rm = TRUE)
+            aggregate(model$clim_agg, na.rm = TRUE)
       list(hst = clim_hst, fut = clim_fut)
 })
 
@@ -85,10 +85,10 @@ clim <- reactive({
 cr_grid <- reactive({
       v <- input$cr_v1
       req(isTruthy(v), v %in% display_vars())
-      bb_ext <- ext(c(input$bbox_x, input$bbox_y))
+      bb_ext <- ext(c(model$bbox_x, model$bbox_y))
 
       grid_of <- function(r) r %>% crop(bb_ext) %>%
-            aggregate(input$clim_agg, na.rm = TRUE)
+            aggregate(model$clim_agg, na.rm = TRUE)
 
       if (!is.null(display_extra_vars[[v]])) {
             # A static covariate: the same raster for both timeframes,
@@ -178,7 +178,7 @@ cr_scope_mask <- function(r) {
       # single cell -- one cell would give one point and no relationship.
       req(!is.null(site$x), !is.null(site$y))
       b <- terra::buffer(terra::vect(cbind(site$x, site$y), crs = "EPSG:4326"),
-                         width = input$theta_geog * 3 * 1000)
+                         width = model$theta_geog * 3 * 1000)
       terra::mask(terra::crop(r, b), b)
 }
 
@@ -187,5 +187,5 @@ cr_scope_mask <- function(r) {
 ## than of the model, and the plot says so rather than leaving it to be
 ## inferred.
 cr_var_in_model <- reactive({
-      isTruthy(input$cr_v1) && input$cr_v1 %in% input$clim_vars
+      isTruthy(input$cr_v1) && input$cr_v1 %in% model$clim_vars
 })

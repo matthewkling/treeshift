@@ -13,27 +13,21 @@ if (length(link$problems)) {
             duration = NULL, type = "warning")
 }
 
-# The current settings, as the codec's state
+# The current settings, as the codec's state: the applied model settings
+# (server/model_settings.R) and the current values of everything else. The
+# link and the settings record describe what's on the map, never settings
+# still waiting for the Update button.
 current_state <- reactive({
-      req(input$track, input$metric, input$time)
-      list(track = input$track, entity_scope = input$entity_scope,
-           species = input$species, forest_type = input$forest_type,
-           forest_group = input$forest_group, stage = input$stage,
-           metric = input$metric, fia_var = input$fia_var, time = input$time,
-           comm_measure = input$comm_measure, comm_top_n = input$comm_top_n,
-           support_floor = input$support_floor,
-           clim_agg = input$clim_agg, bbox_x = input$bbox_x, bbox_y = input$bbox_y,
-           polygon_unit = if (is.null(polygon_active())) "" else polygon_active(),
-           site = if (is.null(site$x)) NULL else c(site$x, site$y),
-           clim_vars = input$clim_vars, scenario_ssp = input$scenario_ssp,
-           scenario_period = input$scenario_period, scenario_model = input$scenario_model,
-           theta_geog = input$theta_geog, theta_clim = input$theta_clim,
-           cs_enable = input$cs_enable, cs_sources = input$cs_sources,
-           cs_targets = input$cs_targets, cs_conductance_layer = input$cs_conductance_layer,
-           cs_loss_layer = input$cs_loss_layer, cs_conductance_scale = input$cs_conductance_scale,
-           cs_loss_scale = input$cs_loss_scale,
-           stat = input$stat, cs_stat = input$cs_stat, vector = input$vector,
-           analog_direction = input$analog_direction)
+      req(model$track, model$metric, input$time)
+      c(reactiveValuesToList(model)[model_setting_ids],
+        list(time = input$time,
+             comm_measure = input$comm_measure, comm_top_n = input$comm_top_n,
+             support_floor = input$support_floor,
+             polygon_unit = if (is.null(polygon_active())) "" else polygon_active(),
+             site = if (is.null(site$x)) NULL else c(site$x, site$y),
+             cs_enable = input$cs_enable,
+             stat = input$stat, cs_stat = input$cs_stat, vector = input$vector,
+             analog_direction = input$analog_direction))
 })
 
 # The query string for the current settings. Debounced, so dragging a slider

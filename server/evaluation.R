@@ -18,7 +18,7 @@
 eval_response <- reactive({
       if (!multi_mode()) return(response_values())
       req(identical(input$comm_measure, "richness"))
-      req(isTruthy(input$fia_var), input$fia_var %in% multi_vars)
+      req(isTruthy(model$fia_var), model$fia_var %in% multi_vars)
       comm_reduce_rows(multi_values(), "richness")
 })
 
@@ -65,16 +65,16 @@ eval_site_id <- function(){
 
 # Settings that define the response and the analog pool, for every scope.
 eval_model_stamp <- function(){
-      list(track      = input$track,
+      list(track      = model$track,
            focal      = focal_id(),
            # focal_id() already distinguishes community mode from a single
            # entity, but not which measure is being scored.
            measure    = if (multi_mode()) input$comm_measure else NA_character_,
-           fia_var    = input$fia_var,
-           bbox       = c(input$bbox_x, input$bbox_y),
-           clim_vars  = paste(sort(input$clim_vars), collapse = "_"),
-           theta_clim = input$theta_clim,
-           theta_geog = input$theta_geog)
+           fia_var    = model$fia_var,
+           bbox       = c(model$bbox_x, model$bbox_y),
+           clim_vars  = paste(sort(model$clim_vars), collapse = "_"),
+           theta_clim = model$theta_clim,
+           theta_geog = model$theta_geog)
 }
 
 # Full stamp, recorded when a run completes.
@@ -137,7 +137,7 @@ eval_scope_membership <- function(xy, which = unname(eval_scope_names)){
       if ("site" %in% which && !is.null(site$x) && !is.null(site$y)) {
             dkm <- geosphere::distHaversine(cbind(site$x, site$y),
                                             as.matrix(xy[, c("x", "y")])) / 1000
-            keep$site <- dkm <= input$theta_geog * 3
+            keep$site <- dkm <= model$theta_geog * 3
       }
       keep
 }
@@ -266,14 +266,14 @@ eval_var_set <- function(clim_vars, vary_bandwidths = TRUE){
             mult <- c(.25, .5, 1, 2, 4)
             clim_mult <- if("clim" %in% input$eval_params) mult else 1
             geog_mult <- if("geog" %in% input$eval_params) mult else 1
-            params <- tidyr::expand_grid(theta_clim = input$theta_clim * clim_mult,
-                                         theta_geog = input$theta_geog * geog_mult)
+            params <- tidyr::expand_grid(theta_clim = model$theta_clim * clim_mult,
+                                         theta_geog = model$theta_geog * geog_mult)
 
             e <- purrr::pmap(params, eval) %>%
                   purrr::list_rbind() %>%
                   mutate(clim_vars = paste(clim_vars, collapse = "_"))
       }else{
-            e <- eval(input$theta_clim, input$theta_geog,
+            e <- eval(model$theta_clim, model$theta_geog,
                       summarize = FALSE)
       }
 
@@ -289,12 +289,12 @@ observeEvent(input$run_eval, {
       }
 
       if("vars" %in% input$eval_params){
-            cv <- input$clim_vars
+            cv <- model$clim_vars
             n <- min(input$eval_n_vars[1], length(cv)):min(input$eval_n_vars[2], length(cv))
             v <- lapply(n, function(x) apply(combn(cv, x), 2, list))
             v <- unlist(unlist(v, recursive = F), recursive = F)
       }else{
-            v <- list(input$clim_vars)
+            v <- list(model$clim_vars)
       }
 
       e <- v %>% lapply(eval_var_set) %>% bind_rows()
@@ -361,9 +361,14 @@ observeEvent(input$optimal_params, {
       shiny::validate(need(nrow(opt) > 0,
                            "No results for this area. Re-run the evaluations, or choose a larger area."))
 
-      updateSliderInput(session, "theta_geog", value = opt$theta_geog)
-      updateSliderInput(session, "theta_clim", value = opt$theta_clim)
-      updateSelectizeInput(session, "clim_vars", selected = unlist(strsplit(opt$clim_vars, "_")))
+      # Applied as well as set: choosing optimal parameters asks for them on
+      # the map, so the Update button isn't left to press
+      best <- list(theta_geog = opt$theta_geog, theta_clim = opt$theta_clim,
+                   clim_vars = unlist(strsplit(opt$clim_vars, "_")))
+      updateSliderInput(session, "theta_geog", value = best$theta_geog)
+      updateSliderInput(session, "theta_clim", value = best$theta_clim)
+      updateSelectizeInput(session, "clim_vars", selected = best$clim_vars)
+      apply_model_settings(best)
 })
 
 output$eval_heatmap <- renderPlot({
@@ -451,7 +456,7 @@ output$eval_heatmap <- renderPlot({
 
 
 eval_scatter_data <- reactive({
-      eval_var_set(input$clim_vars, vary_bandwidths = FALSE)
+      eval_var_set(model$clim_vars, vary_bandwidths = FALSE)
 })
 
 # Scope resolution for the single-configuration section. Shared by the

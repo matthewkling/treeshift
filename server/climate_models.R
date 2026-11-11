@@ -59,14 +59,14 @@ model_deltas <- reactive({
       # are offered anyway: a wide buffer around a small polygon can span a
       # real elevation gradient, and a user should not have to learn which
       # module offers which areas.
-      bb_ext <- ext(c(input$bbox_x, input$bbox_y))
+      bb_ext <- ext(c(model$bbox_x, model$bbox_y))
       region_vect <- switch(
             region,
             "polygon"  = terra::vect(st_transform(user_polygon(), crs(hst))),
             "buffered" = terra::vect(st_transform(user_polygon_buffered(), crs(hst))),
             "site"     = terra::buffer(
                   terra::vect(cbind(site$x, site$y), crs = "EPSG:4326"),
-                  width = input$theta_geog * 3 * 1000),
+                  width = model$theta_geog * 3 * 1000),
             NULL)
 
       # Summarize a (future - historical) delta SpatRaster to a named
@@ -129,9 +129,9 @@ model_deltas <- reactive({
       # site neighborhood are both sized by it -- without it, changing the
       # bandwidth would return a cached delta for the old geometry.
       bindCache(input$model_delta_region,
-                input$bbox_x, input$bbox_y,
+                model$bbox_x, model$bbox_y,
                 site$x, site$y,
-                input$theta_geog,
+                model$theta_geog,
                 polygon_active()) %>%
       bindEvent(input$model_delta_update)
 
@@ -164,7 +164,7 @@ output$model_delta_plot <- renderPlot({
       # Selected models (current GCM ensemble) are drawn at full opacity;
       # non-selected trajectories are faded to 0.5 so the active ensemble
       # stands out without needing in-plot text labels.
-      d$selected <- d$model %in% input$scenario_model
+      d$selected <- d$model %in% model$scenario_model
 
       # Shape palette: one glyph per era, generated to fit however many
       # eras exist (filled square / diamond / circle / triangle, then
