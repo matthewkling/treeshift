@@ -300,11 +300,16 @@ ui_panel_study_area <- function() {
 
             tags$strong("Focal polygon"),
             helpText("A management unit to summarize results within. Optional."),
-            selectizeInput("polygon_unit", NULL,
-                           choices = c(list("None" = ""), boundary_choices(boundary_units)),
-                           selected = "",
-                           options = list(placeholder = "Search parks, forests, and districts")) %>%
-                  tooltip("Choose a National Park Service unit, national forest or grassland, or Forest Service ranger district. Type to search by name. Boundaries are the agencies' administrative boundaries, which can include private inholdings."),
+            selectInput("polygon_collection", NULL,
+                        choices = boundary_collections(boundary_units)) %>%
+                  tooltip("The kind of unit to choose from: national park units, national forests and grasslands, ranger districts, BLM field offices, wilderness areas, states, counties, or EPA ecoregions. Changing it clears the current polygon."),
+            # Choices are filled by the server (server/data.R)
+            selectizeInput("polygon_unit", NULL, choices = NULL,
+                           # Room for the whole of the largest collection, plus
+                           # "None", so the list can be browsed without typing
+                           options = list(placeholder = "Search by name",
+                                          maxOptions = max(table(boundary_units$collection)) + 1)) %>%
+                  tooltip("Type to search by name. Agency boundaries are administrative and can include land the agency doesn't manage: private inholdings, and for BLM field offices, all land within the office's area."),
             layout_column_wrap(
                   width = 1/2,
                   actionButton("polygon_snap", "Snap box to polygon") %>%

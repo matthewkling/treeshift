@@ -17,7 +17,8 @@
 #          collection (the selector group), unit_type, state, source
 #   about  one row: library version, build date, and sources
 #
-# Processing: units are fetched in batches, lightly generalized by the server
+# Processing: units are read with read_source() (boundaries_sources.R); from
+# ArcGIS layers they are fetched in batches, lightly generalized by the server
 # (FETCH_OFFSET, a fifth of the simplification tolerance) to keep transfers
 # small. Each unit is then merged to a single (multi)polygon, repaired, and
 # simplified to SIMPLIFY_M in an equal-area projection. FIA plot coordinates
@@ -34,25 +35,23 @@
 library(sf)
 source("data_prep/boundaries_sources.R")
 
-VERSION      <- "boundaries-v1"
+VERSION      <- "boundaries-v1.2"
 SIMPLIFY_M   <- 100
 FETCH_OFFSET <- 0.0002   # degrees, ~20 m
 BATCH        <- 40
 OUT          <- "data/boundaries.gpkg"
 
-# Features for a batch of units from an ArcGIS REST layer, as sf in EPSG:4326.
-# Downloaded to a file first: the Forest Service server resets GDAL's own HTTP
-# requests.
-fetch_batch <- function(src, units) {
-      where <- sprintf("%s IN (%s)", src$key, paste0("'", units, "'", collapse = ","))
-      url <- paste0(src$url, "/query?",
-                    "where=", utils::URLencode(where, reserved = TRUE),
-                    "&outFields=", paste(src$fields, collapse = ","),
-                    "&outSR=4326&maxAllowableOffset=", FETCH_OFFSET, "&f=geojson")
-      tmp <- tempfile(fileext = ".geojson")
-      on.exit(unlink(tmp))
-      utils::download.file(url, tmp, quiet = TRUE, mode = "wb")
-      st_read(tmp, quiet = TRUE)
+# Planar (GEOS) repair, as one MULTIPOLYGON. Repair can return a collection
+# holding stray lines or points; only the polygons are kept.
+repair <- function(geom) {
+      old <- sf_use_s2(FALSE)
+      on.exit(sf_use_s2(old))
+      geom <- st_make_valid(geom)
+      if (any(st_geometry_type(geom) == "GEOMETRYCOLLECTION")) {
+            # Planar on purpose, so sf's note saying so is dropped
+            geom <- suppressMessages(st_union(st_collection_extract(geom, "POLYGON")))
+      }
+      st_cast(geom, "MULTIPOLYGON")
 }
 
 # One unit's features -> one simplified (multi)polygon, with diagnostics
@@ -62,16 +61,12 @@ build_unit <- function(raw) {
             st_make_valid() |>
             st_union() |>
             st_simplify(preserveTopology = TRUE, dTolerance = SIMPLIFY_M) |>
-            st_make_valid()
-      # Repair can return a collection holding stray lines or points; keep
-      # only the polygons
-      if (any(st_geometry_type(geom) == "GEOMETRYCOLLECTION")) {
-            geom <- st_union(st_collection_extract(geom, "POLYGON"))
-      }
-      geom <- st_cast(geom, "MULTIPOLYGON")
+            repair()
       area_raw <- as.numeric(sum(st_area(st_make_valid(st_transform(raw, 5070)))))
       area_new <- as.numeric(st_area(geom))
-      list(geom = st_transform(geom, 4326),
+      # Reprojecting can introduce tiny self-intersections, so repair again
+      # in the library's own coordinates
+      list(geom = repair(st_transform(geom, 4326)),
            simplify_change = area_new / area_raw - 1,
            acres_check = if ("gis_acres" %in% names(raw))
                  area_new / 4046.856 / sum(raw$gis_acres) - 1 else NA_real_,
@@ -85,24 +80,29 @@ built <- list()
 for (s in unique(manifest$source)) {
       src <- boundary_sources[[s]]
       wanted <- manifest$unit[manifest$source == s]
-      batches <- split(wanted, ceiling(seq_along(wanted) / BATCH))
-      raw <- do.call(rbind, lapply(batches, fetch_batch, src = src))
+      raw <- read_source(src, wanted, offset = FETCH_OFFSET, batch = BATCH)
       missing <- setdiff(wanted, raw[[src$key]])
       if (length(missing)) stop(s, ": no features for ", paste(missing, collapse = ", "))
 
-      for (u in wanted) {
+      # Downloads above run one at a time (network calls crash in forked
+      # processes on macOS); building units, the slow part, runs in parallel
+      res <- parallel::mclapply(wanted, function(u) {
             r <- raw[raw[[src$key]] == u, ]
             b <- build_unit(r)
             attrs <- src$standardize(st_drop_geometry(r))[1, ]
-            built[[length(built) + 1]] <- list(
+            list(
                   sf = st_sf(id = paste0(s, ":", u), name = attrs$name,
                              agency = src$agency, collection = src$collection,
                              unit_type = attrs$unit_type, state = attrs$state,
-                             source = src$url, geometry = b$geom),
+                             source = source_location(src), geometry = b$geom),
                   diag = data.frame(source = s, unit = u, name = attrs$name,
                                     simplify_change = b$simplify_change,
                                     acres_check = b$acres_check, vertices = b$vertices))
-      }
+      }, mc.cores = parallel::detectCores() - 2)
+      failed <- !vapply(res, function(r) is.list(r) && !inherits(r, "try-error"), NA)
+      if (any(failed)) stop(s, ": building failed for ", paste(wanted[failed], collapse = ", "), ":\n",
+                            paste(unique(vapply(res[failed], paste, "", collapse = " ")), collapse = "\n"))
+      built <- c(built, res)
       message(sprintf("%-8s %4d units fetched and built", s, length(wanted)))
 }
 
@@ -113,7 +113,13 @@ collections <- vapply(boundary_sources, `[[`, "", "collection")
 units <- units[order(match(units$collection, collections), units$name), ]
 diag <- do.call(rbind, lapply(built, `[[`, "diag"))
 
-stopifnot(!anyDuplicated(units$id), all(st_is_valid(units)), !any(st_is_empty(units)))
+# Valid both as spherical (s2, sf's default for lon/lat) and planar (GEOS, as
+# terra uses them in the app) geometries
+stopifnot(!anyDuplicated(units$id), !any(st_is_empty(units)), all(st_is_valid(units)),
+          all(st_geometry_type(units) == "MULTIPOLYGON"))
+sf_use_s2(FALSE)
+stopifnot(all(st_is_valid(units)))
+sf_use_s2(TRUE)
 message(sprintf("simplification area change: median %+.3f%%, largest %+.2f%% (%s)",
                 100 * median(diag$simplify_change),
                 100 * diag$simplify_change[which.max(abs(diag$simplify_change))],
@@ -131,7 +137,7 @@ about <- data.frame(
       built = format(Sys.Date()),
       simplify_m = SIMPLIFY_M,
       sources = paste(sprintf("%s: %s (retrieved %s)", names(boundary_sources),
-                              vapply(boundary_sources, `[[`, "", "url"), Sys.Date()),
+                              vapply(boundary_sources, source_location, ""), Sys.Date()),
                       collapse = "; ")
 )
 

@@ -507,6 +507,16 @@ observeEvent(input$polygon_clear, {
       updateSelectizeInput(session, "polygon_unit", selected = "")
 })
 
+# The unit list shows one collection at a time, filled from here, including at
+# startup. It is searched server-side: collections run to thousands of units
+# (counties). Switching collections clears the polygon, so the selector never
+# shows a different unit than the map.
+observeEvent(input$polygon_collection, {
+      updateSelectizeInput(session, "polygon_unit",
+                           choices = boundary_choices(boundary_units, input$polygon_collection),
+                           selected = "", server = TRUE)
+})
+
 user_polygon <- reactive({
       req(polygon_active())
       boundary_units[boundary_units$id == polygon_active(), ]

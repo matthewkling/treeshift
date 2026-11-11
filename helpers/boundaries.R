@@ -7,32 +7,40 @@
 # differs (an older build) is replaced, so bumping the tag here is all it takes
 # to roll a rebuilt library out to existing installs.
 ensure_boundaries <- function(repo = "matthewkling/treeshift",
-                              tag  = "boundaries-v1",
+                              tag  = "boundaries-v1.2",
                               path = "data/boundaries.gpkg") {
-      if (file.exists(path)) {
-            version <- tryCatch(sf::st_read(path, layer = "about", quiet = TRUE)$version,
-                                error = function(e) NA_character_)
-            if (identical(version, tag)) return(invisible(FALSE))
+      version <- function() {
+            if (!file.exists(path)) return(NA_character_)
+            tryCatch(sf::st_read(path, layer = "about", quiet = TRUE)$version,
+                     error = function(e) NA_character_)
       }
+      if (identical(version(), tag)) return(invisible(FALSE))
 
       message("Boundary library missing or out of date; downloading ", tag, " from ", repo, ".")
       if (!requireNamespace("piggyback", quietly = TRUE)) {
             stop("Package 'piggyback' is required to fetch the boundary library. ",
                  "Install it with install.packages('piggyback').")
       }
+      # By default piggyback skips the download when the local file is newer
+      # than the release asset, which would keep an outdated library copied
+      # in after the release was made
       piggyback::pb_download(basename(path), repo = repo, tag = tag,
-                             dest = dirname(path), overwrite = TRUE)
-      if (!file.exists(path)) {
-            stop("Boundary library download failed: ", basename(path), " not found on release '",
-                 tag, "' of ", repo, ".")
+                             dest = dirname(path), overwrite = TRUE, use_timestamps = FALSE)
+      if (!identical(version(), tag)) {
+            stop("Boundary library download failed: ", basename(path), " for release '",
+                 tag, "' of ", repo, " is missing or has the wrong version.")
       }
       invisible(TRUE)
 }
 
-# Selectize choices for the library: unit names, grouped by collection in the
-# order the library lists them (see boundaries_prep.R), with the stable unit id
-# as the value.
-boundary_choices <- function(units) {
-      groups <- factor(units$collection, levels = unique(units$collection))
-      lapply(split(units, groups), function(u) stats::setNames(u$id, u$name))
+# The selector picks a collection (the kind of unit) first, then a unit within
+# it. Collections are in the order the library lists them (see
+# boundaries_prep.R).
+boundary_collections <- function(units) unique(units$collection)
+
+# Unit choices within one collection: names, with the stable unit id as the
+# value, after a "None" entry
+boundary_choices <- function(units, collection) {
+      u <- units[units$collection == collection, ]
+      c("None" = "", stats::setNames(u$id, u$name))
 }
