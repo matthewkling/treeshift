@@ -527,7 +527,10 @@ composition_layer <- reactive({
 ## set, while moving from expected species to ft2/acre resets, because
 ## carrying a threshold of 1 across that boundary would mean something
 ## entirely different. Passing value = NULL leaves the field alone.
-support_floor_units <- reactiveVal(NULL)
+## Starts at the units of the settings the page opened with, so the first run
+## keeps the starting value -- a linked support floor in particular.
+support_floor_units <- reactiveVal(
+      support_floor_spec(url_multi(link$state), link$state$fia_var, link$state$track)$label)
 observeEvent(list(multi_mode(), input$fia_var, input$track), {
       req(isTruthy(input$fia_var))
       sp <- support_floor_spec(multi_mode(), input$fia_var, input$track)

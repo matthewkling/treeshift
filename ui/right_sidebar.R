@@ -1,6 +1,9 @@
 # Right sidebar: analysis panels that summarize the mapped result.
+#
+# `s` is the starting state, as for the left sidebar. Only the settings the
+# link carries come from it: connectivity and the analog direction.
 
-ui_right_sidebar <- function() {
+ui_right_sidebar <- function(s) {
       sidebar(
             # title = "Focal site analogs",
             width = "40%",
@@ -16,8 +19,8 @@ ui_right_sidebar <- function() {
                   ui_panel_climate_relationships(),
                   ui_panel_model_evaluation(),
                   ui_panel_climate_models(),
-                  ui_panel_connectivity(),
-                  ui_panel_focal_site_analogs()
+                  ui_panel_connectivity(s),
+                  ui_panel_focal_site_analogs(s)
             )
 
       )
@@ -261,7 +264,7 @@ ui_panel_climate_models <- function() {
       )
 }
 
-ui_panel_connectivity <- function() {
+ui_panel_connectivity <- function(s) {
       accordion_panel(
             "Landscape connectivity",
             helpText("This module lets you model circuit-based landscape connectivity between historical (source) and future (target) FIA surfaces.
@@ -272,30 +275,36 @@ ui_panel_connectivity <- function() {
             uiOutput("cs_note"),
             conditionalPanel(
                   condition = "input.track == 'All trees' || input.entity_scope != 'multi'",
-                  input_switch("cs_enable", "Enable connectivity", FALSE) %>%
+                  input_switch("cs_enable", "Enable connectivity", s$cs_enable) %>%
                         tooltip("Adds the connectivity raster and current animation/field vector layers
                                                         to the 'Map layers' menus in the left sidebar.")
             ),
             conditionalPanel(
                   condition = "input.cs_enable && (input.track == 'All trees' || input.entity_scope != 'multi')",
-                  selectInput("cs_sources", "Origin electrodes (sources)", c("grid cells", "FIA plots", "selected site")) %>%
+                  selectInput("cs_sources", "Origin electrodes (sources)", c("grid cells", "FIA plots", "selected site"),
+                              selected = s$cs_sources) %>%
                         tooltip("Sites where current is injected. If `grid cells` or `FIA plots` is selected, current is injected
                                             in proportion to modeled or observed (respectively) values of the selected FIA variable.
                                             If `selected site` is chosen, current is injected only at the focal site."),
-                  selectInput("cs_targets", "Destination electrodes (target grounds)", c("grid cells", "FIA plots", "selected site")) %>%
+                  selectInput("cs_targets", "Destination electrodes (target grounds)", c("grid cells", "FIA plots", "selected site"),
+                              selected = s$cs_targets) %>%
                         tooltip("Grounding sites that 'pull' current and allow it to exit the circuit.
                                             If `grid cells` or `FIA plots` is selected, ground conductance is proportional to modeled values
                                             of the selected FIA variable. If `selected site` is chosen, the focal site."),
-                  selectInput("cs_conductance_layer", "Horizontal conductance", c("suitability", "wind", "suitability * wind", "uniform")) %>%
+                  selectInput("cs_conductance_layer", "Horizontal conductance", c("suitability", "wind", "suitability * wind", "uniform"),
+                              selected = s$cs_conductance_layer) %>%
                         tooltip("The inverse of landscape resistance, horizontal conductance determines how easily current can flow across a site.
                                             `Suitability` models conductance proportional to the mean of historical and future FIA raster values.
                                             `Wind` models conductance proportional to the frequency and speed with which wind blows toward targets."),
-                  selectInput("cs_loss_layer", "Loss (non-target grounds)", c("none", "uniform", "suitability" = "mean suitability")) %>%
+                  selectInput("cs_loss_layer", "Loss (non-target grounds)", c("none", "uniform", "suitability" = "mean suitability"),
+                              selected = s$cs_loss_layer) %>%
                         tooltip("Choose whether and how to model current 'leakage' representing dispersers that are removed from the pool
                                             (via mortality or permanent settlement) before reaching target grounds."),
-                  sliderInput("cs_conductance_scale", "log10 conductance scale", -2, 2, value = 0, step = .1) %>%
+                  sliderInput("cs_conductance_scale", "log10 conductance scale", url_bounds$cs_conductance_scale[1],
+                              url_bounds$cs_conductance_scale[2], value = s$cs_conductance_scale, step = .1) %>%
                         tooltip("Relative strength of horizontal conductance, compared to source, target, and loss components."),
-                  sliderInput("cs_loss_scale", "log10 loss scale", -3, 2, value = -1, step = .1) %>%
+                  sliderInput("cs_loss_scale", "log10 loss scale", url_bounds$cs_loss_scale[1],
+                              url_bounds$cs_loss_scale[2], value = s$cs_loss_scale, step = .1) %>%
                         tooltip("Relative strength of loss conductance, compared to source, target, and horizontal components.
                                                         Ignored if loss is set to 'none.'")
             )
@@ -324,7 +333,7 @@ ui_panel_connectivity <- function() {
       ## whichever species is selected -- so only the
       ## point coloring is entity-specific, and it follows
       ## display_values() like the map markers do.
-ui_panel_focal_site_analogs <- function() {
+ui_panel_focal_site_analogs <- function(s) {
       accordion_panel(
             "Focal site analogs",
             helpText(
@@ -343,7 +352,8 @@ ui_panel_focal_site_analogs <- function() {
                                           itself."), hr(),
             layout_column_wrap(
                   width = 1/2,
-                  selectInput("analog_direction", NULL, c("Contemporary analogs", "Reverse analogs", "Forward analogs")) %>%
+                  selectInput("analog_direction", NULL, c("Contemporary analogs", "Reverse analogs", "Forward analogs"),
+                              selected = s$analog_direction) %>%
                         tooltip(HTML("Which climates are being matched:
                                                 <ul>
                                                     <li>Contemporary: plots whose present climate resembles the site's present climate. This is what the historical prediction is built from.</li>

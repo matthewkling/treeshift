@@ -38,6 +38,11 @@ ensure_boundaries <- function(repo = "matthewkling/treeshift",
 # boundaries_prep.R).
 boundary_collections <- function(units) unique(units$collection)
 
+# The collection a unit id belongs to; the first collection for no unit ("")
+boundary_collection_of <- function(units, id) {
+      if (nzchar(id) && id %in% units$id) units$collection[units$id == id] else boundary_collections(units)[1]
+}
+
 # Unit choices within one collection: names, with the stable unit id as the
 # value, after a "None" entry
 boundary_choices <- function(units, collection) {

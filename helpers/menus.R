@@ -20,3 +20,25 @@ vector_choices_base <- c("occupied FIA plots", "all FIA plots", "focal site anal
                          "none")
 vector_choices_cs   <- c("occupied FIA plots", "all FIA plots", "focal site analogs",
                          "current animation", "current field", "none")
+
+# Single-or-community choices. Only the labels follow the track ("single
+# species" vs "single forest type"); the values stay single/multi. All trees
+# has no such choice (its menu is hidden), so it gets the species labels.
+entity_scope_choices <- function(track) {
+      one <- switch(track,
+                    "Forest type"  = "single forest type",
+                    "Forest group" = "single forest group",
+                    "single species")
+      stats::setNames(c("single", "multi"), c(one, "community composition"))
+}
+
+# Entity and life-stage menus (labels shown, values used throughout the
+# server). Shared by the UI and the settings record.
+track_choices <- c("species"      = "Species",
+                   "forest type"  = "Forest type",
+                   "forest group" = "Forest group",
+                   "all trees"    = "All trees")
+stage_choices <- c("seedlings only"  = "seedling",
+                   "saplings only"   = "sapling",
+                   "adults only"     = "adult",
+                   "all life stages" = "any")

@@ -1,6 +1,11 @@
 # Left sidebar: model and map settings, one accordion panel per group.
+#
+# `s` is the starting state (helpers/url_state.R): the app defaults, or the
+# settings in the link the app was opened with. Initial values and dependent
+# menus are built from it, so a linked page opens already consistent rather
+# than starting at defaults and being updated into place.
 
-ui_left_sidebar <- function() {
+ui_left_sidebar <- function(s) {
       sidebar(
             open = "always",
             width = 320,
@@ -11,11 +16,11 @@ ui_left_sidebar <- function() {
                   multiple = FALSE,
 
                   ui_panel_info(),
-                  ui_panel_fia_variable(),
-                  ui_panel_study_area(),
-                  ui_panel_climate_data(),
-                  ui_panel_interpolation(),
-                  ui_panel_map_layers(),
+                  ui_panel_fia_variable(s),
+                  ui_panel_study_area(s),
+                  ui_panel_climate_data(s),
+                  ui_panel_interpolation(s),
+                  ui_panel_map_layers(s),
                   ui_panel_cartography(),
                   ui_panel_export()
             )
@@ -40,18 +45,15 @@ ui_panel_info <- function() {
       )
 }
 
-ui_panel_fia_variable <- function() {
+ui_panel_fia_variable <- function(s) {
       accordion_panel(
             "FIA variable",
             ## Labels lowercased to match the other parameter menus;
             ## values are unchanged, since switch() statements
             ## throughout the server match on them.
             selectInput("track", "Entity",
-                        choices = c("species"      = "Species",
-                                    "forest type"  = "Forest type",
-                                    "forest group" = "Forest group",
-                                    "all trees"    = "All trees"),
-                        selected = "Species") %>%
+                        choices = track_choices,
+                        selected = s$track) %>%
                   tooltip(HTML("Choose the focal entity for the model.<br><br>
                                           <dl style='margin:0;'>
                                               <dt>Species</dt> <dd>Model the presence or abundance of a single focal tree species.</dd>
@@ -73,9 +75,8 @@ ui_panel_fia_variable <- function() {
             conditionalPanel(
                   condition = "input.track != 'All trees'",
                   selectInput("entity_scope", NULL,
-                              choices = c("single species" = "single",
-                                          "community composition" = "multi"),
-                              selected = "single") %>%
+                              choices = entity_scope_choices(s$track),
+                              selected = s$entity_scope) %>%
                         tooltip(HTML("How many entities (species or forest types) to model at once.<br><br>
                                                 <dl style='margin:0;'>
                                                     <dt>Single</dt> <dd>Model one focal species, forest type, or group.</dd>
@@ -85,21 +86,21 @@ ui_panel_fia_variable <- function() {
             ),
             conditionalPanel(
                   condition = "input.track == 'Species' && input.entity_scope != 'multi'",
-                  selectizeInput("species", NULL, choices = spp, selected = "Pinus edulis") %>%
+                  selectizeInput("species", NULL, choices = spp, selected = s$species) %>%
                         tooltip("Select a focal species by scrolling or typing")
             ),
             conditionalPanel(
                   condition = "input.track == 'Forest type' && input.entity_scope != 'multi'",
                   selectizeInput("forest_type", NULL,
                                  choices = forest_type_choices,
-                                 selected = forest_type_choices[[1]]) %>%
+                                 selected = s$forest_type) %>%
                         tooltip("Select a focal FIA forest type by scrolling or typing. Labels show the FORTYPCD followed by the type name.")
             ),
             conditionalPanel(
                   condition = "input.track == 'Forest group' && input.entity_scope != 'multi'",
                   selectizeInput("forest_group", NULL,
                                  choices = forest_group_choices,
-                                 selected = forest_group_choices[[1]]) %>%
+                                 selected = s$forest_group) %>%
                         tooltip("Select a focal FIA forest type group by scrolling or typing.")
             ),
             ## Life stage closes the entity group -- kind, scope,
@@ -124,11 +125,8 @@ ui_panel_fia_variable <- function() {
             conditionalPanel(
                   condition = "input.track == 'Species' || input.track == 'All trees'",
                   selectInput("stage", NULL,
-                              c("seedlings only"  = "seedling",
-                                "saplings only"   = "sapling",
-                                "adults only"     = "adult",
-                                "all life stages" = "any"),
-                              selected = "any") %>%
+                              stage_choices,
+                              selected = s$stage) %>%
                         tooltip(HTML("Which tree size class to model. Variables that FIA does not break out by size class &mdash; basal area, and its proportion &mdash; are only offered under 'all life stages'.<br><br>
                                                 <dl style='margin:0;'>
                                                     <dt>Seedlings</dt> <dd>&lt; 1 in. DBH/DRC.</dd>
@@ -153,7 +151,8 @@ ui_panel_fia_variable <- function() {
                         "input.track != 'All trees' && input.entity_scope == 'multi' && ",
                         "['", paste(categorical_measures, collapse = "','"),
                         "'].indexOf(input.comm_measure) >= 0"),
-                  numericInput("comm_top_n", "Categories shown", value = 10, min = 2, max = 25, step = 1) %>%
+                  numericInput("comm_top_n", "Categories shown", value = s$comm_top_n,
+                               min = url_bounds$comm_top_n[1], max = url_bounds$comm_top_n[2], step = 1) %>%
                         tooltip("How many entities get their own color. The rest are pooled into 'other', ranked by how much of the mapped area each one covers.")
             ),
 
@@ -169,17 +168,19 @@ ui_panel_fia_variable <- function() {
             ## anything -- net richness change of zero is entirely
             ## compatible with complete species replacement.
             selectInput("time", "Timeframe",
-                        c("historical", "future", "change" = "delta")) %>%
+                        c("historical", "future", "change" = "delta"),
+                        selected = s$time) %>%
                   tooltip("Choose whether to display historical (2000-2025) or future (scenario selected under 'Climate data') model predictions, or the change between them.
                                       Only relevant for `FIA variable` and `ESS` raster variables."),
             ## Declared from metric_choices() rather than a literal
-            ## list. The syncing observer uses ignoreInit, so a
-            ## hard-coded list is the startup state -- and it held
+            ## list. The syncing observer uses ignoreInit, so this is
+            ## the startup state -- and a hard-coded list once held
             ## "abundance", which is not valid at the default life
             ## stage of "any". Selecting it made resolve_var() return
             ## NULL and the app silently do nothing.
             selectInput("metric", "Variable",
-                        choices = metric_choices("Species", "any")) %>%
+                        choices = metric_choices(s$track, s$stage),
+                        selected = s$metric) %>%
                   tooltip(HTML("Choose the quantity to model.<br><br>
                                           <dl style='margin:0;'>
                                               <dt>Occurrence</dt> <dd>Probability the focal entity is present within a single FIA plot footprint (~0.07 ha) randomly located within the grid cell.</dd>
@@ -197,9 +198,15 @@ ui_panel_fia_variable <- function() {
             ## comm_measure_choices() is filtered by it.
             conditionalPanel(
                   condition = "input.track != 'All trees' && input.entity_scope == 'multi'",
+                  ## Outside community mode the variable may have no
+                  ## community measures (the ratio variables); the menu
+                  ## still needs a valid value, so it falls back to the
+                  ## occurrence set.
                   selectInput("comm_measure", NULL,
-                              choices = comm_measure_choices("Species", "presence probability"),
-                              selected = "richness") %>%
+                              choices = if (length(comm_measure_choices(s$track, s$fia_var, s$time)))
+                                    comm_measure_choices(s$track, s$fia_var, s$time)
+                              else comm_measure_choices(s$track, "presence probability", s$time),
+                              selected = s$comm_measure) %>%
                         tooltip(HTML("How the per-entity (species or forest types) surfaces are combined into one map. Only combinations that are well defined for the current entity type and variable are listed.<br><br>
                                                 <dl style='margin:0;'>
                                                     <dt>Richness</dt> <dd>Expected number of entities present, summed across per-entity occurrence probabilities. No threshold: a cell with 0.5 probability for each of two species has expected richness 1.</dd>
@@ -226,7 +233,7 @@ ui_panel_fia_variable <- function() {
             ## by itself would be circular.
             conditionalPanel(
                   condition = "(input.track != 'All trees' && input.entity_scope == 'multi' && input.comm_measure != 'richness' && input.comm_measure != 'expected gains' && input.comm_measure != 'expected losses') || input.metric == 'regeneration fraction'",
-                  numericInput("support_floor", "Minimum expected species", value = 0.5, min = 0, step = 0.5) %>%
+                  numericInput("support_floor", "Minimum expected species", value = s$support_floor, min = 0, step = 0.5) %>%
                         tooltip(HTML("Blank out cells where there is too little predicted mass present for the ratio to mean anything.<br><br>
                                                 Ratios stay well behaved as their denominator approaches zero but stop being informative: evenness and the regeneration fractions take their most extreme values where the community or species is barely present.<br><br>
                                                 The label shows which quantity the threshold applies to &mdash; expected richness for occurrence variables, the summed response for abundance ones, and the species' own occurrence probability for the regeneration fractions. Set 0 for no masking.<br><br>
@@ -244,7 +251,8 @@ ui_panel_fia_variable <- function() {
                                    "number of seedlings",
                                    "species richness", "seedling species richness",
                                    "sapling species richness", "adult species richness",
-                                   "seedling fraction", "sapling fraction")))
+                                   "seedling fraction", "sapling fraction"),
+                                 selected = s$fia_var))
       )
 }
 
@@ -270,14 +278,15 @@ ui_panel_fia_variable <- function() {
       ## model-parameter inputs rather than off panel membership --
       ## otherwise every future placement decision silently becomes
       ## an invalidation decision.
-ui_panel_study_area <- function() {
+ui_panel_study_area <- function(s) {
       accordion_panel(
             "Study area",
             helpText("Where the model runs, and the places you compare against it: the model bounding box,
                                  an optional focal polygon, and an optional focal site. All three are evaluated at the
                                  grain size set below."), hr(),
 
-            sliderInput("clim_agg", "Raster grain size", 1, 10, value = 10, step = 1, post = " km") %>%
+            sliderInput("clim_agg", "Raster grain size", url_bounds$clim_agg[1], url_bounds$clim_agg[2],
+                        value = s$clim_agg, step = 1, post = " km") %>%
                   tooltip("Cell size of the model grid, and of every summary drawn from it. Larger values run faster but are less precise."),
 
             hr(),
@@ -286,10 +295,10 @@ ui_panel_study_area <- function() {
             helpText("The rectangulare region the model is computed over. A smaller box runs faster."),
             sliderInput("bbox_x", "Longitude range",
                         min = clim_bbox["xmin"], max = clim_bbox["xmax"],
-                        value = c(-116, -100)),
+                        value = s$bbox_x),
             sliderInput("bbox_y", "Latitude range",
                         min = clim_bbox["ymin"], max = clim_bbox["ymax"],
-                        value = c(29, 43)),
+                        value = s$bbox_y),
             layout_column_wrap(
                   width = 1/2,
                   uiOutput("snap_focal_btn"),
@@ -301,7 +310,8 @@ ui_panel_study_area <- function() {
             tags$strong("Focal polygon"),
             helpText("A management unit to summarize results within. Optional."),
             selectInput("polygon_collection", NULL,
-                        choices = boundary_collections(boundary_units)) %>%
+                        choices = boundary_collections(boundary_units),
+                        selected = boundary_collection_of(boundary_units, s$polygon_unit)) %>%
                   tooltip("The kind of unit to choose from: national park units, national forests and grasslands, ranger districts, BLM field offices, wilderness areas, states, counties, or EPA ecoregions. Changing it clears the current polygon."),
             # Choices are filled by the server (server/data.R)
             selectizeInput("polygon_unit", NULL, choices = NULL,
@@ -332,11 +342,11 @@ ui_panel_study_area <- function() {
       )
 }
 
-ui_panel_climate_data <- function() {
+ui_panel_climate_data <- function(s) {
       accordion_panel(
             "Climate data",
             helpText("Select climate variables and future scenarios."), hr(),
-            selectInput("clim_vars", "Climate variables", clim_vars(), selected = clim_vars_default, multiple = TRUE) %>%
+            selectInput("clim_vars", "Climate variables", clim_vars(), selected = s$clim_vars, multiple = TRUE) %>%
                   tooltip(HTML("Choose one or more variables for measuring multivariate climate similarity:<br><br>
                                           <dl style='margin:0;'>
                                               <dt>CWD</dt> <dd>Climatic water deficit</dd>
@@ -348,15 +358,15 @@ ui_panel_climate_data <- function() {
                                           </dl>")),
             selectInput("scenario_ssp", "Emissions pathway",
                         choices = ssp_choices,
-                        selected = default_ssp) %>%
+                        selected = s$scenario_ssp) %>%
                   tooltip("Future emissions scenario (Shared Socioeconomic Pathway). Higher numbers correspond to higher emissions."),
             selectInput("scenario_period", "Future time period",
                         choices = period_choices,
-                        selected = default_period) %>%
+                        selected = s$scenario_period) %>%
                   tooltip("Future time period."),
             selectizeInput("scenario_model", "Climate model(s)",
                            choices = model_choices,
-                           selected = default_model,
+                           selected = s$scenario_model,
                            multiple = TRUE,
                            options = list(plugins = list("remove_button"))) %>%
                   tooltip("Select one or more global climate models (GCMs). When multiple are selected, climate layers are averaged across the model ensemble.
@@ -364,26 +374,32 @@ ui_panel_climate_data <- function() {
       )
 }
 
-ui_panel_interpolation <- function() {
+ui_panel_interpolation <- function(s) {
       accordion_panel(
             "Interpolation",
             helpText("Predictions for each grid cell are built from nearby FIA plots with similar climate. Plots are weighted
                                  more heavily the closer they are, in both senses, and these two settings control how quickly that
                                  falloff happens. They are standrd deviations of Gaussian weighting kernels.
                                  Plots more than three times either setting away are not used at all."), hr(),
-            sliderInput("theta_geog", "Geographic bandwidth (km)", 5, 100, value = 30) %>%
+            sliderInput("theta_geog", "Geographic bandwidth (km)", url_bounds$theta_geog[1], url_bounds$theta_geog[2],
+                        value = s$theta_geog) %>%
                   tooltip("Controls how plot weight decays with geographic distance from a grid cell.
                                       This distance also defines two of the areas used in some of the righthand modules: the 'focal site neighborhood' is everything within three bandwidths of the site you clicked, and the 'buffered polygon' is your polygon widened by the same amount."),
-            sliderInput("theta_clim", "Climate bandwidth (z)", .05, .5, value = .1) %>%
+            sliderInput("theta_clim", "Climate bandwidth (z)", url_bounds$theta_clim[1], url_bounds$theta_clim[2],
+                        value = s$theta_clim) %>%
                   tooltip("Measured in standard deviations of climate across all FIA plots in the contiguous US, so 0.1 means plots within a tenth of a standard deviation count almost fully.")
       )
 }
 
-ui_panel_map_layers <- function() {
+ui_panel_map_layers <- function(s) {
       accordion_panel(
             "Map layers",
             helpText("Choose which model results are drawn on the map."), hr(),
-            selectInput("stat", "Raster variable", stat_choices_base) %>%
+            ## Connectivity entries are offered only when it is on; see
+            ## the cs_enable observer in server/controls.R
+            selectInput("stat", "Raster variable",
+                        if (url_cs_on(s)) stat_choices_cs else stat_choices_base,
+                        selected = s$stat) %>%
                   tooltip(HTML("<dl style='margin:0;'>
                                               <dt>FIA variable</dt> <dd>Predicted values of the variable selected above.</dd>
                                               <dt>Effective sample size</dt> <dd>How many FIA plots each cell's prediction effectively rests on. Nearby, climatically similar plots count close to fully and distant ones count for little, so this is usually well below the raw plot count. Low values mean a prediction is built on thin evidence.</dd>
@@ -392,7 +408,7 @@ ui_panel_map_layers <- function() {
                                           </dl>")),
             conditionalPanel(
                   condition = "input.stat == 'connectivity'",
-                  selectInput("cs_stat", "Connectivity variable", cs_stat_names) %>%
+                  selectInput("cs_stat", "Connectivity variable", cs_stat_names, selected = s$cs_stat) %>%
                         tooltip(HTML("<dl style='margin:0;'>
                                               <dt>Current flow</dt> <dd>Total current passing through each cell; high values indicate important range shift corridors</dd>
                                               <dt>Current on target</dt> <dd>Current delivered to destination grounds; shows where dispersers successfully reach future-suitable habitat</dd>
@@ -404,7 +420,9 @@ ui_panel_map_layers <- function() {
                                               <dt>Loss</dt> <dd>Model input: rate at which dispersers are removed from the migrating pool at each cell</dd>
                                           </dl>"))
             ),
-            selectInput("vector", "Vector variable", vector_choices_base) %>%
+            selectInput("vector", "Vector variable",
+                        if (url_cs_on(s)) vector_choices_cs else vector_choices_base,
+                        selected = s$vector) %>%
                   tooltip(HTML("Select which point or line layer is displayed:<br><br>
                                           <dl style='margin:0;'>
                                               <dt>Occupied FIA plots</dt> <dd>Plots where the selected species was recorded</dd>
@@ -447,8 +465,20 @@ ui_panel_cartography <- function() {
 ui_panel_export <- function() {
       accordion_panel(
             "Export",
-            helpText("Download the raster data displayed on the map as a .tif, the underlying FIA plot data as a .csv,
-                                  or the current model settings as a .txt for reproducibility."), hr(),
+            helpText("Share a link to these settings, or download the raster data displayed on the map as a .tif,
+                                  the underlying FIA plot data as a .csv, or a record of the settings and versions behind them as a .txt."), hr(),
+            ## The address bar always holds the link to the current settings
+            ## (server/url_state.R); this copies it. The clipboard call is
+            ## browser-side, and reports back so the server can confirm it.
+            actionButton("copy_link", "Copy link to these settings", icon = icon("link"),
+                         onclick = paste0(
+                               "navigator.clipboard.writeText(window.location.href).then(",
+                               "() => Shiny.setInputValue('copy_link_done', 'ok', {priority: 'event'}), ",
+                               "() => Shiny.setInputValue('copy_link_done', 'failed', {priority: 'event'}));")) %>%
+                  tooltip("The link reopens the app with these model settings and map layers, so others can see the same results.
+                           It works with this version of TreeShift and its data; results can change when either is updated.
+                           Your browser's address bar holds the same link."),
+            br(), br(),
             textInput("download_filename", "Filename (without extension)", "fia_aim_result"),
             downloadButton("download_raster", "Download raster"),
             br(),
@@ -465,6 +495,8 @@ ui_panel_export <- function() {
                                            The analog layer adds climate/geographic distance from the focal site and
                                            the analog's kernel weight.")),
             br(),
-            downloadButton("download_metadata", "Download metadata")
+            downloadButton("download_record", "Download settings record") %>%
+                  tooltip("A text file for citing these results: the link that reopens them, the settings in plain language,
+                           and the versions of TreeShift and its data that produced them.")
       )
 }

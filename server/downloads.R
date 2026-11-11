@@ -26,20 +26,13 @@ output$download_points <- downloadHandler(
             write_csv(pd, file)
       }
 )
-output$download_metadata <- downloadHandler(
+# The settings record (helpers/provenance.R)
+output$download_record <- downloadHandler(
       filename = function() {
-            paste(input$download_filename, ".txt", sep="")
+            paste0(input$download_filename, "_settings.txt")
       },
 
       content = function(file) {
-            params <- names(input)
-            out <- c()
-            for(p in params){
-                  out <- c(out, paste(p, input[[p]], sep = ": "))
-            }
-            if(input$stat != "connectivity"){
-                  out <- out[!grepl("cs_", params)]
-            }
-            writeLines(out, file)
+            writeLines(provenance_text(current_state(), url_ctx, link_url(), app_info), file)
       }
 )

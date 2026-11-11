@@ -510,11 +510,14 @@ observeEvent(input$polygon_clear, {
 # The unit list shows one collection at a time, filled from here, including at
 # startup. It is searched server-side: collections run to thousands of units
 # (counties). Switching collections clears the polygon, so the selector never
-# shows a different unit than the map.
+# shows a different unit than the map. The first fill selects the link's
+# polygon, if it has one; the UI already opened on that polygon's collection.
+polygon_from_link <- link$state$polygon_unit
 observeEvent(input$polygon_collection, {
       updateSelectizeInput(session, "polygon_unit",
                            choices = boundary_choices(boundary_units, input$polygon_collection),
-                           selected = "", server = TRUE)
+                           selected = polygon_from_link, server = TRUE)
+      polygon_from_link <<- ""
 })
 
 user_polygon <- reactive({
@@ -537,4 +540,5 @@ polygon_outside_msg <- "The focal polygon is outside the model bounding box. Use
 
 
 ## focal site
-site <- reactiveValues(x = NULL, y = NULL)
+# Starts at the link's site, if it has one (server/url_state.R)
+site <- reactiveValues(x = link$state$site[1], y = link$state$site[2])

@@ -23,12 +23,7 @@ observeEvent(list(input$track, input$stage), {
 ## input this writes to. A bare observe() would re-fire on its own write.
 observeEvent(input$track, {
       req(input$track != "All trees")
-      one <- switch(input$track,
-                    "Species"      = "single species",
-                    "Forest type"  = "single forest type",
-                    "Forest group" = "single forest group")
-      ch <- setNames(c("single", "multi"), c(one, "community composition"))
-      updateSelectInput(session, "entity_scope", choices = ch,
+      updateSelectInput(session, "entity_scope", choices = entity_scope_choices(input$track),
                         selected = if (isTruthy(input$entity_scope)) input$entity_scope else "single")
 }, ignoreInit = TRUE)
 
@@ -203,8 +198,9 @@ observeEvent(list(input$cs_enable, multi_mode()), {
 # per-entity variable being summed -- but the response being scored is
 # richness, a count. Testing fia_var offered AUC and TSS for it.
 #
-# observeEvent so the handler is isolated; ignoreInit because the UI is
-# declared with the binary set, which is right for the default variable.
+# observeEvent so the handler is isolated. It also runs at startup: the UI is
+# declared with the binary set, and a linked page can open on a continuous
+# variable.
 observeEvent(response_is_binary(), {
       if (response_is_binary()) {
             updateSelectInput(session, "eval_stat",
@@ -215,7 +211,7 @@ observeEvent(response_is_binary(), {
                               choices = c("R-squared", "RMSE"),
                               selected = "R-squared")
       }
-}, ignoreInit = TRUE)
+})
 
 # highlight focal site analogs: activate correct vector layer; zoom to site
 observeEvent(input$highlight_site, {

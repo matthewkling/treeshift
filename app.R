@@ -151,41 +151,53 @@ strip_style <- theme(strip.text = element_text(color = "white"),
                      strip.background = element_rect(fill = "black", color = "black"))
 
 
+# The valid choices that links are checked against (helpers/url_state.R)
+url_ctx <- url_context()
+
+# App and data versions, for the settings record (helpers/provenance.R)
+app_info <- app_versions()
+
+
 # UI ---------------------------------------------------
-ui <- page_sidebar(
+# A function of the request, so the page is built from the settings in the
+# link it was opened with (helpers/url_state.R).
+ui <- function(request) {
+      s <- url_decode(request$QUERY_STRING, url_ctx)$state
+      page_sidebar(
 
-      ui_head(),
+            ui_head(),
 
-      theme = bs_theme(version = 5, bootswatch = "flatly"),
+            theme = bs_theme(version = 5, bootswatch = "flatly"),
 
-      fillable = TRUE,   # lets the page body fill the browser height
+            fillable = TRUE,   # lets the page body fill the browser height
 
-      title = "TreeShift [beta]",
-
-
-      ## LEFT SIDEBAR ------------------------------------
-
-      sidebar = ui_left_sidebar(),
-
+            title = "TreeShift [beta]",
 
 
-      card(
-            class = "h-100 w-100 rounded-0 overflow-hidden border-0",
-            layout_sidebar(
-                  fillable = TRUE,
+            ## LEFT SIDEBAR ------------------------------------
+
+            sidebar = ui_left_sidebar(s),
 
 
-                  ## RIGHT SIDEBAR ---------------------------------------
 
-                  sidebar = ui_right_sidebar(),
+            card(
+                  class = "h-100 w-100 rounded-0 overflow-hidden border-0",
+                  layout_sidebar(
+                        fillable = TRUE,
 
-                  ## MAP ---------------------------------------
-                  leafletOutput("map", height = "100%")
-            )
-      ),
 
-      add_busy_spinner(spin = "cube-grid", position = "bottom-right")
-)
+                        ## RIGHT SIDEBAR ---------------------------------------
+
+                        sidebar = ui_right_sidebar(s),
+
+                        ## MAP ---------------------------------------
+                        leafletOutput("map", height = "100%")
+                  )
+            ),
+
+            add_busy_spinner(spin = "cube-grid", position = "bottom-right")
+      )
+}
 
 
 
@@ -195,7 +207,7 @@ ui <- page_sidebar(
 # this function's environment, in the order below, so the files share reactives
 # exactly as if they were written inline. The order matters: observers run in
 # the order they are created, and some files use objects defined in earlier ones.
-server_files <- c("shared", "data", "controls", "climate", "climate_models",
+server_files <- c("shared", "url_state", "data", "controls", "climate", "climate_models",
                   "aim", "connectivity", "map_base", "community", "map_layers",
                   "site_plots", "polygon_values", "evaluation", "climate_response", "downloads")
 
