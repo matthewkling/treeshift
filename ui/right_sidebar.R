@@ -339,7 +339,7 @@ ui_panel_focal_site_analogs <- function(s) {
             helpText(
                   "This module helps you explore where a model prediction at a given location actually comes from:
                                           the 'analog' FIA plots that are geographically close and climatically similar.
-                                          When you click the map to set a focal site, these figures show the FIA plots (drawn as points) inform the prediction.
+                                          When you click the map to set a focal site, these figures show the FIA plots (drawn as points) that inform the estimate there.
                                           'Contemporary' analogs compare the focal cell's and plots' current climates, while 'reverse' and 'forward' analogs compare climates across time to make future projections.
 
                                           Reference lines mark the two bandwidths (dashed) and the hard cutoffs at three times each (solid).

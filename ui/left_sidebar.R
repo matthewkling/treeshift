@@ -12,10 +12,9 @@ ui_left_sidebar <- function(s) {
 
             accordion(
                   id = "sidebar_acc",
-                  open = "Info",
+                  open = "FIA variable",
                   multiple = FALSE,
 
-                  ui_panel_info(),
                   ui_panel_fia_variable(s),
                   ui_panel_study_area(s),
                   ui_panel_climate_data(s),
@@ -24,24 +23,6 @@ ui_left_sidebar <- function(s) {
                   ui_panel_cartography(),
                   ui_panel_export()
             )
-      )
-}
-
-ui_panel_info <- function() {
-      accordion_panel(
-            "Info",
-            helpText("This tool interpolates FIA variables across a spatial grid based on geographic proximity
-                          and climatic similarity to FIA plots, optionally accounting for predicted climate change.
-                          Use it to map forest properties like occurrence, abundance, and basal area of individual species,
-                          forest types, and the tree community as a whole, and to assess potential future shifts in
-                          the distributions of these variables."),
-            br(),
-            helpText("Here on the left, you'll find core controls for setting model parameters and
-                                 choosing display variables. The righthand sidebar houses modules with their own
-                                 dedicated controls and plots. Throughout, hover your cursor over controls for explanatory pop-ups."),
-            br(),
-            helpText("NOTE: This tool is a prototype and is still under development.
-                          Please contact matthew.kling@umontana.edu with questions, suggestions, or bug reports.")
       )
 }
 

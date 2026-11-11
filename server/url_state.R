@@ -40,12 +40,22 @@ current_state <- reactive({
 # rewrites the address bar once it settles rather than on every step.
 link_query <- debounce(reactive(url_encode(current_state(), url_ctx)), 400)
 
-# "replace", so settings changes don't pile up in the browser's back history
+# A link ending in #about opens on the About tab, so documentation can be
+# linked to directly. The tab isn't a setting, so it lives in the hash rather
+# than the schema's query string.
+if (startsWith(isolate(session$clientData$url_hash), "#about")) {
+      nav_select("main_nav", "about")
+}
+
+# "replace", so settings changes don't pile up in the browser's back history.
+# Replacing the query also replaces the hash, so the About tab's is rewritten
+# with it.
 observe({
-      updateQueryString(link_query(), mode = "replace")
+      updateQueryString(paste0(link_query(), if (identical(input$main_nav, "about")) "#about"),
+                        mode = "replace")
 })
 
-# The full link, for the metadata download
+# The full link, for the settings record
 link_url <- reactive({
       cd <- session$clientData
       paste0(cd$url_protocol, "//", cd$url_hostname,

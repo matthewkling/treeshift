@@ -163,39 +163,58 @@ app_info <- app_versions()
 # link it was opened with (helpers/url_state.R).
 ui <- function(request) {
       s <- url_decode(request$QUERY_STRING, url_ctx)$state
-      page_sidebar(
+      page_navbar(
+            id = "main_nav",
 
-            ui_head(),
+            header = tagList(ui_head(),
+                             add_busy_spinner(spin = "cube-grid", position = "bottom-right")),
 
-            theme = bs_theme(version = 5, bootswatch = "flatly"),
+            ## Monochrome header: very dark gray. The selected tab is white;
+            ## the title and other tabs are gray, turning white on hover.
+            ## (Flatly's own links turn green on hover and when selected.)
+            theme = bs_theme(version = 5, bootswatch = "flatly",
+                             "navbar-dark-color" = "rgba(255, 255, 255, 0.55)",
+                             "navbar-dark-brand-color" = "rgba(255, 255, 255, 0.55)",
+                             "navbar-dark-hover-color" = "#ffffff",
+                             "navbar-dark-active-color" = "#ffffff"),
+            navbar_options = navbar_options(bg = "#212529", theme = "dark"),
 
-            fillable = TRUE,   # lets the page body fill the browser height
+            fillable = "map",   # lets the map tab fill the browser height; About scrolls
 
             title = "TreeShift [beta]",
 
-
-            ## LEFT SIDEBAR ------------------------------------
-
-            sidebar = ui_left_sidebar(s),
-
-
-
-            card(
-                  class = "h-100 w-100 rounded-0 overflow-hidden border-0",
+            nav_panel(
+                  "Map",
+                  value = "map",
                   layout_sidebar(
                         fillable = TRUE,
+                        padding = 0,
+                        border = FALSE,
+                        border_radius = FALSE,
+
+                        ## LEFT SIDEBAR ------------------------------------
+
+                        sidebar = ui_left_sidebar(s),
+
+                        card(
+                              class = "h-100 w-100 rounded-0 overflow-hidden border-0",
+                              layout_sidebar(
+                                    fillable = TRUE,
+                                    padding = 0,   # the map fills its area, edge to edge
 
 
-                        ## RIGHT SIDEBAR ---------------------------------------
+                                    ## RIGHT SIDEBAR ---------------------------------------
 
-                        sidebar = ui_right_sidebar(s),
+                                    sidebar = ui_right_sidebar(s),
 
-                        ## MAP ---------------------------------------
-                        leafletOutput("map", height = "100%")
+                                    ## MAP ---------------------------------------
+                                    leafletOutput("map", height = "100%")
+                              )
+                        )
                   )
             ),
 
-            add_busy_spinner(spin = "cube-grid", position = "bottom-right")
+            nav_panel("About", value = "about", ui_about())
       )
 }
 
