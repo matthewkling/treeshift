@@ -179,7 +179,10 @@ ui <- function(request) {
                              "navbar-dark-active-color" = "#ffffff"),
             navbar_options = navbar_options(bg = "#212529", theme = "dark"),
 
-            fillable = "map",   # lets the map tab fill the browser height; About scrolls
+            ## Both tabs fill the browser height below the header: the map
+            ## tab edge to edge, About as a pane that scrolls within it, so
+            ## the header stays in view (ui/about.R)
+            fillable = c("map", "about"),
 
             title = "TreeShift [beta]",
 
@@ -205,7 +208,7 @@ ui <- function(request) {
 
                                     ## RIGHT SIDEBAR ---------------------------------------
 
-                                    sidebar = ui_right_sidebar(s),
+                                    sidebar = ui_right_sidebar(),
 
                                     ## MAP ---------------------------------------
                                     div(class = "h-100 position-relative",

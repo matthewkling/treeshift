@@ -39,14 +39,15 @@
 #   cv     climate variables;  ssp, era, gcm  scenario
 #   tg, tc geographic and climate bandwidths
 #   cs     connectivity on (1); csrc, ctgt, ccl, cll, ccs, cls its settings
-#   r      raster layer;  rcs  connectivity layer;  pts  point layer
+#   r      raster layer;  rev  evidence measure;  rcs  connectivity layer
+#   pts    point layer
 #   an     analog direction
 
 url_schema_version <- 1L
 
 url_keys <- c("v", "e", "es", "sp", "ft", "fg", "st", "m", "t", "cm", "n", "sf",
               "g", "bx", "by", "poly", "site", "cv", "ssp", "era", "gcm", "tg", "tc",
-              "cs", "csrc", "ctgt", "ccl", "cll", "ccs", "cls", "r", "rcs", "pts", "an")
+              "cs", "csrc", "ctgt", "ccl", "cll", "ccs", "cls", "r", "rev", "rcs", "pts", "an")
 
 # Short codes for enumerated settings: code = app value
 url_codes <- list(
@@ -64,8 +65,9 @@ url_codes <- list(
       conductance = c(suit = "suitability", wind = "wind", suitwind = "suitability * wind",
                       uniform = "uniform"),
       loss = c(none = "none", uniform = "uniform", suit = "mean suitability"),
-      stat = c(fia = "FIA variable", sup = "support", close = "closeness",
-               spread = "spread", sim = "focal site similarity", conn = "connectivity"),
+      stat = c(fia = "FIA variable", evid = "evidence", sim = "focal site similarity",
+               conn = "connectivity"),
+      evidence = c(sup = "support", close = "closeness", spread = "spread"),
       cs_stat = stats::setNames(cs_stat_names, cs_stats),
       vector = c(occ = "occupied FIA plots", all = "all FIA plots", analogs = "focal site analogs",
                  anim = "current animation", field = "current field", none = "none"),
@@ -110,7 +112,7 @@ url_defaults <- function(ctx) {
            cs_enable = FALSE, cs_sources = "grid cells", cs_targets = "grid cells",
            cs_conductance_layer = "suitability", cs_loss_layer = "none",
            cs_conductance_scale = 0, cs_loss_scale = -1,
-           stat = "FIA variable", cs_stat = cs_stat_names[1],
+           stat = "FIA variable", evidence_stat = "support", cs_stat = cs_stat_names[1],
            vector = "occupied FIA plots", analog_direction = "Contemporary analogs")
 }
 
@@ -194,6 +196,7 @@ url_fields <- function(s, ctx) {
             f["cls"] <- url_num(s$cs_loss_scale)
       }
       if (!identical(s$stat, d$stat)) f["r"] <- code_of(url_codes$stat, s$stat)
+      if (identical(s$stat, "evidence")) f["rev"] <- code_of(url_codes$evidence, s$evidence_stat)
       if (identical(s$stat, "connectivity")) f["rcs"] <- code_of(url_codes$cs_stat, s$cs_stat)
       if (!identical(s$vector, d$vector)) f["pts"] <- code_of(url_codes$vector, s$vector)
       if (!identical(s$analog_direction, d$analog_direction))
@@ -371,6 +374,8 @@ url_decode <- function(search, ctx) {
 
       set("stat", code("r", url_codes$stat, "Raster layer",
                        allowed = if (url_cs_on(s)) stat_choices_cs else stat_choices_base))
+      if (identical(s$stat, "evidence"))
+            set("evidence_stat", code("rev", url_codes$evidence, "Evidence measure"))
       if (identical(s$stat, "connectivity")) {
             set("cs_stat", code("rcs", url_codes$cs_stat, "Connectivity layer"))
             # The app shows connectivity as change only

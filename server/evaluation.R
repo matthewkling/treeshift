@@ -43,8 +43,8 @@ model_eval <- reactiveValues(comparison = NULL,
 # precondition is also more useful than hiding the option.
 eval_scope_missing_msg <- function(scope){
       switch(scope,
-             "polygon"  = "Choose a focal polygon under 'Study area' in the left sidebar to evaluate over it.",
-             "buffered" = "Choose a focal polygon under 'Study area' in the left sidebar to evaluate over its buffered neighborhood.",
+             "polygon"  = "Choose a focal polygon under 'Focal polygon and site' in the left sidebar to evaluate over it.",
+             "buffered" = "Choose a focal polygon under 'Focal polygon and site' in the left sidebar to evaluate over its buffered neighborhood.",
              "site"     = "Click the map to set a focal site, then this scope evaluates the plots within its geographic cutoff.",
              "This evaluation scope is not available.")
 }
@@ -362,7 +362,7 @@ observeEvent(input$optimal_params, {
                            "No results for this area. Re-run the evaluations, or choose a larger area."))
 
       # Applied as well as set: choosing optimal parameters asks for them on
-      # the map, so the Update button isn't left to press
+      # the map, so the Run model button isn't left to press
       best <- list(theta_geog = opt$theta_geog, theta_clim = opt$theta_clim,
                    clim_vars = unlist(strsplit(opt$clim_vars, "_")))
       updateSliderInput(session, "theta_geog", value = best$theta_geog)

@@ -143,8 +143,8 @@ observe({
 })
 
 ## Show or hide the connectivity entries in the left-sidebar "Map layers"
-## menus, driven by the "Enable connectivity" switch in the right-sidebar
-## Connectivity panel. Connectivity is a niche analysis, so its options are
+## menus, driven by the "Enable connectivity" switch in the Landscape
+## connectivity panel. Connectivity is a niche analysis, so its options are
 ## kept out of the core menus until the user asks for them.
 ##
 ## updateSelectInput() resets the selection to the first choice whenever

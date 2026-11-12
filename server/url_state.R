@@ -16,7 +16,7 @@ if (length(link$problems)) {
 # The current settings, as the codec's state: the applied model settings
 # (server/model_settings.R) and the current values of everything else. The
 # link and the settings record describe what's on the map, never settings
-# still waiting for the Update button.
+# still waiting for the Run model button.
 current_state <- reactive({
       req(model$track, model$metric, input$time)
       c(reactiveValuesToList(model)[model_setting_ids],
@@ -26,7 +26,7 @@ current_state <- reactive({
              polygon_unit = if (is.null(polygon_active())) "" else polygon_active(),
              site = if (is.null(site$x)) NULL else c(site$x, site$y),
              cs_enable = input$cs_enable,
-             stat = input$stat, cs_stat = input$cs_stat, vector = input$vector,
+             stat = input$stat, evidence_stat = input$evidence_stat, cs_stat = input$cs_stat, vector = input$vector,
              analog_direction = input$analog_direction))
 })
 

@@ -1,9 +1,8 @@
-# Right sidebar: analysis panels that summarize the mapped result.
-#
-# `s` is the starting state, as for the left sidebar. Only the settings the
-# link carries come from it: connectivity and the analog direction.
+# Right sidebar: analysis panels that summarize the mapped result. Settings
+# that change the map live in the left sidebar; the controls here only shape
+# their own panel's figures, so none are carried in links.
 
-ui_right_sidebar <- function(s) {
+ui_right_sidebar <- function() {
       sidebar(
             # title = "Focal site analogs",
             width = "40%",
@@ -19,8 +18,7 @@ ui_right_sidebar <- function(s) {
                   ui_panel_climate_relationships(),
                   ui_panel_model_evaluation(),
                   ui_panel_climate_models(),
-                  ui_panel_connectivity(s),
-                  ui_panel_focal_site_analogs(s)
+                  ui_panel_focal_site_analogs()
             )
 
       )
@@ -97,15 +95,15 @@ ui_panel_community_composition <- function() {
       ## Named for its contents rather than its input:
       ## both plots are views of site_analogs(), the
       ## analog SET of the focal site. The site itself is
-      ## now set under "Study area" in the left sidebar.
+      ## now set under "Focal polygon and site" in the left sidebar.
       ##
       ## The composition plot that used to live here has
       ## been replaced by a stack-based one in the
       ## Community composition panel: it was the only view
       ## here where entity identity survived, and it
       ## belonged with the other cross-entity displays.
-      ## Renamed from "Study area": that name now belongs
-      ## to the left panel that owns the polygon. This
+      ## Renamed from "Study area", the name the left panel
+      ## that owned the polygon had at the time. This
       ## panel is named for what it renders, matching the
       ## rule that right-sidebar panels are local to one
       ## output.
@@ -180,7 +178,7 @@ ui_panel_model_evaluation <- function() {
                                                            <dt>Buffered polygon</dt> <dd>Plots within 3 geographic bandwidths of the polygon &mdash; the neighborhood predictions there are actually drawn from. Usually the better choice for a small unit.</dd>
                                                            <dt>Focal site neighborhood</dt> <dd>Plots within the geographic cutoff of the clicked site.</dd>
                                                        </dl>
-                                                       Scopes whose input is not yet set under 'Study area' in the left sidebar will say so when selected.")),
+                                                       Scopes whose input is not yet set under 'Focal polygon and site' in the left sidebar will say so when selected.")),
 
             hr(),
 
@@ -208,9 +206,13 @@ ui_panel_model_evaluation <- function() {
                   ## binary set because that matches the default variable.
                   selectInput("eval_stat", "Evaluation statistic", c("AUC", "TSS", "Brier")),
                   sliderInput("eval_n_vars", "Max n climate vars", 1, 6, value = c(1, 2), step = 1),
-                  actionButton("optimal_params", "Apply optimal parameters"),
+                  actionButton("optimal_params", "Apply optimal parameters") %>%
+                        tooltip("Sets the bandwidths and climate variables under Model settings to the best-scoring combination for this area and statistic, and runs the model with them."),
                   actionButton("run_eval", "Run evaluations")
             ),
+            ## The one control here that reaches back into the model
+            ## settings, so it says so where it can be seen
+            helpText("'Apply optimal parameters' changes your model settings and runs the model with them."),
 
             ## Directly above the heatmap, which is the
             ## only thing it describes. Sitting under the
@@ -264,53 +266,6 @@ ui_panel_climate_models <- function() {
       )
 }
 
-ui_panel_connectivity <- function(s) {
-      accordion_panel(
-            "Landscape connectivity",
-            helpText("This module lets you model circuit-based landscape connectivity between historical (source) and future (target) FIA surfaces.
-                                             This approach can identify key movement corridors and pinch points for large-scale climate connectivity.
-                                             Click 'enable' to activate options.
-                                             To view connectivity results, select 'connectivity' as the raster variable under 'Map layers' at left.
-                                             Julia compiler startup may take a couple minutes the first time you run a connectivity result, but should be fast thereafter."), hr(),
-            uiOutput("cs_note"),
-            conditionalPanel(
-                  condition = "input.track == 'All trees' || input.entity_scope != 'multi'",
-                  input_switch("cs_enable", "Enable connectivity", s$cs_enable) %>%
-                        tooltip("Adds the connectivity raster and current animation/field vector layers
-                                                        to the 'Map layers' menus in the left sidebar.")
-            ),
-            conditionalPanel(
-                  condition = "input.cs_enable && (input.track == 'All trees' || input.entity_scope != 'multi')",
-                  selectInput("cs_sources", "Origin electrodes (sources)", c("grid cells", "FIA plots", "selected site"),
-                              selected = s$cs_sources) %>%
-                        tooltip("Sites where current is injected. If `grid cells` or `FIA plots` is selected, current is injected
-                                            in proportion to modeled or observed (respectively) values of the selected FIA variable.
-                                            If `selected site` is chosen, current is injected only at the focal site."),
-                  selectInput("cs_targets", "Destination electrodes (target grounds)", c("grid cells", "FIA plots", "selected site"),
-                              selected = s$cs_targets) %>%
-                        tooltip("Grounding sites that 'pull' current and allow it to exit the circuit.
-                                            If `grid cells` or `FIA plots` is selected, ground conductance is proportional to modeled values
-                                            of the selected FIA variable. If `selected site` is chosen, the focal site."),
-                  selectInput("cs_conductance_layer", "Horizontal conductance", c("suitability", "wind", "suitability * wind", "uniform"),
-                              selected = s$cs_conductance_layer) %>%
-                        tooltip("The inverse of landscape resistance, horizontal conductance determines how easily current can flow across a site.
-                                            `Suitability` models conductance proportional to the mean of historical and future FIA raster values.
-                                            `Wind` models conductance proportional to the frequency and speed with which wind blows toward targets."),
-                  selectInput("cs_loss_layer", "Loss (non-target grounds)", c("none", "uniform", "suitability" = "mean suitability"),
-                              selected = s$cs_loss_layer) %>%
-                        tooltip("Choose whether and how to model current 'leakage' representing dispersers that are removed from the pool
-                                            (via mortality or permanent settlement) before reaching target grounds."),
-                  sliderInput("cs_conductance_scale", "log10 conductance scale", url_bounds$cs_conductance_scale[1],
-                              url_bounds$cs_conductance_scale[2], value = s$cs_conductance_scale, step = .1) %>%
-                        tooltip("Relative strength of horizontal conductance, compared to source, target, and loss components."),
-                  sliderInput("cs_loss_scale", "log10 loss scale", url_bounds$cs_loss_scale[1],
-                              url_bounds$cs_loss_scale[2], value = s$cs_loss_scale, step = .1) %>%
-                        tooltip("Relative strength of loss conductance, compared to source, target, and horizontal components.
-                                                        Ignored if loss is set to 'none.'")
-            )
-      )
-}
-
       ## Last, and deliberately so. Every other panel here
       ## reports a result; this one shows the mechanism
       ## behind them -- which plots inform a prediction,
@@ -321,19 +276,17 @@ ui_panel_connectivity <- function(s) {
       ##
       ## Named for its subject rather than its purpose,
       ## even though the purpose is what the intro text
-      ## explains. The panel is not purely illustrative:
-      ## analog_direction set here also drives the 'focal
-      ## site similarity' raster and the 'focal site
-      ## analogs' vector layer. Matching those option
-      ## names exactly means cross-references from the
-      ## left sidebar are literal rather than approximate.
+      ## explains. The analog type it shows is set with
+      ## the focal site in the left sidebar, since it also
+      ## drives the 'focal site similarity' raster and the
+      ## 'focal site analogs' vector layer.
       ##
       ## The analog SET does not depend on the entity --
       ## the same plots are near and climatically similar
       ## whichever species is selected -- so only the
       ## point coloring is entity-specific, and it follows
       ## display_values() like the map markers do.
-ui_panel_focal_site_analogs <- function(s) {
+ui_panel_focal_site_analogs <- function() {
       accordion_panel(
             "Focal site analogs",
             helpText(
@@ -347,30 +300,19 @@ ui_panel_focal_site_analogs <- function(s) {
 
                                           Use the button below to see the same analog plots on the map.
 
-                                          The analog type set here also governs two map layers: the 'focal site similarity'
-                                          raster and the 'focal site analogs' points. Nothing here changes the model
-                                          itself."), hr(),
-            layout_column_wrap(
-                  width = 1/2,
-                  selectInput("analog_direction", NULL, c("Contemporary analogs", "Reverse analogs", "Forward analogs"),
-                              selected = s$analog_direction) %>%
-                        tooltip(HTML("Which climates are being matched:
-                                                <ul>
-                                                    <li>Contemporary: plots whose present climate resembles the site's present climate. This is what the historical prediction is built from.</li>
-                                                    <li>Reverse (inbound): plots whose present climate resembles the site's future climate. This is the basis for future model predictions in the app.</li>
-                                                    <li>Forward (outbound): plots whose future climate resembles the site's present climate. Where the site's current conditions are heading; interesting, but not currently used in this app's core modeling machinery.</li>
-                                                </ul>")),
-                  ## Kept, and relabeled. The old name
-                  ## described the mechanism rather than
-                  ## what turning it off would show. In a
-                  ## panel about how predictions are made,
-                  ## seeing which nearby plots the climate
-                  ## kernel rules out is half the point --
-                  ## otherwise the cutoff is a line with
-                  ## nothing outside it.
-                  input_switch("filter_clim", "Hide plots beyond the climate cutoff", TRUE) %>%
-                        tooltip("Turn this off to also show the plots that are close by but too climatically different to count. Those are what the climate bandwidth excludes. Plots beyond three geographic bandwidths are never shown either way.")
-            ),
+                                          The analog type is set with the focal site, under 'Focal polygon and site' at left. It also
+                                          governs two map layers: the 'focal site similarity' raster and the 'focal site
+                                          analogs' points. Nothing here changes the model itself."), hr(),
+            ## Kept, and relabeled. The old name
+            ## described the mechanism rather than
+            ## what turning it off would show. In a
+            ## panel about how predictions are made,
+            ## seeing which nearby plots the climate
+            ## kernel rules out is half the point --
+            ## otherwise the cutoff is a line with
+            ## nothing outside it.
+            input_switch("filter_clim", "Hide plots beyond the climate cutoff", TRUE) %>%
+                  tooltip("Turn this off to also show the plots that are close by but too climatically different to count. Those are what the climate bandwidth excludes. Plots beyond three geographic bandwidths are never shown either way."),
 
             actionButton("highlight_site", "Show these plots on the map") %>%
                   tooltip("Switch the map's vector layer to this site's analog plots and zoom to its geographic cutoff, so the same plots can be seen in geographic space."),

@@ -34,7 +34,7 @@ set_in_order <- function(app, ...) {
       }
 }
 
-# Press Update map, applying the model settings set so far
+# Press Run model, applying the model settings set so far
 apply_settings <- function(app) {
       app$click("update_model")
       settle(app)
@@ -79,7 +79,9 @@ notices <- function(app) {
 # that URL has a query string (it fetches the page instead).
 download_raster <- function(app) {
       app$run_js("var b = Array.from(document.querySelectorAll('.accordion-button')).find(b => b.textContent.trim() === 'Export'); if (b.classList.contains('collapsed')) b.click();")
-      settle(app)
+      ## The link's address can arrive after the app goes idle
+      app$wait_for_js("document.getElementById('download_raster').href.indexOf('/download/') >= 0",
+                      timeout = 600000)
       href <- app$get_js("document.getElementById('download_raster').href")
       f <- tempfile(fileext = ".tif")
       utils::download.file(href, f, quiet = TRUE, mode = "wb")
@@ -109,7 +111,7 @@ key_inputs <- c(e = "track", es = "entity_scope", sp = "species", ft = "forest_t
                 tg = "theta_geog", tc = "theta_clim", cs = "cs_enable", csrc = "cs_sources",
                 ctgt = "cs_targets", ccl = "cs_conductance_layer", cll = "cs_loss_layer",
                 ccs = "cs_conductance_scale", cls = "cs_loss_scale", r = "stat",
-                rcs = "cs_stat", pts = "vector", an = "analog_direction")
+                rev = "evidence_stat", rcs = "cs_stat", pts = "vector", an = "analog_direction")
 
 # The inputs a link sets: those its keys name, plus the variable they resolve
 # to and the map layers, which links leave out when at their defaults

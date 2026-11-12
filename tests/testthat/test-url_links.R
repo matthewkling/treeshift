@@ -44,7 +44,8 @@ test_that("a species link with a polygon and site reopens the same results", {
 test_that("a forest type link with map layers reopens the same results", {
       check_link(function(a) {
             set_in_order(a, track = "Forest type", forest_type = "221", time = "future",
-                         bbox_x = c(-112, -104), stat = "closeness", vector = "none")
+                         bbox_x = c(-112, -104), stat = "evidence", evidence_stat = "closeness",
+                         vector = "none")
       })
 })
 

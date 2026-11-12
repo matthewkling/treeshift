@@ -108,10 +108,21 @@ ui_head <- function() {
             ),
 
             tags$style(HTML("
-  /* Update map button (server/model_settings.R). Solid dark when settings
-     are waiting to be applied; when the map is up to date it is disabled and
+  /* Run model button (server/model_settings.R). Solid dark when settings
+     are waiting to be applied; when the model is up to date it is disabled and
      drawn as a quiet outline rather than as a faded solid button. */
-  .ts-update { margin-bottom: 0.5rem; }
+  /* Under the model settings heading; stays at the top of the sidebar while
+     a long panel scrolls beneath it. The sidebar's own background is a
+     translucent tint; laid over the page color it is opaque, so the panels
+     don't show through. */
+  .ts-update { position: sticky; top: 0; z-index: 3;
+               background: linear-gradient(var(--_sidebar-bg), var(--_sidebar-bg)),
+                           var(--bs-body-bg);
+               margin-inline: calc(-1 * var(--_padding, 1rem));
+               padding: 0.5rem var(--_padding, 1rem); }
+  /* Group headings over the sidebar panels (ui/left_sidebar.R) */
+  .ts-group-title { font-size: 0.8rem; font-weight: 600; text-transform: uppercase;
+                    letter-spacing: 0.05em; color: #495057; margin: 0; }
   #update_model {
     /* the header's dark gray; Flatly's own btn-dark is a gray-green */
     background-color: #212529;

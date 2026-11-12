@@ -1,4 +1,4 @@
-# Model settings and the Update map button (helpers/model_settings.R,
+# Model settings and the Run model button (helpers/model_settings.R,
 # server/model_settings.R)
 
 load_app_globals()
@@ -45,19 +45,19 @@ test_that("the pending line names each change once", {
                        "Variable and geographic bandwidth changed.")
 })
 
-test_that("changes wait for the Update button", {
+test_that("changes wait for the Run model button", {
       skip_on_cran()
       a <- open_session(app_dir)
       on.exit(a$stop(), add = TRUE)
       button <- function() a$get_js("(() => { const b = document.getElementById('update_model'); return b.textContent.trim() + (b.disabled ? ' [disabled]' : ''); })()")
       washed <- function() a$get_js("document.querySelector('.ts-map-stale') !== null")
 
-      expect_identical(button(), "Map is up to date [disabled]")
+      expect_identical(button(), "Model is up to date [disabled]")
       expect_false(washed())
       before <- list(query = address_bar(a), raster = raster_md5(a))
 
       set_in_order(a, species = "Pinus ponderosa", theta_geog = 45)
-      expect_identical(button(), "Update map")
+      expect_identical(button(), "Run model")
       expect_identical(a$get_js("document.querySelector('.ts-pending-note').textContent"),
                        "Species and geographic bandwidth changed.")
       expect_true(washed())
@@ -66,13 +66,13 @@ test_that("changes wait for the Update button", {
       expect_identical(raster_md5(a), before$raster)
 
       apply_settings(a)
-      expect_identical(button(), "Map is up to date [disabled]")
+      expect_identical(button(), "Model is up to date [disabled]")
       expect_false(washed())
       expect_match(address_bar(a), "&sp=Pinus_ponderosa&.*&tg=45")
       expect_false(identical(raster_md5(a), before$raster))
 
       # Display settings still apply right away
       set_in_order(a, time = "future")
-      expect_identical(button(), "Map is up to date [disabled]")
+      expect_identical(button(), "Model is up to date [disabled]")
       expect_match(address_bar(a), "&t=fut&", fixed = TRUE)
 })

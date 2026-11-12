@@ -33,7 +33,7 @@ observeEvent(input$update_model, apply_model_settings())
 observe({
       n <- length(pending())
       updateActionButton(session, "update_model",
-                         label = if (n) "Update map" else "Map is up to date",
+                         label = if (n) "Run model" else "Model is up to date",
                          disabled = n == 0)
 })
 

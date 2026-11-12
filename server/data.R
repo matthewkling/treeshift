@@ -536,7 +536,7 @@ polygon_in_domain <- function(scope = "polygon") {
       terra::is.related(terra::vect(g), terra::ext(c(model$bbox_x, model$bbox_y)), "intersects")
 }
 
-polygon_outside_msg <- "The focal polygon is outside the model bounding box. Use 'Snap box to polygon' under 'Study area' to move the box to it."
+polygon_outside_msg <- "The focal polygon is outside the model bounding box. Use 'Snap box to polygon' under 'Focal polygon and site' to move the box to it."
 
 
 ## focal site

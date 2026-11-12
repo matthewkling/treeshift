@@ -72,18 +72,24 @@ seq_domain <- function(x) {
       c(0, if (is.finite(mx) && mx > 0) mx else 1)
 }
 
+# The raster layer drawn: the Raster variable menu's choice, with the "analog
+# evidence" entry resolved to its measure (support, closeness or spread)
+rast_stat <- reactive({
+      if (identical(input$stat, "evidence")) input$evidence_stat else input$stat
+})
+
 # Lower/upper bounds for the currently-displayed raster. Used by the
 # density plot to keep KDE mass from leaking past natural limits (e.g.,
 # presence probability is bounded [0, 1]; total BA is non-negative).
 # Returns c(-Inf, Inf) when no informative bound applies.
 display_bounds <- reactive({
-      if (input$stat %in% c("support", "spread")) {
+      if (rast_stat() %in% c("support", "spread")) {
             c(0, Inf)
-      } else if (input$stat == "closeness") {
+      } else if (rast_stat() == "closeness") {
             c(0, 1)
-      } else if (input$stat == "focal site similarity") {
+      } else if (rast_stat() == "focal site similarity") {
             c(0, Inf)
-      } else if (input$stat == "connectivity") {
+      } else if (rast_stat() == "connectivity") {
             if (input$cs_stat == "current direction") {
                   c(0, 360)
             } else {

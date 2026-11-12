@@ -110,8 +110,10 @@ provenance_text <- function(s, ctx, link, versions, created = Sys.time()) {
               line("log10 loss scale", num(s$cs_loss_scale))),
         "",
         "Map layers",
-        line("Raster variable", if (identical(s$stat, "connectivity"))
-              paste("connectivity:", s$cs_stat) else label(stat_choices_cs, s$stat)),
+        line("Raster variable", switch(s$stat,
+              connectivity = paste("connectivity:", s$cs_stat),
+              evidence = label(evidence_choices, s$evidence_stat),
+              label(stat_choices_cs, s$stat))),
         line("Vector variable", s$vector),
         line("Analog direction", s$analog_direction),
         "",

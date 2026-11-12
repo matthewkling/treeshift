@@ -1,5 +1,5 @@
 # Model settings: the inputs that rerun a model. They take effect when the
-# user presses "Update map" (server/model_settings.R), so changing several in
+# user presses "Run model" (server/model_settings.R), so changing several in
 # a row doesn't compute a model for each intermediate combination. Everything
 # else -- timeframe, community measure, support floor, polygon, focal site,
 # map layers, cartography -- applies right away.
@@ -20,7 +20,7 @@ model_setting_ids <- c("track", "entity_scope", "species", "forest_type", "fores
 model_setting_labels <- c(track = "entity", entity_scope = "entity", species = "species",
                           forest_type = "forest type", forest_group = "forest group",
                           stage = "life stage", metric = "variable", fia_var = "variable",
-                          clim_agg = "grain size", bbox_x = "study area", bbox_y = "study area",
+                          clim_agg = "grain size", bbox_x = "bounding box", bbox_y = "bounding box",
                           clim_vars = "climate variables", scenario_ssp = "emissions pathway",
                           scenario_period = "time period", scenario_model = "climate models",
                           theta_geog = "geographic bandwidth", theta_clim = "climate bandwidth",

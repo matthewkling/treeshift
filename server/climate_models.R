@@ -42,7 +42,7 @@ model_deltas <- reactive({
                                  "Click the map to select a focal site, or choose a different summary region."))
       } else if (region %in% c("polygon", "buffered")) {
             shiny::validate(need(isTruthy(polygon_active()),
-                                 "Choose a focal polygon under 'Study area', or choose a different summary region."))
+                                 "Choose a focal polygon under 'Focal polygon and site', or choose a different summary region."))
       }
 
       # Extract ALL climate variables (not just the current axis pair),

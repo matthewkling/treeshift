@@ -25,7 +25,7 @@ support_labels <- c("under 1", "1 to 3", "3 to 10", "10 to 30", "30 to 100", "10
 ## Why the spread layer can't be drawn, or NULL when it can. Shown under the
 ## raster menu; display_layer() draws nothing in these cases.
 evidence_note <- reactive({
-      if (!identical(input$stat, "spread")) return(NULL)
+      if (!identical(rast_stat(), "spread")) return(NULL)
       if (multi_mode()) {
             "Analog spread describes the plots behind one species, forest type or group, so it isn't shown for community measures."
       } else if (!spread_computed()) {
@@ -47,7 +47,7 @@ output$stat_note <- renderUI({
 ## are strictly non-negative; turnover runs 0 (identical) to 1 (no
 ## overlap). None of them center on zero.
 paired_layer <- reactive({
-      isTruthy(input$stat) && input$stat == "FIA variable" &&
+      isTruthy(rast_stat()) && rast_stat() == "FIA variable" &&
             multi_mode() && isTruthy(input$comm_measure) &&
             input$comm_measure %in% paired_measures
 })
@@ -57,7 +57,7 @@ paired_layer <- reactive({
 ## reprojection method, scale transform, and the panels that plot value
 ## distributions.
 categorical_layer <- reactive({
-      isTruthy(input$stat) && input$stat == "FIA variable" &&
+      isTruthy(rast_stat()) && rast_stat() == "FIA variable" &&
             multi_mode() && isTruthy(input$comm_measure) &&
             input$comm_measure %in% categorical_measures
 })
@@ -78,7 +78,7 @@ comm_categories <- reactive({
 ## units, unbounded, and shares units with richness -- keeping the two on
 ## the same sequential palette is what makes them comparable.
 bounded_ratio_layer <- reactive({
-      if (!isTruthy(input$stat) || input$stat != "FIA variable") return(FALSE)
+      if (!isTruthy(rast_stat()) || rast_stat() != "FIA variable") return(FALSE)
       if (multi_mode()) return(isTruthy(input$comm_measure) &&
                                      input$comm_measure %in% c("evenness", "dominance"))
       isTruthy(model$fia_var) && grepl("fraction", model$fia_var)
@@ -90,7 +90,7 @@ bounded_ratio_layer <- reactive({
 ## instead of "no information", and for a ratio 0 is a real value at one
 ## end of the scale.
 masked_layer <- reactive({
-      if (!isTruthy(input$stat) || input$stat != "FIA variable") return(FALSE)
+      if (!isTruthy(rast_stat()) || rast_stat() != "FIA variable") return(FALSE)
       if (multi_mode()) return(isTruthy(input$comm_measure) &&
                                      !identical(input$comm_measure, "richness"))
       isTruthy(model$fia_var) && grepl("fraction", model$fia_var)
@@ -106,13 +106,13 @@ display_layer <- reactive({
       # unchanged, so only the "FIA variable" branch is replaced -- and
       # aim() is not required, so All mode does not also pay for a
       # single-entity run it will not display.
-      if (multi_mode() && input$stat == "FIA variable") return(composition_layer())
+      if (multi_mode() && rast_stat() == "FIA variable") return(composition_layer())
 
       req(aim())  # only run once we have data
 
-      if(input$stat %in% names(evidence_layers)){
+      if(rast_stat() %in% names(evidence_layers)){
             req(is.null(evidence_note()))
-            layer <- evidence_layers[[input$stat]]
+            layer <- evidence_layers[[rast_stat()]]
             # For change, the harmonic mean of the two timeframes, which leans
             # toward the weaker one: a change is only as well supported as its
             # less supported end.
@@ -120,12 +120,12 @@ display_layer <- reactive({
                         "delta" = 2 / (1/aim()$fut[[layer]] + 1/aim()$bsl[[layer]]),
                         "historical" = aim()$bsl[[layer]],
                         "future" = aim()$fut[[layer]])
-      }else if(input$stat == "focal site similarity"){
+      }else if(rast_stat() == "focal site similarity"){
             r <- site_diff()
-      }else if(input$stat == "connectivity"){
+      }else if(rast_stat() == "connectivity"){
             st <- cs_stats[cs_stat_names == input$cs_stat]
             r <- connectivity()[[st]]
-      }else{ # input$stat == "FIA variable"
+      }else{ # rast_stat() == "FIA variable"
             # For the pooled-ratio variables, aim() carries the occurrence
             # layer alongside the response; it is the denominator these
             # fractions are conditional on. Mask per timeframe, so a delta
@@ -161,17 +161,17 @@ raster_title <- reactive({
             muted <<- c(muted, dim)
       }
 
-      if(input$stat %in% c("support", "closeness")){
-            add(names(evidence_choices)[evidence_choices == input$stat])
+      if(rast_stat() %in% c("support", "closeness")){
+            add(names(evidence_choices)[evidence_choices == rast_stat()])
             add(time_label())
-            add(if (input$stat == "support") "(equivalent number of exactly matching plots)"
+            add(if (rast_stat() == "support") "(equivalent number of exactly matching plots)"
                 else "(1 = exact match)", dim = TRUE)
 
-      }else if(input$stat == "focal site similarity"){
+      }else if(rast_stat() == "focal site similarity"){
             add(gsub(" analogs", "", input$analog_direction))
             add("climate distance from focal site")
 
-      }else if(multi_mode() && input$stat == "FIA variable"){
+      }else if(multi_mode() && rast_stat() == "FIA variable"){
             add(focal_label())
             add(time_label())
             add(comm_label())
@@ -205,7 +205,7 @@ raster_title <- reactive({
                       dim = TRUE)
 
       }else{
-            if(input$stat == "spread") add("analog spread")
+            if(rast_stat() == "spread") add("analog spread")
             add(focal_label())
             add(time_label())
             add(tolower(model$fia_var))
@@ -216,7 +216,7 @@ raster_title <- reactive({
                        "number of seedlings" = "(seedlings / acre)",
                        NULL),
                 dim = TRUE)
-            if(input$stat == "connectivity") add(input$cs_stat)
+            if(rast_stat() == "connectivity") add(input$cs_stat)
       }
 
       # When the layer is categorical the marker legend is suppressed --
@@ -241,7 +241,7 @@ raster_title <- reactive({
       # community reduction describes the composition of a plot-sized
       # footprint, and diversity in particular rises with area regardless
       # of whether it was built from occurrence or basal area.
-      if (input$stat %in% c("FIA variable", "spread") &&
+      if (rast_stat() %in% c("FIA variable", "spread") &&
           (multi_mode() ||
            (isTruthy(model$fia_var) && model$fia_var %in% support_dependent_vars))) {
             add("(per ~0.07 ha plot)", dim = TRUE)
@@ -258,7 +258,7 @@ observe({
       # Scale transforms are meaningless on category codes, and
       # setValues() would drop the factor levels the legend reads from.
       # Support's fixed classes already do the job of a transform.
-      binned <- identical(input$stat, "support")
+      binned <- identical(rast_stat(), "support")
       # Maps a transformed value back to the variable's units, for the legend
       # labels: colors follow the transformed scale, labels stay in the
       # original units. NULL while the drawn raster is untransformed.
@@ -304,7 +304,7 @@ observe({
             rast_pal <- colorFactor(palette = cc$colors, levels = cc$codes,
                                     na.color = "transparent")
             dom <- cc$codes
-      } else if(input$time == "delta" && input$stat == "FIA variable" && !paired_layer()){
+      } else if(input$time == "delta" && rast_stat() == "FIA variable" && !paired_layer()){
             # units are deltas, drawn untransformed
             r <- display_layer()
             untransform <- NULL
@@ -327,17 +327,17 @@ observe({
                   bins = support_breaks,
                   na.color = "transparent"
             )
-      } else if(input$stat %in% names(evidence_layers)){
+      } else if(rast_stat() %in% names(evidence_layers)){
             # Closeness has a fixed 0-1 scale, so its colors mean the same
             # thing on every map. Viridis sets these diagnostics apart from
             # the variable's own gray-to-green palette.
-            if(input$stat == "closeness" && input$rast_transform == "identity") dom <- c(0, 1)
+            if(rast_stat() == "closeness" && input$rast_transform == "identity") dom <- c(0, 1)
             rast_pal <- colorNumeric(
                   palette = "viridis" %>% choose_palette(),
                   domain = dom,
                   na.color = "transparent"
             )
-      } else if(input$stat == "FIA variable") {
+      } else if(rast_stat() == "FIA variable") {
             # historical or future estimate: domain is unit except for total BA
             if(bounded_ratio_layer()){
                   # Bounded [0, 1] ratios -- the regeneration fractions
@@ -359,7 +359,7 @@ observe({
                         na.color = "transparent"
                   )
             }
-      } else if(input$stat == "connectivity" && input$cs_stat == "current direction") {
+      } else if(rast_stat() == "connectivity" && input$cs_stat == "current direction") {
             proj_method <- "ngb" # because bilinear interpolation breaks for a circular variable
             dom <- if(input$rast_transform == "identity") c(0, 360) else mm
             rast_pal <- colorNumeric(
@@ -367,7 +367,7 @@ observe({
                   domain = dom,
                   na.color = "transparent"
             )
-      } else if(input$stat == "focal site similarity") {
+      } else if(rast_stat() == "focal site similarity") {
             rast_pal <- colorNumeric(
                   palette = "magma" %>% choose_palette(),
                   domain = dom,

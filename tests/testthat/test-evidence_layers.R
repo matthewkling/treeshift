@@ -58,7 +58,7 @@ stat_note <- function(app) {
 }
 
 test_that("spread for a presence variable is the SD of a 0/1 outcome", {
-      set_in_order(app, bbox_x = c(-112, -104), bbox_y = c(37, 43), stat = "spread")
+      set_in_order(app, bbox_x = c(-112, -104), bbox_y = c(37, 43), stat = "evidence", evidence_stat = "spread")
       apply_settings(app)
       expect_identical(stat_note(app), "")
       spread <- raster_values(app)
@@ -85,12 +85,12 @@ test_that("the evidence layers draw in their valid ranges for a continuous varia
       expect_gt(sum(is.finite(spread)), 100)
       expect_gte(min(spread, na.rm = TRUE), 0)
 
-      set_in_order(app, stat = "closeness")
+      set_in_order(app, stat = "evidence", evidence_stat = "closeness")
       closeness <- raster_values(app)
       expect_gte(min(closeness, na.rm = TRUE), 0)
       expect_lte(max(closeness, na.rm = TRUE), 1)
 
-      set_in_order(app, stat = "support")
+      set_in_order(app, stat = "evidence", evidence_stat = "support")
       support <- raster_values(app)
       # drawn in fixed classes, labelled in plain units
       legend <- app$get_js("document.querySelector('#map .info.legend').innerText")
@@ -103,7 +103,7 @@ test_that("the evidence layers draw in their valid ranges for a continuous varia
       # Change shows the support of the weaker end; spread has no change version
       set_in_order(app, time = "delta")
       expect_gt(sum(is.finite(raster_values(app))), 100)
-      set_in_order(app, stat = "spread")
+      set_in_order(app, stat = "evidence", evidence_stat = "spread")
       expect_match(stat_note(app), "not for change", fixed = TRUE)
 })
 

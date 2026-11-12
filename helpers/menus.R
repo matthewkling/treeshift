@@ -8,16 +8,16 @@ cs_stats <- c("current_flow", "current_destinations", "current_loss", "current_p
 # Left-sidebar menu choices, in connectivity-off and connectivity-on variants.
 # Connectivity is a niche module, so its entries are kept out of the core
 # `stat` and `vector` menus unless the user flips "Enable connectivity" in the
-# right-sidebar Connectivity panel. The `*_base` sets are the UI defaults; the
+# Landscape connectivity panel (left sidebar, model settings). The `*_base` sets are the UI defaults; the
 # observeEvent(input$cs_enable) handler in the server swaps between the two.
 # Listed explicitly rather than appended so "none" stays last in the vector menu.
 # The evidence layers describe the FIA plots behind each cell's estimate
-# (server/map_layers.R).
+# (server/map_layers.R). They share one "analog evidence" entry in the raster
+# menu, with the measure chosen in a second menu, as connectivity does.
 evidence_choices <- c("analog support" = "support", "analog closeness" = "closeness",
                       "analog spread" = "spread")
-stat_choices_base <- c("FIA variable", evidence_choices, "focal site similarity")
-stat_choices_cs   <- c("FIA variable", evidence_choices, "focal site similarity",
-                       "connectivity")
+stat_choices_base <- c("FIA variable", "analog evidence" = "evidence", "focal site similarity")
+stat_choices_cs   <- c(stat_choices_base, "connectivity")
 
 vector_choices_base <- c("occupied FIA plots", "all FIA plots", "focal site analogs",
                          "none")

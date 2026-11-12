@@ -276,7 +276,7 @@ comm_profile_ready <- reactive({
             return("This panel doesn't work in single-entity mode. Under 'Entity' in the left sidebar, switch from a single species or type to 'community composition'.")
       scope <- if (isTruthy(input$comm_scope)) input$comm_scope else "domain"
       if (scope %in% c("polygon", "buffered") && !isTruthy(polygon_active()))
-            return("No focal polygon yet. Choose one under 'Study area' in the left sidebar, or summarize over the whole bounding box instead.")
+            return("No focal polygon yet. Choose one under 'Focal polygon and site' in the left sidebar, or summarize over the whole bounding box instead.")
       if (scope %in% c("polygon", "buffered") && !polygon_in_domain(scope))
             return(polygon_outside_msg)
       if (scope %in% c("site", "cell") && (is.null(site$x) || is.null(site$y)))
@@ -558,7 +558,7 @@ observeEvent(list(model$track, model$fia_var, input$time), {
 ##
 ## The inline notice is not enough on its own: it renders in the FIA
 ## variable panel, while the grain slider that pushes a run over the limit
-## is in the Study area panel -- and with one accordion panel open at a
+## is in the Raster grid panel -- and with one accordion panel open at a
 ## time, the notice is suspended at exactly the moment it matters. So the
 ## user coarsens nothing, sees the map quietly go blank, and has no idea
 ## why.
@@ -588,7 +588,7 @@ observe({
                   format(cost$cells, big.mark = ","),
                   cost$gb, comm_max_gb)),
             tags$p(if (is.na(fix))
-                  "Even the coarsest grain size will not fit this bounding box. Shrink the box under 'Study area' in the left sidebar."
+                  "Even the coarsest grain size will not fit this bounding box. Shrink the box under 'Raster grid' in the left sidebar."
                   else sprintf("You could increase grain size to %d km or coarser, shrink the bounding box, or choose a single-species variable instead of `community composition`.", fix)),
             easyClose = TRUE,
             footer = tagList(
@@ -625,8 +625,8 @@ output$comm_cost_note <- renderUI({
                         format(cost$cells, big.mark = ","),
                         cost$gb, comm_max_gb,
                         if (is.na(cost$grain_that_fits))
-                              "Even the coarsest grain size will not fit this bounding box; shrink the box under 'Study area' in the left sidebar."
-                        else sprintf("Set the grain size to %d km or coarser, or shrink the bounding box, under 'Study area' in the left sidebar.",
+                              "Even the coarsest grain size will not fit this bounding box; shrink the box under 'Raster grid' in the left sidebar."
+                        else sprintf("Set the grain size to %d km or coarser, or shrink the bounding box, under 'Raster grid' in the left sidebar.",
                                      cost$grain_that_fits)))
       } else {
             div(class = "ts-notice",
