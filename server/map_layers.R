@@ -112,35 +112,15 @@ display_layer <- reactive({
 
       if(rast_stat() %in% names(evidence_layers)){
             req(is.null(evidence_note()))
-            layer <- evidence_layers[[rast_stat()]]
-            # For change, the harmonic mean of the two timeframes, which leans
-            # toward the weaker one: a change is only as well supported as its
-            # less supported end.
-            r <- switch(input$time,
-                        "delta" = 2 / (1/aim()$fut[[layer]] + 1/aim()$bsl[[layer]]),
-                        "historical" = aim()$bsl[[layer]],
-                        "future" = aim()$fut[[layer]])
+            r <- ts_evidence_layer(aim(), evidence_layers[[rast_stat()]], input$time)
       }else if(rast_stat() == "focal site similarity"){
             r <- site_diff()
       }else if(rast_stat() == "connectivity"){
             st <- cs_stats[cs_stat_names == input$cs_stat]
             r <- connectivity()[[st]]
       }else{ # rast_stat() == "FIA variable"
-            # For the pooled-ratio variables, aim() carries the occurrence
-            # layer alongside the response; it is the denominator these
-            # fractions are conditional on. Mask per timeframe, so a delta
-            # is blank wherever either end is unsupported.
-            is_frac <- isTruthy(model$fia_var) && grepl("fraction", model$fia_var)
-            floor_at <- function(tf) {
-                  x <- tf$response
-                  if (is_frac && !is.null(tf$occ))
-                        x <- apply_support_floor(x, tf$occ, input$support_floor)
-                  x
-            }
-            r <- switch(input$time,
-                        "delta" = floor_at(aim()$fut) - floor_at(aim()$bsl),
-                        "historical" = floor_at(aim()$bsl),
-                        "future" = floor_at(aim()$fut))
+            req(isTruthy(model$fia_var))
+            r <- ts_value_layer(aim(), model$fia_var, input$time, input$support_floor)
       }
 
       r

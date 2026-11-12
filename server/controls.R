@@ -93,15 +93,15 @@ output$snap_focal_btn <- renderUI({
 observeEvent(input$focal_domain, {
       pad <- 1
       bb <- switch(input$track,
-                   "Species" = fia_plots_species_all() %>%
+                   "Species" = fia_all %>%
                          filter(species == input$species),
-                   "Forest type" = fia_plots_species_all() %>%
+                   "Forest type" = fia_all %>%
                          filter(forest_type == as.integer(input$forest_type)),
                    "Forest group" = {
                          ft_in_group <- forest_type_codes %>%
                                filter(forest_group == as.integer(input$forest_group)) %>%
                                pull(forest_type)
-                         fia_plots_species_all() %>%
+                         fia_all %>%
                                filter(forest_type %in% ft_in_group)
                    },
                    NULL)

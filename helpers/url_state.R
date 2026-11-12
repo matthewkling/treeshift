@@ -97,18 +97,22 @@ url_context <- function() {
            bbox = clim_bbox)
 }
 
+# The model settings' defaults are the core's (R/settings.R), except where they
+# depend on the data on hand: the first forest type and group, and a scenario
+# that exists.
 url_defaults <- function(ctx) {
-      list(track = "Species", entity_scope = "single", species = "Pinus edulis",
+      d <- ts_settings()
+      list(track = d$track, entity_scope = d$entity_scope, species = d$species,
            forest_type = unname(ctx$forest_types[1]), forest_group = unname(ctx$forest_groups[1]),
-           stage = "any", metric = "occurrence", fia_var = "presence probability",
+           stage = d$stage, metric = d$metric, fia_var = d$fia_var,
            time = "historical", comm_measure = "richness", comm_top_n = 10,
            # Its default depends on the variable (support_floor_spec())
-           support_floor = support_floor_spec(FALSE, "presence probability", "Species")$default,
-           clim_agg = 10, bbox_x = c(-116, -100), bbox_y = c(29, 43),
+           support_floor = support_floor_spec(FALSE, d$fia_var, d$track)$default,
+           clim_agg = d$clim_agg, bbox_x = d$bbox_x, bbox_y = d$bbox_y,
            polygon_unit = "", site = NULL,
-           clim_vars = url_menu_order(clim_vars_default, clim_vars()), scenario_ssp = ctx$default_ssp,
+           clim_vars = url_menu_order(d$clim_vars, clim_vars()), scenario_ssp = ctx$default_ssp,
            scenario_period = ctx$default_period, scenario_model = ctx$default_model,
-           theta_geog = 30, theta_clim = 0.1,
+           theta_geog = d$theta_geog, theta_clim = d$theta_clim,
            cs_enable = FALSE, cs_sources = "grid cells", cs_targets = "grid cells",
            cs_conductance_layer = "suitability", cs_loss_layer = "none",
            cs_conductance_scale = 0, cs_loss_scale = -1,

@@ -14,23 +14,12 @@
 ## 0.012 s per entity at 31,624 cells, per timeframe, scaling linearly in
 ## cells. Marginal cost per entity climbs somewhat above ~25 entities, so
 ## this runs a little optimistic at large entity counts.
+## The smallest grain that fits lets a refusal say what to do rather than
+## leaving the user to bisect the slider (R/aim.R).
 comm_run_cost <- reactive({
       req(multi_mode())
-      n_ent <- ncol(multi_values())
-      r <- clim()$hst
-      n_cells <- terra::ncell(r)
-      gb <- n_cells * n_ent * 8 * 2 / 1024^3
-      secs <- (n_cells / 31624) * (0.10 + 0.012 * n_ent) * 2
-
-      # Smallest grain that would fit, so a refusal can say what to do
-      # rather than leaving the user to bisect the slider. Cells scale as
-      # the inverse square of grain, so gb(g) = gb_now * (agg_now/g)^2.
-      agg <- model$clim_agg
-      fits <- ceiling(agg / sqrt(comm_max_gb / gb))
-      list(entities = n_ent, cells = n_cells, gb = gb, secs = secs,
-           # NA when even the coarsest grain the slider offers is not
-           # enough -- then the bounding box is the thing to change.
-           grain_that_fits = if (is.finite(fits) && fits <= 10) max(fits, 1) else NA_integer_)
+      ts_community_cost(terra::ncell(clim()$hst), ncol(multi_values()), model$clim_agg,
+                        comm_max_gb)
 })
 
 multi_aim <- reactive({
@@ -46,27 +35,7 @@ multi_aim <- reactive({
       cost <- comm_run_cost()
       req(cost$gb <= comm_max_gb)
 
-      # sum_weights is retained even though nothing reads it yet: it is one
-      # extra layer for the whole run (a weight property, not per-entity),
-      # and it is the second half of the per-cell support signal. The
-      # weighted count of contributing presence plots for entity s is
-      # weighted_mean_s * sum_weights, which is what any reliability
-      # filter or rare-entity floor will be built on.
-      weight_stats <- "sum_weights"
-
-      # Same positional rename as aim(): outcome layers are whatever isn't
-      # a weight stat, returned in y-column order.
-      name_outcomes <- function(r){
-            is_outcome <- !names(r) %in% weight_stats
-            stopifnot(sum(is_outcome) == ncol(y))
-            names(r)[is_outcome] <- names(y)
-            r
-      }
-
-      surf <- aim_surfaces(list(bsl = clim()$hst, fut = clim()$fut), pool(), y = y,
-                           theta_clim = model$theta_clim, theta_geog = model$theta_geog,
-                           stat = c("weighted_mean", weight_stats))
-      lapply(surf, name_outcomes)
+      ts_multi_surfaces(clim(), pool(), y, model$theta_clim, model$theta_geog)
 })
 
 ## Reduce the per-entity stack to one community surface. Reduction reads
@@ -105,61 +74,15 @@ comm_entity_colors <- reactive({
 ## markers all collapse to "other".
 comm_category_result <- reactive({
       req(categorical_layer())
-      m <- multi_aim()
-      ent <- setdiff(names(m$bsl), "sum_weights")
-
-      if (input$comm_measure %in% paired_measures) {
-            # Biggest winner / loser: argmax and argmin of the per-entity
-            # DIFFERENCE. These cannot be recovered from the reduced
-            # surfaces -- which entity gained most is not a function of how
-            # much the community gained -- so they are the categorical case
-            # that genuinely needs the stack.
-            va <- m$bsl[[ent]]
-            vb <- m$fut[[ent]]
-            dv <- vb - va
-            idx <- if (identical(input$comm_measure, "biggest winner"))
-                  terra::which.max(dv) else terra::which.min(dv)
-
-            # Support over both eras together, so a cell that is empty now
-            # but gains entities still qualifies. Requiring historical
-            # support would mask exactly the arrivals this layer is for.
-            support <- (terra::app(va, fun = "sum", na.rm = TRUE) +
-                              terra::app(vb, fun = "sum", na.rm = TRUE)) / 2
-      } else {
-            # Dominant entity: per timeframe.
-            r <- if (identical(input$time, "future")) m$fut else m$bsl
-            v <- r[[ent]]
-            idx <- terra::which.max(v)
-            support <- terra::app(v, fun = "sum", na.rm = TRUE)
-      }
-
-      # Support floor FIRST. which.max always names a winner, including in
-      # cells where essentially nothing is expected to be present -- so
-      # without this the map shows a dominant tree species across
-      # unforested country. Masking before the frequency count also keeps
-      # those cells out of the top-N ranking, which otherwise promotes
-      # whichever entity happens to win the empty ground.
-      idx <- apply_support_floor(idx, support, input$support_floor)
-
-      # Lump all but the most frequent N. Ranking by cell count rather
-      # than mean value answers "what covers this map", which is the
-      # question a discrete palette can address.
-      n_top <- if (isTruthy(input$comm_top_n)) input$comm_top_n else 10
-      f <- terra::freq(idx)
-      f <- f[order(-f$count), , drop = FALSE]
-      top <- utils::head(f$value, max(1, n_top))
-      other <- setdiff(f$value, top)
-      if (length(other)) idx <- terra::subst(idx, other, 0)
-      names(idx) <- input$comm_measure
-
-      codes  <- c(if (length(other)) 0, top)
-      labels <- c(if (length(other)) "other", ent[top])
+      res <- ts_community_categories(multi_aim(), input$comm_measure, input$time,
+                                     input$support_floor,
+                                     if (isTruthy(input$comm_top_n)) input$comm_top_n else 10)
       # Looked up by entity name, so these match the composition panel
       # regardless of how the two views happen to rank entities.
-      cols <- unname(comm_entity_colors()[labels[labels != "other"]])
-      cols <- c(if (length(other)) "gray80", cols)
-
-      list(raster = idx, codes = codes, labels = labels, colors = cols)
+      other <- res$labels == "other"
+      res$colors <- c(if (any(other)) "gray80",
+                      unname(comm_entity_colors()[res$labels[!other]]))
+      res
 })
 
 ## COMMUNITY COMPOSITION MODULE -------------------
@@ -348,176 +271,13 @@ output$comm_ranking <- renderPlot({
                  x = if (prop) "proportional change" else "change")
 })
 
+## The quantitative community measures (R/layers.R)
 composition_layer <- reactive({
       req(multi_mode(), isTruthy(input$comm_measure))
       if (input$comm_measure %in% categorical_measures)
             return(comm_category_result()$raster)
       req(input$comm_measure %in% comm_measure_choices(model$track, model$fia_var, input$time))
-      m <- multi_aim()
-
-      reduce <- function(r){
-            ent <- setdiff(names(r), "sum_weights")
-            v <- r[[ent]]
-
-            # Shared pieces. Everything below is layer-wise terra
-            # arithmetic rather than an app() callback over cells, which
-            # matters at 143 layers.
-            s <- terra::app(v, fun = "sum", na.rm = TRUE)
-
-            # Shannon entropy of the composition, normalized to
-            # proportions q = v / sum(v):
-            #   H = -sum(q log q) = log(s) - sum(v log v) / s
-            # ifel() guards log(0); a zero entity contributes nothing to
-            # the entropy, and 0 * -Inf would otherwise be NaN.
-            shannon <- function(){
-                  vlv <- terra::app(terra::ifel(v > 0, v * log(v), 0),
-                                    fun = "sum", na.rm = TRUE)
-                  log(s) - vlv / s
-            }
-
-            out <- switch(input$comm_measure,
-                          # Expected richness. Summing occurrence
-                          # probabilities is deliberate: thresholding at
-                          # p > 0.5 would discard the difference between
-                          # 0.51 and 0.99, and Sum(p) is the unbiased
-                          # estimator if p is calibrated. Whether it IS
-                          # calibrated across ~143 mostly-rare entities is
-                          # the open question this layer exposes.
-                          "richness" = s,
-
-                          # Hill N1 -- the effective number of entities, in
-                          # the same units as richness, so the two are
-                          # directly comparable. A cell where one species
-                          # dominates has low diversity however many rare
-                          # species carry small probabilities, which is
-                          # exactly the behavior richness lacks.
-                          "diversity" = exp(shannon()),
-
-                          # Pielou's J, against the FULL entity set rather
-                          # than a count of entities present. With
-                          # continuous probabilities almost every entity is
-                          # nonzero somewhere, so a "number present" divisor
-                          # would be degenerate. Note this makes evenness
-                          # depend on the size of the entity set, which
-                          # moves with theta_geog and the bbox.
-                          "evenness" = shannon() / log(terra::nlyr(v)),
-
-                          # Share of the community held by its largest
-                          # member. Bounded 0-1 and needs no normalization.
-                          "dominance" = terra::app(v, fun = "max", na.rm = TRUE) / s)
-            req(!is.null(out))
-
-            # app(na.rm = TRUE) returns 0 where every layer is NA, i.e.
-            # outside analog range -- where a single-entity surface would
-            # correctly be blank. Restore nodata there, or the map grows a
-            # fringe of hard zeros that read as "no species" rather than
-            # "no prediction". Every entity layer shares one NA mask, since
-            # they come from one call with one set of weights and
-            # multi_values() contains no NAs, so masking by any single
-            # entity layer is enough.
-            out <- terra::mask(out, v[[1]])
-
-            # Support floor, applied per timeframe so a delta is blank
-            # wherever EITHER timeframe is unsupported. `s` is the natural
-            # denominator here: expected richness for an occurrence
-            # variable, total basal area or stems for an abundance one.
-            # Richness is exempt because it IS the denominator.
-            if (!identical(input$comm_measure, "richness"))
-                  out <- apply_support_floor(out, s, input$support_floor)
-
-            names(out) <- input$comm_measure
-            out
-      }
-
-      ## Paired reduction: both stacks at once, entity by entity. The
-      ## per-entity differences cannot be recovered from the reduced
-      ## surfaces -- Sum(max(f-h, 0)) is not a function of Sum(f) and
-      ## Sum(h) -- which is what makes these genuinely require the stack
-      ## rather than being obtainable from a cheap All-trees variable.
-      ##
-      ## `a` is the reference composition and `b` the comparison. For
-      ## temporal pairing that is historical and future; the same formulas
-      ## take a focal site's composition and every cell's for spatial
-      ## pairing, which is why they are written in terms of a and b.
-      reduce_paired <- function(a, b){
-            ent <- setdiff(names(a), "sum_weights")
-            va <- a[[ent]]
-            vb <- b[[ent]]
-
-            d      <- vb - va
-            gains  <- terra::app(terra::ifel(d > 0,  d, 0), fun = "sum", na.rm = TRUE)
-            losses <- terra::app(terra::ifel(d < 0, -d, 0), fun = "sum", na.rm = TRUE)
-            sa     <- terra::app(va, fun = "sum", na.rm = TRUE)
-            sb     <- terra::app(vb, fun = "sum", na.rm = TRUE)
-
-            out <- switch(input$comm_measure,
-                          # Bray-Curtis dissimilarity: sum|a-b| over
-                          # sum(a+b), which is (gains + losses) over the
-                          # combined community. 0 is identical
-                          # composition, 1 is no overlap. Threshold-free,
-                          # unlike Jaccard, which needs presence/absence
-                          # sets and so needs a cutoff.
-                          "turnover" = (gains + losses) / (sa + sb),
-
-                          # Absolute expected arrivals and departures, in
-                          # the variable's own units. Asymmetric on
-                          # purpose: what must arrive is a different
-                          # question from what must leave, and for
-                          # sourcing or connectivity only one of them is
-                          # the relevant demand.
-                          "expected gains"  = gains,
-                          "expected losses" = losses,
-
-                          # Gains as a share of the future community: the
-                          # fraction of what will be there that is not
-                          # there now. This is the colonization demand used
-                          # to weight connectivity, and it deliberately
-                          # ignores losses.
-                          "colonization demand" = gains / sb,
-
-                          # Its mirror: losses as a share of the CURRENT
-                          # community -- how much of what is here now is
-                          # expected to depart. Normalizing by sa rather
-                          # than sb is the whole difference, and it is what
-                          # makes this the question a manager asks about
-                          # the stand in front of them rather than about
-                          # the one that replaces it.
-                          #
-                          # With the two fractions and turnover together,
-                          # it is visible WHICH side drives turnover:
-                          # Bray-Curtis is their average when the two
-                          # communities are similar in size, so a high
-                          # turnover with a low loss fraction is
-                          # accumulation rather than replacement.
-                          "loss fraction" = losses / sa)
-            req(!is.null(out))
-
-            out <- terra::mask(out, va[[1]])
-
-            # Ratios only. Turnover is normalized by the combined
-            # community, colonization demand by the future one, so each is
-            # floored against its own denominator. The absolute sums stay
-            # meaningful at low support and are left alone.
-            if (identical(input$comm_measure, "turnover"))
-                  out <- apply_support_floor(out, (sa + sb) / 2, input$support_floor)
-            if (identical(input$comm_measure, "colonization demand"))
-                  out <- apply_support_floor(out, sb, input$support_floor)
-            if (identical(input$comm_measure, "loss fraction"))
-                  out <- apply_support_floor(out, sa, input$support_floor)
-
-            names(out) <- input$comm_measure
-            out
-      }
-
-      if (input$comm_measure %in% paired_measures)
-            return(reduce_paired(m$bsl, m$fut))
-
-      hst <- reduce(m$bsl)
-      fut <- reduce(m$fut)
-      switch(input$time,
-             "historical" = hst,
-             "future"     = fut,
-             "delta"      = fut - hst)
+      ts_community_layer(multi_aim(), input$comm_measure, input$time, input$support_floor)
 })
 ## The support floor's units are the denominator's units, which change with
 ## the variable and with entity scope.

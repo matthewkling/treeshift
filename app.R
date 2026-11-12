@@ -17,13 +17,16 @@ library(circuitscaper)
 
 ## global setup ##
 
-# Helper functions and constants live in helpers/, the UI's parts in ui/, and the
+# The modeling core lives in R/ (scripts load it with scripts/load_core.R),
+# helper functions and constants in helpers/, the UI's parts in ui/, and the
 # server's in server/. They are sourced explicitly into this file's environment.
-# (Not from an R/ folder: Shiny sources that into a parent environment, where
-# the functions could not see the data loaded below.) helpers/ and ui/ load in
-# alphabetical order, so a value computed at top level in one of them may only
-# use definitions from its own file.
-for (.src in list.files(c("helpers", "ui"), pattern = "[.]R$", full.names = TRUE)) {
+# (R/ is not autoloaded, per R/_disable_autoload.R: Shiny would source it into a
+# parent environment, where the functions could not see the data loaded below.)
+# Each folder loads in alphabetical order after the one before, so a value
+# computed at top level in a file may only use definitions from earlier folders
+# or its own file.
+for (.src in c(list.files("R", pattern = "^[^_].*[.]R$", full.names = TRUE),
+               list.files(c("helpers", "ui"), pattern = "[.]R$", full.names = TRUE))) {
       source(.src, local = TRUE, encoding = "UTF-8", keep.source = TRUE)
 }
 
@@ -49,16 +52,13 @@ clim_bbox <- c(floor(clim_bbox[c(1, 3)] / bbox_res) * bbox_res, ceiling(clim_bbo
 # ssp585_2041-2070_gfdl-esm4.tif). Three independent dropdowns expose the
 # pathway / era / model axes; the active raster filename is reconstructed from
 # the current selections.
+#
+# The model's input data (R/data.R). The globals below are views of it.
+core_data <- ts_data("data")
+
 .ssp_label_map <- c(ssp126 = "SSP1-2.6", ssp245 = "SSP2-4.5",
                     ssp370 = "SSP3-7.0", ssp585 = "SSP5-8.5")
-.scenario_files <- list.files("data/clim_future", pattern = "\\.tif$", full.names = FALSE)
-.scenario_parts <- strsplit(tools::file_path_sans_ext(.scenario_files), "_", fixed = TRUE)
-scenario_meta <- tibble::tibble(
-      file   = .scenario_files,
-      ssp    = vapply(.scenario_parts, `[`, character(1), 1),
-      period = vapply(.scenario_parts, `[`, character(1), 2),
-      model  = vapply(.scenario_parts, `[`, character(1), 3)
-) %>%
+scenario_meta <- core_data$scenarios %>%
       mutate(ssp_label = ifelse(ssp %in% names(.ssp_label_map),
                                 .ssp_label_map[ssp], toupper(ssp)),
              model_label = toupper(model))
@@ -74,18 +74,18 @@ ssp_choices    <- setNames(as.list(.ssp_meta$ssp), .ssp_meta$ssp_label)
 period_choices <- setNames(as.list(.period_meta$period), .period_meta$period)
 model_choices  <- setNames(as.list(.model_meta$model), .model_meta$model_label)
 
-# Defaults: prefer the published baseline scenario; fall back along each axis
+# Defaults: prefer the core's default scenario (R/settings.R); fall back along each axis
 # independently if a piece is missing.
 .pick_default <- function(preferred, axis_values) {
       if (preferred %in% axis_values) preferred else axis_values[1]
 }
-default_ssp    <- .pick_default("ssp585",    .ssp_meta$ssp)
-default_period <- .pick_default("2041-2070", .period_meta$period)
-default_model  <- .pick_default("gfdl-esm4", .model_meta$model)
+default_ssp    <- .pick_default(ts_default_settings()$scenario_ssp, .ssp_meta$ssp)
+default_period <- .pick_default(ts_default_settings()$scenario_period, .period_meta$period)
+default_model  <- .pick_default(ts_default_settings()$scenario_model, .model_meta$model)
 
-fia_all <- read_csv("data/fia.csv", show_col_types = FALSE)
+fia_all <- core_data$fia
 spp <- sort(unique(fia_all$species))
-forest_types_in_data <- sort(unique(na.omit(fia_all$forest_type)))
+forest_types_in_data <- sort(unique(c(0L, fia_all$forest_type)))   # 0 = Non-forest
 # Initial map bounds: bounding box of all FIA plots
 fia_xy_bounds <- list(
       xmin = min(fia_all$x, na.rm = TRUE),
@@ -94,20 +94,9 @@ fia_xy_bounds <- list(
       ymax = max(fia_all$y, na.rm = TRUE)
 )
 
-# Forest type / group lookup table (FIA FORTYPCD)
-forest_type_codes <- read_csv("data/forest_type_codes.csv", show_col_types = FALSE) %>%
-      bind_rows(tibble::tibble(
-            forest_type = 0L,
-            forest_type_name = "Non-forest",
-            forest_group = 0L,
-            forest_group_name = "Non-forest",
-            forest_group_abbr = "nonfor"
-      ))
-
-# Include the Non-forest sentinel in the in-data list so it appears in the
-# dropdown alongside real codes. fia_plots_species_all() recodes NA -> 0 to
-# match.
-forest_types_in_data <- sort(unique(c(0L, forest_types_in_data)))
+# Forest type / group lookup table (FIA FORTYPCD), including the Non-forest
+# sentinel 0 that ts_data() recodes non-forest plots to
+forest_type_codes <- core_data$forest_types
 
 # Only expose codes that actually appear in the FIA data
 .ft_lookup <- forest_type_codes %>%
@@ -132,14 +121,8 @@ forest_group_choices <- setNames(
 )
 
 # Lookup helpers (vectorized; return NA for unknown codes)
-ft_name <- function(code) {
-      forest_type_codes$forest_type_name[match(code, forest_type_codes$forest_type)]
-}
-fg_name <- function(code) {
-      # use distinct group rows to avoid duplicate matches
-      g <- distinct(forest_type_codes, forest_group, forest_group_name)
-      g$forest_group_name[match(code, g$forest_group)]
-}
+ft_name <- function(code) ts_forest_type_name(core_data, code)
+fg_name <- function(code) ts_forest_group_name(core_data, code)
 
 theme_set(theme_bw(base_size = 16))
 

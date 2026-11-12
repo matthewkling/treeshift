@@ -1,90 +1,9 @@
 ## ANALOG IMPACT MODEL -----------------------------------------
 
 ### full raster -----------------------
-aim <- reactive({
-
-      is_ratio <- !is.null(ratio_pieces())
-
-      # Stats that describe the WEIGHTS rather than an outcome column, for
-      # the evidence map layers (server/map_layers.R): support (sum of
-      # weights) and closeness (sum of squared weights over sum of
-      # weights). analog_impact() returns one layer for each of these
-      # regardless of how many outcome columns `y` carries.
-      weight_stats <- c("sum_weights", "effective_weight")
-
-      # Spread among the analog plots (weighted SD of the response), for a
-      # single (non-ratio) response only; see spread_computed().
-      spread_stat <- if (spread_computed()) "weighted_sd"
-
-      # Outcome columns for AIM. pool()$values also carries
-      # samp_method_cd, which exists for the site_analogs() / FIA-marker
-      # path and is not a response -- interpolating it produced an extra
-      # unread layer on every run.
-      y_cols <- setdiff(names(pool()$values), "samp_method_cd")
-
-      # analog_impact() names outcome layers `weighted_mean_<column>` when
-      # `y` has two or more columns, but bare `weighted_mean` when it has
-      # exactly one. Stripping the prefix with gsub() therefore yields
-      # "weighted_mean" rather than "response" in the single-column case,
-      # leaving aim()$bsl$response NULL. That never fired only because
-      # samp_method_cd rode along as a spurious second column -- i.e. the
-      # rename was load-bearing on an accident. Rename positionally
-      # instead: outcome layers are whatever isn't a weight stat, returned
-      # in y-column order.
-      name_outcomes <- function(r){
-            names(r)[names(r) == "weighted_sd"] <- "spread"
-            is_outcome <- !names(r) %in% c(weight_stats, "spread")
-            stopifnot(sum(is_outcome) == length(y_cols))
-            names(r)[is_outcome] <- y_cols
-            r
-      }
-
-      surf <- aim_surfaces(list(bsl = clim()$hst, fut = clim()$fut), pool(),
-                           y = pool()$values[, y_cols, drop = FALSE],
-                           theta_clim = model$theta_clim, theta_geog = model$theta_geog,
-                           stat = c("weighted_mean", spread_stat, weight_stats))
-      aim_bsl <- name_outcomes(surf$bsl)
-      aim_fut <- name_outcomes(surf$fut)
-
-      # Pooled-ratio surface: ratio-of-means from the weighted_mean layers
-      # occ/num/denom, combined into the standard `response` layer so all
-      # downstream code is unchanged.
-      #
-      # num/denom is already conditional on occurrence -- absent plots
-      # contribute 0 to both and drop out -- so it reads "the ratio among
-      # plots where the focal entity occurs".
-      #
-      # The regeneration fractions stay conditional and are MASKED (NA)
-      # where no occupied plot falls within kernel range. Multiplying by
-      # occurrence instead would suppress unsuitable ground by driving the
-      # value to 0 -- but 0 already means "occurs, adults only" (relict), so
-      # the product would conflate two very different states. Masking keeps
-      # them distinct: blank = doesn't occur, 0 = occurs but no regen. This
-      # also matches the per-plot markers, which are already NA where the
-      # species is absent and 0 where it's adults-only.
-      #
-      # Proportion basal area keeps the occurrence weighting: there 0 means
-      # "the focal species is 0% of a real stand" vs "there is no stand" --
-      # both read as "the species isn't here", so collapsing them costs
-      # little, and the unconditional surface is better behaved.
-      if (is_ratio) {
-            conditional <- grepl("fraction", model$fia_var)
-            combine_ratio <- function(r){
-                  resp <- r[["num"]] / r[["denom"]]
-                  if (!conditional) resp <- r[["occ"]] * resp
-                  # denom == 0: no occupied plot in range. Undefined for the
-                  # fractions; 0 for the occurrence-weighted proportion.
-                  resp[!is.finite(resp[])] <- if (conditional) NA else 0
-                  names(resp) <- "response"
-                  c(r, resp)
-            }
-            aim_bsl <- combine_ratio(aim_bsl)
-            aim_fut <- combine_ratio(aim_fut)
-      }
-
-      list(fut = aim_fut,
-           bsl = aim_bsl)
-})
+# Single-entity surfaces for both timeframes (R/aim.R). A community run's
+# per-entity surfaces are multi_aim() (server/community.R).
+aim <- reactive(ts_surfaces(clim(), pool(), model$fia_var, model$theta_clim, model$theta_geog))
 
 ### focal site ------------------------
 site_analogs <- reactive({

@@ -196,55 +196,12 @@ output$model_delta_plot <- renderPlot({
 })
 
 
+# The analog pool (R/aim.R): plot climates, the search indexes, and the
+# outcome columns -- the single response or a pooled ratio's pieces, plus
+# samp_method_cd for plot styling. A community run passes its per-entity
+# responses to the surfaces separately.
 pool <- reactive({
-      req(plot_occ())
-      xy <- plot_occ()[, c("x", "y")]
-      # Extract climate from the raw (uncropped, unaggregated) rasters at
-      # each plot's actual location. This gives the climate the plot is
-      # actually experiencing rather than the spatial average over a
-      # coarsened cell, and means pool() doesn't depend on the modeling
-      # grid (input$clim_agg) or the bbox crop.
-      cp <- clim_pool()
-      clim_hst <- terra::extract(cp$hst, xy, ID = FALSE, method = "bilinear")
-      clim_fut <- terra::extract(cp$fut, xy, ID = FALSE, method = "bilinear")
-
-      # # code used interactively during dev to determine optimal index res
-      # tune_index_res(x = cbind(xy, clim_fut), pool = cbind(xy, clim_hst),
-      #                env = kernel("gaussian", input$theta_clim, input$theta_clim*3),
-      #                geog = kernel("gaussian", input$theta_geog, input$theta_geog*3),
-      #                stat = "sum_weights")
-
-      # Response(s) for AIM smoothing. Pooled-ratio variables pack the
-      # numerator/denominator/occurrence pieces so aim() can form the
-      # surface as occurrence-gated ratio-of-means; everything else uses a
-      # single response column.
+      po <- plot_occ()
       rp <- ratio_pieces()
-      vals <- if (is.null(rp)) {
-            tibble::tibble(response = response_values(),
-                           samp_method_cd = plot_occ()$samp_method_cd)
-      } else {
-            tibble::tibble(occ = as.integer(rp$denom > 0),
-                           num = rp$num,
-                           denom = rp$denom,
-                           samp_method_cd = plot_occ()$samp_method_cd)
-      }
-
-      # The same plots, in the same rows, in AIM coordinates (see
-      # aim_surfaces()), as a table for the FFT method and an index for
-      # the exact one. index_hst/index_fut stay lon/lat for the focal-site
-      # analog search.
-      aim_pts <- data.frame(aim_xy(xy), clim_hst)
-
-      list(index_hst = build_analog_index(cbind(xy, clim_hst), coord_type = "lonlat",
-                                          geog_res_adj = 4),
-           index_fut = build_analog_index(cbind(xy, clim_fut), coord_type = "lonlat",
-                                          geog_res_adj = 4),
-           aim_pts = aim_pts,
-           aim_index = build_analog_index(aim_pts, coord_type = "projected",
-                                          geog_res_adj = 4),
-           clim_hst = clim_hst,
-           clim_fut = clim_fut,
-           # Active response(s) for AIM smoothing (built as `vals` above),
-           # plus samp_method_cd carried through for plot styling.
-           values = vals)
+      ts_pool(po, clim_pool(), ts_pool_values(po, if (is.null(rp)) response_values(), rp))
 })

@@ -19,10 +19,8 @@ scenario_file <- reactive({
       req(isTruthy(model$scenario_ssp),
           isTruthy(model$scenario_period),
           isTruthy(model$scenario_model))
-      f <- paste0(model$scenario_ssp, "_",
-                  model$scenario_period, "_",
-                  model$scenario_model, ".tif")
-      paths <- file.path("data/clim_future", f)
+      paths <- ts_scenario_paths(core_data, model$scenario_ssp, model$scenario_period,
+                                 model$scenario_model)
       exists <- file.exists(paths)
 
       shiny::validate(need(
@@ -38,38 +36,14 @@ scenario_file <- reactive({
 })
 
 clim_pool <- reactive({
-      # Resolve scenario_file() at the top level so a req()/validate()
-      # short-circuit (e.g., no selected (ssp, period, model) combination
-      # exists on disk) propagates as a clean reactive cancellation
-      # rather than an rast() argument-evaluation error.
-      sf <- scenario_file()
-      r_hst <- rast("data/clim_historical.tif")[[model$clim_vars]]
-
-      # scenario_file() may return multiple paths (one per selected GCM).
-      # Read each, subset to the active climate variables, and average
-      # layer-wise to form a model ensemble. Subsetting *before* the sum
-      # guarantees layers align by position == name across models, since
-      # raster addition is positional. Reduce() (vs. do.call("+", ...))
-      # is used so the single-model case is a clean no-op rather than an
-      # error from calling `+` with one argument.
-      fut_list <- lapply(sf, function(p) rast(p)[[model$clim_vars]])
-      r_fut <- Reduce(`+`, fut_list) / length(fut_list)
-      names(r_fut) <- model$clim_vars   # Reduce()/`+` can drop layer names
-
-      list(hst = r_hst, fut = r_fut)
+      # scenario_file() first, so a missing scenario shows its message rather
+      # than ts_climate()'s error
+      scenario_file()
+      ts_climate(core_data, model$clim_vars, model$scenario_ssp, model$scenario_period,
+                 model$scenario_model)
 })
 
-clim <- reactive({
-      cp <- clim_pool()
-      bb_ext <- ext(c(model$bbox_x, model$bbox_y))
-      clim_hst <- cp$hst %>%
-            crop(bb_ext) %>%
-            aggregate(model$clim_agg, na.rm = TRUE)
-      clim_fut <- cp$fut %>%
-            crop(bb_ext) %>%
-            aggregate(model$clim_agg, na.rm = TRUE)
-      list(hst = clim_hst, fut = clim_fut)
-})
+clim <- reactive(ts_climate_grid(clim_pool(), model$bbox_x, model$bbox_y, model$clim_agg))
 
 
 ## DISPLAY-ONLY COVARIATES ------------------------------------

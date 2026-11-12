@@ -1,7 +1,6 @@
 # Climate and FIA variable catalog: available variables, their units, and how
 # a (track, metric, stage) choice resolves to an FIA variable.
 
-clim_vars <- function() c("tmean", "ppt", "aet", "cwd", "tmincm", "tmaxwm")
 
 # Native (un-standardized) units for each climate variable, used to label the
 # climate-model selector chart after deltas are back-converted from z-scores.
@@ -81,46 +80,6 @@ metric_choices <- function(track, stage = "any") {
 # old backwards direction, and it also overwrote the labeled choice vector
 # ("all life stages") with bare values and reset the user's selection.
 
-# Canonical fia_var for a (track, metric, stage) combination. Returns NULL for
-# combinations metric_choices() would not have offered -- "abundance" has no
-# "any" stage, for instance -- so callers must guard rather than assume a value.
-resolve_var <- function(track, metric, stage) {
-      if (track %in% c("Forest type", "Forest group")) return("presence probability")
-      switch(metric,
-             "occurrence" = switch(stage,
-                                   "seedling" = "seedling presence",
-                                   "sapling"  = "sapling presence",
-                                   "adult"    = "tree presence",
-                                   "any"      = "presence probability"),
-             "abundance" = switch(stage,
-                                  "seedling" = "number of seedlings",
-                                  "sapling"  = "number of saplings",
-                                  "adult"    = "number of trees"),
-             "basal area"            = "total basal area",
-             "species richness" = switch(stage,
-                                         "seedling" = "seedling species richness",
-                                         "sapling"  = "sapling species richness",
-                                         "adult"    = "adult species richness",
-                                         "any"      = "species richness"),
-             "proportion basal area" = "proportion basal area",
-             "regeneration fraction" = switch(stage,
-                                              "seedling" = "seedling fraction",
-                                              "sapling"  = "sapling fraction"))
-}
-
-# Climate variables selected at startup. Named once because three controls
-# depend on it: clim_vars itself, and cr_v1, whose choices an observer then
-# keeps in sync with it. Restating the default in each UI declaration is
-# how the Variable dropdown ended up offering "abundance" at a life stage where
-# it could not resolve.
-clim_vars_default <- c("cwd", "aet")
-
-# Occurrence-type variables. Richness is a sum of occurrence probabilities and
-# is only defined over these: summing "total basal area" across entities gives
-# community basal area, which is a perfectly good surface but is not richness.
-occurrence_vars <- c("presence probability", "seedling presence",
-                     "sapling presence", "tree presence")
-
 # Variables whose value depends on the SUPPORT it was estimated over, and so
 # need the plot-scale qualifier in the legend.
 #
@@ -133,7 +92,7 @@ occurrence_vars <- c("presence probability", "seedling presence",
 # are different numbers with no unit conversion between them.
 #
 # Two non-obvious members. "proportion basal area" is a ratio of means, which
-# would be scale-free on its own, but combine_ratio() multiplies it by the
+# would be scale-free on its own, but ts_surfaces() multiplies it by the
 # occurrence layer, and that multiplier carries the support dependence. The
 # regeneration fractions are ratios of occurrence-based counts, and the support
 # does not cancel: both components saturate toward 1 as support grows, dragging

@@ -1,142 +1,19 @@
 ## DATA SETUP -----------------------
 
-# Padded bbox: includes plots just outside the model bounding box so they
-# can still serve as analogs for cells near the bbox edge.
-# Pad tracks theta_geog * 3 (the hard cutoff used by analog_impact),
-# converted from km to degrees with a conservative ratio. 1° lat ≈ 111 km;
-# 1° lon at 50° N ≈ 71 km. Using /100 overestimates the pad by 10–30% at
-# CONUS latitudes, which is harmless.
-pool_bbox <- reactive({
-      pad_deg <- model$theta_geog * 3 / 100
-      list(x = c(model$bbox_x[1] - pad_deg, model$bbox_x[2] + pad_deg),
-           y = c(model$bbox_y[1] - pad_deg, model$bbox_y[2] + pad_deg))
-})
+# The analog pool's bounding box: the model box padded by the kernel's reach
+pool_bbox <- reactive(ts_pool_bbox(model$bbox_x, model$bbox_y, model$theta_geog))
 
-# all plots within padded bbox (the analog pool)
-fia_plots <- reactive({
-      pb <- pool_bbox()
-      fia_all %>%
-            select(x, y) %>%
-            distinct() %>%
-            filter(between(x, pb$x[1], pb$x[2]),
-                   between(y, pb$y[1], pb$y[2])) %>%
-            mutate(index = 1:nrow(.))
-})
+# One row per FIA plot in the pool (R/plots.R). Its rows are the plot index
+# that the pool and every response are aligned to.
+plot_occ <- reactive(ts_plots(core_data, pool_bbox(), model$species))
 
-fia_plots_species_all <- reactive({
-      fia_all %>%
-            # Recode NA forest_type to the Non-forest sentinel (0) so
-            # downstream filters and joins treat non-forest plots
-            # uniformly with real forest types.
-            mutate(forest_type = ifelse(is.na(forest_type), 0L, forest_type)) %>%
-            left_join(select(fia_plots(), x, y, index),
-                      by = join_by(x, y))
-})
-
-plot_occ <- reactive({
-      pb <- pool_bbox()
-      # Plot-level type->group lookup (one row per forest_type code)
-      ft_to_fg <- distinct(forest_type_codes, forest_type, forest_group)
-
-      fia_plots_species_all() %>%
-            filter(between(x, pb$x[1], pb$x[2]),
-                   between(y, pb$y[1], pb$y[2])) %>%
-            mutate(focal = species == model$species & !is.na(species)) %>%
-            group_by(x, y) %>%
-            summarize(
-                  samp_method_cd = mean(samp_method_cd),
-                  pres = as.integer(any(focal)), # focal species presence/absence (any life stage)
-                  pres_seed = as.integer(any(focal & n_seedlings > 0)), # focal species seedling presence
-                  pres_sap = as.integer(any(focal & n_saplings > 0)), # focal species sapling presence
-                  pres_tree = as.integer(any(focal & n_trees > 0)), # focal species adult (tree) presence
-                  batot = sum(basal_area[focal]), # total focal species basal area
-                  baprop = weighted.mean(focal, basal_area), #  proportion ba
-                  baplot = sum(basal_area), # total plot ba, all species
-                  nttot = sum(n_trees[focal]), # focal species tree count
-                  ntplot = sum(n_trees), # total plot tree count, all species
-                  satot = sum(n_saplings[focal]), # focal species sapling count
-                  saplot = sum(n_saplings), # total plot sapling count, all species
-                  nstot = sum(n_seedlings[focal]), # focal species seedling count
-                  nsplot = sum(n_seedlings), # total plot seedling count, all species
-                  # Plot species richness, by stage. A count of distinct
-                  # species is an aggregation ACROSS species done at the
-                  # plot, exactly like baplot and ntplot -- which is what
-                  # makes it an All-trees variable rather than something
-                  # only the multi-entity path can produce. Because AIM is
-                  # a weighted mean (linear) with entity-independent
-                  # weights, interpolating this equals summing the
-                  # interpolated per-entity occurrence surfaces. The two
-                  # routes should agree to floating point, which makes each
-                  # a check on the other.
-                  nspp      = dplyr::n_distinct(species[!is.na(species)]),
-                  nspp_seed = dplyr::n_distinct(species[!is.na(species) & n_seedlings > 0]),
-                  nspp_sap  = dplyr::n_distinct(species[!is.na(species) & n_saplings > 0]),
-                  nspp_tree = dplyr::n_distinct(species[!is.na(species) & n_trees > 0]),
-                  forest_type = dplyr::first(forest_type), # plot-level FORTYPCD
-                  .groups = "drop") %>%
-            left_join(ft_to_fg, by = "forest_type") %>%
-            mutate(baprop = ifelse(baplot == 0, 0, baprop),
-                   # Per-plot regeneration fractions (focal species), on an
-                   # occurrence basis to match the interpolated surface (see
-                   # ratio_pieces): 0 = adults only, 0.5 = stage and adults
-                   # both present, 1 = stage only. NA where the species is
-                   # absent as both that stage and adults.
-                   seed_frac = ifelse((nstot + nttot) > 0,
-                                      (nstot > 0) / ((nstot > 0) + (nttot > 0)), NA_real_),
-                   sap_frac  = ifelse((satot + nttot) > 0,
-                                      (satot > 0) / ((satot > 0) + (nttot > 0)), NA_real_))
-})
-
-# Single active response vector, aligned with plot_occ() rows.
-# Computed from the (track, fia_var, focal_id) tuple.
+# Single active response vector, aligned with plot_occ() rows
 response_values <- reactive({
-      po <- plot_occ()
       req(isTruthy(model$track), isTruthy(model$fia_var))
-
-      v <- if (model$track == "Species") {
-            switch(model$fia_var,
-                   "presence probability"  = po$pres,
-                   "seedling presence"      = po$pres_seed,
-                   "sapling presence"       = po$pres_sap,
-                   "tree presence"          = po$pres_tree,
-                   "proportion basal area" = po$baprop,
-                   "total basal area"      = po$batot,
-                   "number of trees"       = po$nttot,
-                   "number of saplings"    = po$satot,
-                   "number of seedlings"   = po$nstot,
-                   "seedling fraction"      = po$seed_frac,
-                   "sapling fraction"       = po$sap_frac)
-      } else if (model$track == "Forest type") {
-            req(isTruthy(model$forest_type))
-            as.integer(!is.na(po$forest_type) &
-                             po$forest_type == as.integer(model$forest_type))
-      } else if (model$track == "Forest group") {
-            req(isTruthy(model$forest_group))
-            as.integer(!is.na(po$forest_group) &
-                             po$forest_group == as.integer(model$forest_group))
-      } else if (model$track == "All trees") {
-            switch(model$fia_var,
-                   "presence probability" = as.integer((po$ntplot + po$saplot) > 0 | po$nsplot > 0),
-                   "seedling presence"    = as.integer(po$nsplot > 0),
-                   "sapling presence"     = as.integer(po$saplot > 0),
-                   "tree presence"        = as.integer(po$ntplot > 0),
-                   "total basal area"     = po$baplot,
-                   "number of trees"      = po$ntplot,
-                   "number of saplings"   = po$saplot,
-                   "number of seedlings"  = po$nsplot,
-                   "species richness"          = po$nspp,
-                   "seedling species richness" = po$nspp_seed,
-                   "sapling species richness"  = po$nspp_sap,
-                   "adult species richness"    = po$nspp_tree,
-                   # Occurrence-based, matching ratio_pieces() and the
-                   # Species-track fractions in plot_occ(): 0 = adults only,
-                   # 0.5 = stage and adults both present, 1 = stage only.
-                   "seedling fraction"    = ifelse((po$nsplot + po$ntplot) > 0,
-                                                   (po$nsplot > 0) / ((po$nsplot > 0) + (po$ntplot > 0)), NA_real_),
-                   "sapling fraction"     = ifelse((po$saplot + po$ntplot) > 0,
-                                                   (po$saplot > 0) / ((po$saplot > 0) + (po$ntplot > 0)), NA_real_))
-      }
-
+      if (model$track == "Forest type") req(isTruthy(model$forest_type))
+      if (model$track == "Forest group") req(isTruthy(model$forest_group))
+      v <- ts_response(plot_occ(), model$track, model$fia_var,
+                       model$forest_type, model$forest_group)
       # Guard against transient NULL during track/fia_var transitions
       req(!is.null(v))
       v
@@ -331,167 +208,23 @@ export_points <- reactive({
       out
 })
 
-# Pooled-ratio variables (proportion basal area, seedling/sapling fraction)
-# are interpolated as a ratio-of-means rather than a mean-of-ratios: we
-# interpolate the numerator and denominator separately and divide the
-# surfaces (then gate by occurrence in aim()). This returns the per-plot
-# numerator/denominator for those variables, or NULL for everything else
-# (which uses the single-response path). Occurrence is denom > 0.
-## MULTI-ENTITY RESPONSE MATRIX -------------------
-##
-## plot_occ() collapses to one row per plot around a single focal entity
-## (`focal = species == input$species`), so there is nowhere for a
-## multi-column `y` to come from. This builds the wide counterpart: one
-## row per plot, one column per entity, holding the same quantity
-## response_values() would return if that entity were the focal one.
-##
-## Row alignment with plot_occ() is the whole ballgame. pool()$index_hst is
-## built from plot_occ()[, c("x","y")], so a mismatch here silently attaches
-## every entity's response to the wrong plot and produces maps that look
-## entirely plausible. Alignment is guaranteed by construction (the join
-## runs FROM plot_occ()'s coordinates) and then asserted on the coordinates
-## themselves rather than on row counts.
+# Per-entity responses for a community run, row-aligned with plot_occ()
+# (R/plots.R)
 multi_values <- reactive({
       req(isTruthy(model$track))
-      po <- plot_occ()
-      xy <- po[, c("x", "y")]
-
-      if (model$track %in% c("Forest type", "Forest group")) {
-            # Membership is plot-level -- one type per plot -- so the wide
-            # form is an indicator matrix and fia_var does not apply. Same
-            # reason response_values() ignores fia_var for these tracks.
-            key <- if (model$track == "Forest type") po$forest_type else po$forest_group
-            lvls <- sort(unique(key[!is.na(key)]))
-            req(length(lvls) > 0)
-            w <- as.data.frame(
-                  vapply(lvls, function(k) as.integer(!is.na(key) & key == k),
-                         integer(nrow(po))),
-                  check.names = FALSE)
-
-            # Name the columns for the classes rather than their FORTYPCD
-            # integers. The column names ARE the entity labels everywhere
-            # downstream -- legend, category table, and any future ranking
-            # -- so resolving them here fixes all of those at once rather
-            # than translating codes at each display site.
-            nm <- if (model$track == "Forest type") ft_name(as.integer(lvls))
-            else fg_name(as.integer(lvls))
-            nm[is.na(nm)] <- paste(model$track, lvls[is.na(nm)])
-            names(w) <- make.unique(as.character(nm))
-
-      } else {
+      if (!model$track %in% c("Forest type", "Forest group"))
             req(isTruthy(model$fia_var), model$fia_var %in% multi_vars)
-            pb <- pool_bbox()
-
-            # Same summaries plot_occ() computes, but grouped by entity as
-            # well as plot. All of them at once: it is a single pass over
-            # the same rows either way, and computing them together keeps
-            # the definitions visibly identical to the single-entity path.
-            long <- fia_plots_species_all() %>%
-                  filter(between(x, pb$x[1], pb$x[2]),
-                         between(y, pb$y[1], pb$y[2]),
-                         !is.na(species)) %>%
-                  group_by(x, y, species) %>%
-                  summarize(
-                        # Presence is "the entity was recorded at this
-                        # plot", matching plot_occ()'s any(focal) -- it is
-                        # not conditioned on any stage count.
-                        pres      = 1L,
-                        pres_seed = as.integer(any(n_seedlings > 0)),
-                        pres_sap  = as.integer(any(n_saplings > 0)),
-                        pres_tree = as.integer(any(n_trees > 0)),
-                        batot     = sum(basal_area),
-                        nttot     = sum(n_trees),
-                        satot     = sum(n_saplings),
-                        nstot     = sum(n_seedlings),
-                        .groups = "drop")
-
-            val_col <- switch(model$fia_var,
-                              "presence probability"  = "pres",
-                              "seedling presence"     = "pres_seed",
-                              "sapling presence"      = "pres_sap",
-                              "tree presence"         = "pres_tree",
-                              "total basal area"      = "batot",
-                              "proportion basal area" = "batot",
-                              "number of trees"       = "nttot",
-                              "number of saplings"    = "satot",
-                              "number of seedlings"   = "nstot")
-
-            wide <- long %>%
-                  select(x, y, species, value = dplyr::all_of(val_col)) %>%
-                  tidyr::pivot_wider(names_from = species, values_from = value,
-                                     values_fill = 0)
-
-            # Join FROM plot_occ()'s coordinates, so row order is inherited
-            # rather than assumed. Plots where no entity was recorded are
-            # dropped by the !is.na(species) filter above and must come
-            # back as all-zero rows: absence is data, and dropping those
-            # plots would bias every entity's surface upward.
-            j <- xy %>% left_join(wide, by = dplyr::join_by(x, y))
-            stopifnot(nrow(j) == nrow(xy),
-                      identical(j$x, xy$x), identical(j$y, xy$y))
-
-            w <- as.data.frame(j[, setdiff(names(j), c("x", "y")), drop = FALSE],
-                               check.names = FALSE)
-            w[is.na(w)] <- 0
-
-            if (identical(model$fia_var, "proportion basal area")) {
-                  # Denominator is the plot total across ALL entities, so
-                  # it is shared. Plots with no basal area get 0 rather
-                  # than NaN, matching plot_occ()'s baprop guard.
-                  denom <- po$baplot
-                  w[] <- lapply(w, function(v) ifelse(denom == 0, 0, v / denom))
-            }
-      }
-
-      # Occupied-plot count per entity: the pool-level support signal, and
-      # the basis for deciding a rare-entity floor. Attached rather than
-      # filtered on, so that decision can be made against real numbers
-      # instead of a guessed threshold.
-      attr(w, "n_plots") <- vapply(w, function(v) sum(v > 0, na.rm = TRUE), integer(1))
-      w
+      ts_multi_response(core_data, plot_occ(), pool_bbox(), model$track, model$fia_var)
 })
 
+# Per-plot numerator and denominator of a pooled-ratio variable, or NULL for
+# the others (R/plots.R)
 ratio_pieces <- reactive({
       req(isTruthy(model$track), isTruthy(model$fia_var))
-      po <- plot_occ()
-      # Regeneration fractions are a fraction of OCCURRENCE weight, not of
-      # stem density. Seedlings and saplings are tallied on the microplot
-      # (each stem = 74.965/acre) while adults come off the subplot (each =
-      # 6.018/acre), so a density ratio applies a ~12.5x amplification to
-      # every regen stem before dividing: one seedling + one adult reads
-      # 0.93 rather than 0.5, squashing the balanced core up against the
-      # pure-colonization end. Using presence indicators puts both stages on
-      # the same footing and gives a readable axis: 0 = adults only
-      # (relict/trailing), ~0.5 = both present (core), 1 = regen only
-      # (colonizing/leading).
-      #
-      # Proportion basal area is deliberately left on a density basis: it is
-      # focal BA over stand BA, with each stem's own TPA applied to both
-      # sides, so it never crosses the microplot/subplot boundary and isn't
-      # distorted the way the regen fractions are.
-      if (model$track == "Species") {
-            switch(model$fia_var,
-                   "proportion basal area" = list(num = po$batot, denom = po$baplot),
-                   "seedling fraction"     = list(num = as.integer(po$nstot > 0),
-                                                  denom = as.integer(po$nstot > 0) +
-                                                        as.integer(po$nttot > 0)),
-                   "sapling fraction"      = list(num = as.integer(po$satot > 0),
-                                                  denom = as.integer(po$satot > 0) +
-                                                        as.integer(po$nttot > 0)),
-                   NULL)
-      } else if (model$track == "All trees") {
-            switch(model$fia_var,
-                   "seedling fraction" = list(num = as.integer(po$nsplot > 0),
-                                              denom = as.integer(po$nsplot > 0) +
-                                                    as.integer(po$ntplot > 0)),
-                   "sapling fraction"  = list(num = as.integer(po$saplot > 0),
-                                              denom = as.integer(po$saplot > 0) +
-                                                    as.integer(po$ntplot > 0)),
-                   NULL)
-      } else NULL
+      ts_ratio_pieces(plot_occ(), model$track, model$fia_var)
 })
 
-clim_scales <- readRDS("data/clim_scales.rds")
+clim_scales <- core_data$clim_scales
 
 # The focal polygon is a unit from the boundary library (helpers/boundaries.R),
 # chosen by its stable id. Users cannot upload their own: reading user-supplied
