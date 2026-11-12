@@ -2,6 +2,17 @@
 
 ui_head <- function() {
       tagList(
+            ## Report Back and Forward to the server (server/url_state.R).
+            ## Shiny's own url_search can't be used: it ignores a value equal
+            ## to the one it last sent, which is what Back to the opening
+            ## link looks like. As an event, every navigation arrives.
+            tags$script(HTML("
+  window.addEventListener('popstate', function() {
+    if (window.Shiny && Shiny.setInputValue)
+      Shiny.setInputValue('history_nav', window.location.search, {priority: 'event'});
+  });
+")),
+
             tags$style(HTML("
   /* Only tiles belonging to the provider tile layer */
   #map .leaflet-layer.basemap-gray img.leaflet-tile {

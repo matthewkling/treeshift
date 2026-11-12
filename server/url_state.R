@@ -41,12 +41,29 @@ if (startsWith(isolate(session$clientData$url_hash), "#about")) {
       nav_select("main_nav", "about")
 }
 
-# "replace", so settings changes don't pile up in the browser's back history.
-# Replacing the query also replaces the hash, so the About tab's is rewritten
-# with it.
+# Browser history: each model update (server/model_settings.R sets
+# `history_step`) adds an entry, so Back returns to the previous model run.
+# Other changes -- display settings, polygon, site -- replace the current
+# entry rather than piling up. Replacing the query also replaces the hash, so
+# the About tab's is rewritten with it.
+history_step <- FALSE
+shown_query <- NULL
 observe({
-      updateQueryString(paste0(link_query(), if (identical(input$main_nav, "about")) "#about"),
-                        mode = "replace")
+      q <- link_query()
+      changed <- !identical(q, shown_query)
+      push <- changed && history_step && !is.null(shown_query)
+      if (changed) history_step <<- FALSE
+      shown_query <<- q
+      updateQueryString(paste0(q, if (identical(input$main_nav, "about")) "#about"),
+                        mode = if (push) "push" else "replace")
+})
+
+# Back and Forward (reported by ui/head.R) reload the page at that entry's
+# link, which rebuilds the controls and results from its settings. Moving
+# between the About page's sections changes only the hash, not the settings,
+# and doesn't reload.
+observeEvent(input$history_nav, {
+      if (!identical(input$history_nav, shown_query)) session$reload()
 })
 
 # The full link, for the settings record

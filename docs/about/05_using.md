@@ -8,6 +8,6 @@
 
 **Help.** Hover over any control for an explanation.
 
-**Sharing and citing results.** The URL address always holds the current model settings. **Copy link** copies it, and anyone who opens the link sees the same settings. In the *Export* panel, **Download settings record** saves a text file with the link, every setting in plain language, and the versions of the app and data behind the result. Keep it with any maps or numbers you report. A link reopens the same settings, but results can change if the app or its data are updated later.
+**Sharing and citing results.** The URL address always holds the current model settings. In the `Export` panel, `Copy link` copies it, and anyone who opens the link gets the same settings, though results can change if the app or its data are updated later. `Download settings record` saves a text file with the link, a plain language summary of every setting, and the versions of the app and data behind the result. Keep it with any maps or numbers you report.
 
-**Downloads.** The *Export* panel also downloads the current map as a GeoTIFF and the FIA plot values as a CSV.
+**Downloads.** The `Export` panel also downloads the current map as a GeoTIFF and the FIA plot values as a CSV.

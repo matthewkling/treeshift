@@ -1,6 +1,6 @@
 ## How the model works
 
-**Similar places, weighted.** For each grid cell, TreeShift gives every FIA plot a weight based on two things: how far away it is, and how different its climate is. Close plots with similar climate count almost fully; distant or climatically different plots count for little. The map value for a cell is a weighted summary of those plots.
+**Similar places, weighted.** TreeShift predictions are based on "spatial climate analogs." For each grid cell, it gives every FIA plot a weight based on two things: how far away it is, and how different its climate is. Close plots with similar climate count almost fully; distant or climatically different plots count little. A cell's mapped value is a weighted summary of those plots.
 
 **The two bandwidths.** The *geographic bandwidth* (in kilometers) sets how quickly weight falls off with distance. The *climate bandwidth* sets how quickly it falls off with climate difference, measured in standard deviations of each climate variable relative to variation across all FIA plots. Narrow bandwidths stay close to local plots but rest on fewer of them; wide bandwidths draw on more plots but blur local differences. There is no single correct setting, and it is worth checking whether a conclusion holds across a range of them. The *Model evaluation* panel helps with this.
 

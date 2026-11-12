@@ -24,6 +24,7 @@ apply_model_settings <- function(values = isolate(controls_now())) {
             if (is.null(v) || same_setting(v, applied[[id]])) next
             if (id %in% names(model_menus)) v <- url_menu_order(v, model_menus[[id]])
             model[[id]] <- v
+            history_step <<- TRUE   # the link this produces gets its own Back step
       }
 }
 

@@ -40,6 +40,28 @@ apply_settings <- function(app) {
       settle(app)
 }
 
+# Browser Back or Forward. These reload the page when the settings differ,
+# and shinytest2 can't wait on a reloaded page, so this waits for a new
+# session (the marker set on the old page is gone) to connect and go idle.
+# Returns whether the page reloaded.
+history_nav <- function(app, how = "back") {
+      app$run_js(sprintf("window.__before_nav = true; history.%s();", how))
+      reloaded <- FALSE
+      for (i in 1:300) {
+            Sys.sleep(1)
+            state <- tryCatch(app$get_js(
+                  "window.__before_nav ? 'same' : (window.Shiny && Shiny.shinyapp && Shiny.shinyapp.isConnected() && !document.documentElement.classList.contains('shiny-busy')) ? 'ready' : 'loading'"),
+                  error = function(e) "loading")
+            if (state == "ready") { reloaded <- TRUE; break }
+            if (state == "same" && i >= 5) break
+      }
+      Sys.sleep(2)
+      reloaded
+}
+
+# An input's value, read in the page (works after a reload, unlike get_value)
+page_input <- function(app, id) app$get_js(sprintf("Shiny.shinyapp.$inputValues['%s']", id))
+
 click_map <- function(app, lon, lat) {
       app$run_js(sprintf("Shiny.setInputValue('map_click', {lng: %s, lat: %s, '.nonce': Math.random()});", lon, lat))
       settle(app)
