@@ -1,6 +1,46 @@
 # MAP LAYERS (continued): the raster and vector layers.
 
 
+## Evidence layers: what the FIA plots behind each cell's estimate amount to.
+## Support is the sum of the plots' weights, i.e. the number of exactly
+## matching plots the evidence is worth; closeness is the typical weight of
+## the plots that drive the estimate (support = effective number of plots x
+## closeness); spread is how much those plots' values disagree. Layer names
+## in aim()'s output.
+evidence_layers <- c(support = "sum_weights", closeness = "effective_weight",
+                     spread = "spread")
+
+## Support is drawn in fixed classes rather than a continuous ramp. In
+## climatically uniform regions (e.g. the Great Plains) it runs to hundreds of
+## plots, which on a ramp stretched to the map's maximum squeezes everywhere
+## else into the bottom colors. What matters for reading it is the low end,
+## and the classes are log-spaced because an estimate's precision grows with
+## the square root of the evidence: going from 2 to 20 plots helps about as
+## much as going from 20 to 200. Fixed breaks also mean a color is the same
+## amount of support on every map (at the same bandwidths); the top class is
+## open-ended. Classes include their lower break.
+support_breaks <- c(0, 1, 3, 10, 30, 100, Inf)
+support_labels <- c("under 1", "1 to 3", "3 to 10", "10 to 30", "30 to 100", "100 or more")
+
+## Why the spread layer can't be drawn, or NULL when it can. Shown under the
+## raster menu; display_layer() draws nothing in these cases.
+evidence_note <- reactive({
+      if (!identical(input$stat, "spread")) return(NULL)
+      if (multi_mode()) {
+            "Analog spread describes the plots behind one species, forest type or group, so it isn't shown for community measures."
+      } else if (!spread_computed()) {
+            "Analog spread isn't shown for ratio variables such as fractions and proportions."
+      } else if (identical(input$time, "delta")) {
+            "Analog spread is shown for the historical or future timeframe, not for change."
+      }
+})
+
+output$stat_note <- renderUI({
+      msg <- evidence_note()
+      if (!is.null(msg)) div(class = "ts-notice", msg)
+})
+
+
 ## Paired measures are their own quantity, not a delta of a per-timeframe
 ## one, so they must not pick up the diverging zero-centered delta palette
 ## even when input$time happens to be "delta". Expected gains and losses
@@ -61,8 +101,8 @@ display_layer <- reactive({
       req(focal_id())
 
       # In All mode the community reduction takes the place of the
-      # per-entity response. The model diagnostics (ESS, focal site
-      # similarity, connectivity) are entity-independent and keep working
+      # per-entity response. The model diagnostics (support, closeness, focal
+      # site similarity, connectivity) are entity-independent and keep working
       # unchanged, so only the "FIA variable" branch is replaced -- and
       # aim() is not required, so All mode does not also pay for a
       # single-entity run it will not display.
@@ -70,11 +110,16 @@ display_layer <- reactive({
 
       req(aim())  # only run once we have data
 
-      if(input$stat == "ESS"){
+      if(input$stat %in% names(evidence_layers)){
+            req(is.null(evidence_note()))
+            layer <- evidence_layers[[input$stat]]
+            # For change, the harmonic mean of the two timeframes, which leans
+            # toward the weaker one: a change is only as well supported as its
+            # less supported end.
             r <- switch(input$time,
-                        "delta" = 2 / (1/aim()$fut$ess + 1/aim()$bsl$ess), # harmonic mean
-                        "historical" = aim()$bsl$ess,
-                        "future" = aim()$fut$ess)
+                        "delta" = 2 / (1/aim()$fut[[layer]] + 1/aim()$bsl[[layer]]),
+                        "historical" = aim()$bsl[[layer]],
+                        "future" = aim()$fut[[layer]])
       }else if(input$stat == "focal site similarity"){
             r <- site_diff()
       }else if(input$stat == "connectivity"){
@@ -116,8 +161,11 @@ raster_title <- reactive({
             muted <<- c(muted, dim)
       }
 
-      if(input$stat == "ESS"){
-            add(input$stat)
+      if(input$stat %in% c("support", "closeness")){
+            add(names(evidence_choices)[evidence_choices == input$stat])
+            add(time_label())
+            add(if (input$stat == "support") "(equivalent number of exactly matching plots)"
+                else "(1 = exact match)", dim = TRUE)
 
       }else if(input$stat == "focal site similarity"){
             add(gsub(" analogs", "", input$analog_direction))
@@ -157,6 +205,7 @@ raster_title <- reactive({
                       dim = TRUE)
 
       }else{
+            if(input$stat == "spread") add("analog spread")
             add(focal_label())
             add(time_label())
             add(tolower(model$fia_var))
@@ -184,14 +233,15 @@ raster_title <- reactive({
       # 10 km cell will otherwise be read as eight species in 100 km2,
       # which is wrong by a large factor rather than a subtlety.
       #
-      # Not applied to the model diagnostics: ESS is a count of plots,
-      # focal site similarity is a climate distance, connectivity is a
-      # circuit quantity. None are estimated at plot support.
+      # Applied to spread too: it is the variation among plot values. Not
+      # applied to the other model diagnostics: support and closeness
+      # describe the weights, focal site similarity is a climate distance,
+      # connectivity is a circuit quantity.
       # In All mode this applies whatever the underlying variable: every
       # community reduction describes the composition of a plot-sized
       # footprint, and diversity in particular rises with area regardless
       # of whether it was built from occurrence or basal area.
-      if (input$stat == "FIA variable" &&
+      if (input$stat %in% c("FIA variable", "spread") &&
           (multi_mode() ||
            (isTruthy(model$fia_var) && model$fia_var %in% support_dependent_vars))) {
             add("(per ~0.07 ha plot)", dim = TRUE)
@@ -207,13 +257,25 @@ observe({
 
       # Scale transforms are meaningless on category codes, and
       # setValues() would drop the factor levels the legend reads from.
-      if (!categorical_layer()) {
+      # Support's fixed classes already do the job of a transform.
+      binned <- identical(input$stat, "support")
+      # Maps a transformed value back to the variable's units, for the legend
+      # labels: colors follow the transformed scale, labels stay in the
+      # original units. NULL while the drawn raster is untransformed.
+      untransform <- NULL
+      if (!categorical_layer() && !binned && input$rast_transform != "identity") {
+            raw <- r[]
             trans <- switch(input$rast_transform,
-                            "identity" = identity,
                             "log10" = log10,
                             "sqrt" = sqrt,
                             "uniform" = function(x) scales::rescale(rank(x, na.last = "keep")))
-            r <- setValues(r, trans(r[]))
+            # Ranks have no formula to undo: a value's rescaled rank is its
+            # percentile, so the label is the data's value at that percentile
+            untransform <- switch(input$rast_transform,
+                                  "log10" = function(x) 10^x,
+                                  "sqrt" = function(x) x^2,
+                                  "uniform" = function(x) stats::quantile(raw, x, na.rm = TRUE, names = FALSE))
+            r <- setValues(r, trans(raw))
             r[!is.finite(r[])] <- NA
       }
 
@@ -243,8 +305,9 @@ observe({
                                     na.color = "transparent")
             dom <- cc$codes
       } else if(input$time == "delta" && input$stat == "FIA variable" && !paired_layer()){
-            # units are deltas
+            # units are deltas, drawn untransformed
             r <- display_layer()
+            untransform <- NULL
             # Fill non-analog NAs -- except where the NAs are a deliberate
             # mask (species not found within range, or below the support
             # floor). Filling those would read as "no change" on the
@@ -257,10 +320,20 @@ observe({
                   domain = dom,
                   na.color = "transparent"
             )
-      } else if(input$stat == "ESS"){
-            # units are sample sizes
+      } else if(binned){
+            rast_pal <- colorBin(
+                  palette = "viridis" %>% choose_palette(),
+                  domain = NULL,
+                  bins = support_breaks,
+                  na.color = "transparent"
+            )
+      } else if(input$stat %in% names(evidence_layers)){
+            # Closeness has a fixed 0-1 scale, so its colors mean the same
+            # thing on every map. Viridis sets these diagnostics apart from
+            # the variable's own gray-to-green palette.
+            if(input$stat == "closeness" && input$rast_transform == "identity") dom <- c(0, 1)
             rast_pal <- colorNumeric(
-                  palette = c("gray90", "darkblue") %>% choose_palette(),
+                  palette = "viridis" %>% choose_palette(),
                   domain = dom,
                   na.color = "transparent"
             )
@@ -336,12 +409,37 @@ observe({
                               opacity  = input$rast_opacity,
                               className = "info legend legend-discrete"
                         )
+            } else if (binned) {
+                  # Manual form, for plain labels ("100 or more", not
+                  # "100 - Inf"); colors read from the palette at a value
+                  # inside each class
+                  inside <- head(support_breaks, -1) + c(diff(head(support_breaks, -1)) / 2, 1)
+                  proxy %>%
+                        addLegend(
+                              position = "topright",
+                              colors   = rast_pal(inside),
+                              labels   = support_labels,
+                              title    = HTML(raster_title()),
+                              layerId  = "raster_legend",
+                              opacity  = input$rast_opacity,
+                              className = "info legend legend-discrete"
+                        )
             } else {
+                  # Labels in the variable's units under a transform, each
+                  # to 3 significant figures (leaflet's labelFormat() gives
+                  # every label the same number of decimals: "1.000", "31.623")
+                  lab_format <- if (is.null(untransform)) labelFormat() else
+                        function(type, cuts, ...) {
+                              format_one <- function(v) format(signif(v, 3), big.mark = ",",
+                                                               scientific = FALSE, trim = TRUE)
+                              vapply(untransform(cuts), format_one, character(1))
+                        }
                   proxy %>%
                         addLegend(
                               position = "topright",
                               pal      = rast_pal,
                               values   = dom,
+                              labFormat = lab_format,
                               title    = HTML(raster_title()),
                               layerId  = "raster_legend",
                               opacity  = input$rast_opacity

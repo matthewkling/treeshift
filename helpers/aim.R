@@ -89,10 +89,12 @@ aim_surfaces <- function(focals, pool, y, theta_clim, theta_geog, stat) {
             }
       })
 
-      # Kernel sums FFT computes: one per outcome column, the weights, and the
-      # squared weights if ess is requested
+      # Kernel sums FFT computes: one per outcome column (two with
+      # weighted_sd), the weights, and the squared weights if a stat needs them
+      n_sums <- ncol(y) * (1 + ("weighted_sd" %in% stat)) + 1 +
+            any(c("ess", "effective_weight") %in% stat)
       method <- aim_method(pts, pool$aim_index, theta_clim, theta_geog,
-                           n_y = ncol(y), n_sums = ncol(y) + 1 + ("ess" %in% stat))
+                           n_y = ncol(y), n_sums = n_sums)
       res <- if (method == "fft") tryCatch(run("fft"), error = function(e) {
             # A tile whose FFT grid exceeds the size limit (narrow bandwidths
             # over climatically varied ground) sends the whole run to exact,

@@ -160,7 +160,7 @@ ui_panel_fia_variable <- function(s) {
                         c("historical", "future", "change" = "delta"),
                         selected = s$time) %>%
                   tooltip("Choose whether to display historical (2000-2025) or future (scenario selected under 'Climate data') model predictions, or the change between them.
-                                      Only relevant for `FIA variable` and `ESS` raster variables."),
+                                      Only relevant for the `FIA variable` raster variable and the analog support, closeness and spread layers."),
             ## Declared from metric_choices() rather than a literal
             ## list. The syncing observer uses ignoreInit, so this is
             ## the startup state -- and a hard-coded list once held
@@ -391,10 +391,14 @@ ui_panel_map_layers <- function(s) {
                         selected = s$stat) %>%
                   tooltip(HTML("<dl style='margin:0;'>
                                               <dt>FIA variable</dt> <dd>Predicted values of the variable selected above.</dd>
-                                              <dt>Effective sample size</dt> <dd>How many FIA plots each cell's prediction effectively rests on. Nearby, climatically similar plots count close to fully and distant ones count for little, so this is usually well below the raw plot count. Low values mean a prediction is built on thin evidence.</dd>
+                                              <dt>Analog support</dt> <dd>How much FIA evidence is behind each cell's estimate, counted as the number of exactly matching plots it's worth. A plot that closely matches the cell's climate and location counts almost fully; a weaker match counts for less. Low values mean thin or distant evidence.</dd>
+                                              <dt>Analog closeness</dt> <dd>How well the plots behind each estimate match the cell's climate and location, from near 0 (only weak matches) to 1 (exact matches). Low support with high closeness means a few good matches; low support with low closeness means only weak ones.</dd>
+                                              <dt>Analog spread</dt> <dd>How much the values at the plots behind each estimate differ from one another, in the units of the variable. High spread means those plots disagree, so the estimate averages over very different stands. For presence variables, spread is highest where about half the plots have the species. Not shown for ratio variables.</dd>
+                                              <dd>Support, closeness and spread depend on the bandwidth settings, so compare places within one map, not across settings.</dd>
                                               <dt>Focal site similarity</dt> <dd>How climatically similar each cell is to the site you clicked on the map. Which climates are compared depends on the analog direction set in the 'Focal site analogs' panel at right.</dd>
                                               <dt>Connectivity</dt> <dd>Circuit-based connectivity outputs between historical and future surfaces (available when the 'Lanscape connectivity' module is enabled); choose the specific connectivity variable below</dd>
                                           </dl>")),
+            uiOutput("stat_note"),
             conditionalPanel(
                   condition = "input.stat == 'connectivity'",
                   selectInput("cs_stat", "Connectivity variable", cs_stat_names, selected = s$cs_stat) %>%
@@ -432,7 +436,7 @@ ui_panel_cartography <- function() {
             sliderInput("rast_opacity", "Raster opacity", 0, 1, .8, step = .01),
             selectInput("rast_transform", "Scale transformation",
                         choices = c("identity", "log10", "sqrt", "uniform")) %>%
-                  tooltip("Choose transformation used to visualize raster values. Legend will display transformed values."),
+                  tooltip("Choose how raster values are spread across the colors. The legend stays in the variable's own units; under 'uniform', colors are evenly spread across the map's values, so legend ticks fall at uneven values. Not applied to analog support, which is shown in fixed classes."),
             ## Choices swap between continuous ramps and qualitative
             ## sets depending on the layer, rather than showing both
             ## lists at once and relying on the user to pick the

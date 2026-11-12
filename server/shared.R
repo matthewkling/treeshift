@@ -44,6 +44,15 @@ focal_label <- reactive({
              "All trees"    = "All trees")
 })
 
+# TRUE if aim() computes the spread among analog plots (the weighted SD of
+# the response). Not for the pooled-ratio variables: a pooled ratio is not
+# the mean of plot values, so their plot-to-plot SD isn't its spread. For a
+# 0/1 response the spread is sqrt(p * (1 - p)), which follows from the
+# estimate but still reads differently: 0.01 and 0.99 share a spread.
+spread_computed <- reactive({
+      isTruthy(model$fia_var) && is.null(ratio_pieces())
+})
+
 # TRUE if the active response is a 0/1 indicator (any presence variable:
 # "presence probability", "seedling presence", and the forest type/group
 # classification probabilities); FALSE if continuous (basal area / counts).
@@ -68,8 +77,10 @@ seq_domain <- function(x) {
 # presence probability is bounded [0, 1]; total BA is non-negative).
 # Returns c(-Inf, Inf) when no informative bound applies.
 display_bounds <- reactive({
-      if (input$stat == "ESS") {
+      if (input$stat %in% c("support", "spread")) {
             c(0, Inf)
+      } else if (input$stat == "closeness") {
+            c(0, 1)
       } else if (input$stat == "focal site similarity") {
             c(0, Inf)
       } else if (input$stat == "connectivity") {

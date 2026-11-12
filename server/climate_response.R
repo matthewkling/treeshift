@@ -144,7 +144,7 @@ output$climate_response <- renderPlot({
                  isTRUE(input$cs_stat == "current direction")) {
             gaussian()                      # circular (0-360 deg): a log link is meaningless
       } else if (input$stat != "FIA variable") {
-            quasipoisson()                  # ESS / similarity / connectivity magnitudes: non-negative
+            quasipoisson()                  # evidence / similarity / connectivity magnitudes: non-negative
       } else if (input$time == "delta") {
             gaussian()                      # future - historical difference (can be negative)
       } else if (bounded01) {

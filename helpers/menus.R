@@ -11,10 +11,13 @@ cs_stats <- c("current_flow", "current_destinations", "current_loss", "current_p
 # right-sidebar Connectivity panel. The `*_base` sets are the UI defaults; the
 # observeEvent(input$cs_enable) handler in the server swaps between the two.
 # Listed explicitly rather than appended so "none" stays last in the vector menu.
-stat_choices_base <- c("FIA variable", "effective sample size" = "ESS",
-                       "focal site similarity")
-stat_choices_cs   <- c("FIA variable", "effective sample size" = "ESS",
-                       "focal site similarity", "connectivity")
+# The evidence layers describe the FIA plots behind each cell's estimate
+# (server/map_layers.R).
+evidence_choices <- c("analog support" = "support", "analog closeness" = "closeness",
+                      "analog spread" = "spread")
+stat_choices_base <- c("FIA variable", evidence_choices, "focal site similarity")
+stat_choices_cs   <- c("FIA variable", evidence_choices, "focal site similarity",
+                       "connectivity")
 
 vector_choices_base <- c("occupied FIA plots", "all FIA plots", "focal site analogs",
                          "none")

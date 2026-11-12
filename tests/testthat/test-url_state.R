@@ -26,7 +26,7 @@ test_that("links round-trip without problems", {
                   bbox_x = c(-110.5, -101))),
             community = modifyList(d, list(
                   entity_scope = "multi", comm_measure = "dominant entity", comm_top_n = 7,
-                  support_floor = 1.5, stat = "ESS")),
+                  support_floor = 1.5, stat = "support")),
             forest_type = modifyList(d, list(
                   track = "Forest type", forest_type = ctx$forest_types[5], time = "future",
                   vector = "none", analog_direction = "Reverse analogs")),

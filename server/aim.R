@@ -5,14 +5,16 @@ aim <- reactive({
 
       is_ratio <- !is.null(ratio_pieces())
 
-      # Stats that describe the WEIGHTS rather than an outcome column.
-      # analog_impact() returns one layer for each of these regardless of
-      # how many outcome columns `y` carries. "count" and "sum_weights"
-      # were requested here but read nowhere in the app; they are dropped.
-      # (sum_weights becomes useful again if the multi-species module
-      # wants a per-species support signal: the weighted count of
-      # contributing presence plots is weighted_mean_<sp> * sum_weights.)
-      weight_stats <- "ess"
+      # Stats that describe the WEIGHTS rather than an outcome column, for
+      # the evidence map layers (server/map_layers.R): support (sum of
+      # weights) and closeness (sum of squared weights over sum of
+      # weights). analog_impact() returns one layer for each of these
+      # regardless of how many outcome columns `y` carries.
+      weight_stats <- c("sum_weights", "effective_weight")
+
+      # Spread among the analog plots (weighted SD of the response), for a
+      # single (non-ratio) response only; see spread_computed().
+      spread_stat <- if (spread_computed()) "weighted_sd"
 
       # Outcome columns for AIM. pool()$values also carries
       # samp_method_cd, which exists for the site_analogs() / FIA-marker
@@ -30,7 +32,8 @@ aim <- reactive({
       # instead: outcome layers are whatever isn't a weight stat, returned
       # in y-column order.
       name_outcomes <- function(r){
-            is_outcome <- !names(r) %in% weight_stats
+            names(r)[names(r) == "weighted_sd"] <- "spread"
+            is_outcome <- !names(r) %in% c(weight_stats, "spread")
             stopifnot(sum(is_outcome) == length(y_cols))
             names(r)[is_outcome] <- y_cols
             r
@@ -39,7 +42,7 @@ aim <- reactive({
       surf <- aim_surfaces(list(bsl = clim()$hst, fut = clim()$fut), pool(),
                            y = pool()$values[, y_cols, drop = FALSE],
                            theta_clim = model$theta_clim, theta_geog = model$theta_geog,
-                           stat = c("weighted_mean", weight_stats))
+                           stat = c("weighted_mean", spread_stat, weight_stats))
       aim_bsl <- name_outcomes(surf$bsl)
       aim_fut <- name_outcomes(surf$fut)
 

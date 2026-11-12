@@ -371,7 +371,7 @@
       "RemoteUsername": "matthewkling",
       "RemoteRepo": "analogs",
       "RemoteRef": "main",
-      "RemoteSha": "d705b6f90e1358309d8fdf0504d1f36032e2bd6c"
+      "RemoteSha": "de56ceb00a27df9c7486d968d0d3d40197361dce"
     },
     "askpass": {
       "Package": "askpass",

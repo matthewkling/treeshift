@@ -77,15 +77,27 @@ notices <- function(app) {
 # Export panel has been opened. The link's address is resolved by the browser:
 # AppDriver$get_download() appends it to the session URL, which breaks when
 # that URL has a query string (it fetches the page instead).
-raster_md5 <- function(app) {
+download_raster <- function(app) {
       app$run_js("var b = Array.from(document.querySelectorAll('.accordion-button')).find(b => b.textContent.trim() === 'Export'); if (b.classList.contains('collapsed')) b.click();")
       settle(app)
       href <- app$get_js("document.getElementById('download_raster').href")
       f <- tempfile(fileext = ".tif")
-      on.exit(unlink(f))
       utils::download.file(href, f, quiet = TRUE, mode = "wb")
       stopifnot(identical(readBin(f, "raw", 2), charToRaw("II")))   # a GeoTIFF, not a page
+      f
+}
+
+raster_md5 <- function(app) {
+      f <- download_raster(app)
+      on.exit(unlink(f))
       unname(tools::md5sum(f))
+}
+
+# The displayed raster's values
+raster_values <- function(app) {
+      f <- download_raster(app)
+      on.exit(unlink(f))
+      terra::values(terra::rast(f), mat = FALSE)
 }
 
 # The input each link key sets
