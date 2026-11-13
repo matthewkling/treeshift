@@ -13,6 +13,21 @@ ui_head <- function() {
   });
 ")),
 
+            ## A module tab (ui/right_sidebar.R) opens the modules sidebar
+            ## and expands its module.
+            tags$script(HTML("
+  document.addEventListener('click', function(e) {
+    var tab = e.target.closest('.ts-module-tab');
+    if (!tab) return;
+    var layout = tab.closest('.bslib-sidebar-layout');
+    window.bslib.Sidebar.getInstance(layout).toggle('open');
+    var item = document.querySelector('#modules_acc > .accordion-item[data-value=\"' +
+                                      CSS.escape(tab.dataset.module) + '\"]');
+    var button = item && item.querySelector('.accordion-button');
+    if (button && button.classList.contains('collapsed')) button.click();
+  });
+")),
+
             tags$style(HTML("
   /* Only tiles belonging to the provider tile layer */
   #map .leaflet-layer.basemap-gray img.leaflet-tile {
@@ -122,7 +137,9 @@ ui_head <- function() {
                padding: 0.5rem var(--_padding, 1rem); }
   /* Group headings over the sidebar panels (ui/left_sidebar.R) */
   .ts-group-title { font-size: 0.8rem; font-weight: 600; text-transform: uppercase;
-                    letter-spacing: 0.05em; color: #495057; margin: 0; }
+                    letter-spacing: 0.05em; color: var(--_sidebar-fg); margin: 0; }
+  /* Same spacing, relative to the text, as the module headers' icons */
+  .ts-group-title > i { margin-right: 0.75em; }
   #update_model {
     /* the header's dark gray; Flatly's own btn-dark is a gray-green */
     background-color: #212529;
@@ -152,6 +169,30 @@ ui_head <- function() {
     background: rgba(255, 255, 255, 0.65);
     pointer-events: none;
   }
+
+  /* Module tabs down the map's right edge (ui/right_sidebar.R), in place of
+     the sidebar's own toggle while the sidebar is collapsed. The toggle is
+     hidden with visibility, not display: bslib ends the open/close animation
+     when the toggle's icon finishes turning, which an undisplayed icon never
+     does, leaving the sidebar's contents hidden. */
+  .ts-map-area { min-width: 0; }
+  .ts-module-tabs {
+    display: flex; flex-direction: column; gap: 2px;
+    flex: 0 0 auto; width: 40px; padding: 4px 0;
+    overflow-y: auto;
+    background: var(--bs-body-bg);
+    border-left: 1px solid var(--bs-border-color);
+  }
+  .bslib-sidebar-layout:not(.sidebar-collapsed) > .ts-modules-main .ts-module-tabs { display: none; }
+  .bslib-sidebar-layout.sidebar-collapsed:has(> .ts-modules-main) > .collapse-toggle { visibility: hidden; }
+  .ts-module-tab {
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    padding: 10px 0; border: 0; border-radius: 0;
+    background: transparent; color: #495057;
+    font-size: 0.8rem; line-height: 1;
+  }
+  .ts-module-tab span { writing-mode: vertical-rl; white-space: nowrap; }
+  .ts-module-tab:hover, .ts-module-tab:focus-visible { background: rgba(0, 0, 0, 0.06); color: #212529; }
 "))
       )
 }

@@ -192,6 +192,7 @@ ui <- function(request) {
                         card(
                               class = "h-100 w-100 rounded-0 overflow-hidden border-0",
                               layout_sidebar(
+                                    class = "ts-modules-main",
                                     fillable = TRUE,
                                     padding = 0,   # the map fills its area, edge to edge
 
@@ -200,10 +201,12 @@ ui <- function(request) {
 
                                     sidebar = ui_right_sidebar(),
 
-                                    ## MAP ---------------------------------------
-                                    div(class = "h-100 position-relative",
-                                        leafletOutput("map", height = "100%"),
-                                        uiOutput("map_pending"))
+                                    ## MAP, and the module tabs while the sidebar is collapsed
+                                    div(class = "h-100 d-flex",
+                                        div(class = "h-100 position-relative flex-grow-1 ts-map-area",
+                                            leafletOutput("map", height = "100%"),
+                                            uiOutput("map_pending")),
+                                        ui_module_tabs())
                               )
                         )
                   )

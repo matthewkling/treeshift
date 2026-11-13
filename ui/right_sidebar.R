@@ -4,12 +4,12 @@
 
 ui_right_sidebar <- function() {
       sidebar(
-            # title = "Focal site analogs",
             width = "40%",
             position = "right",
-            open = TRUE,
+            open = "closed",
 
             accordion(
+                  id = "modules_acc",
                   open = FALSE,
                   multiple = FALSE,
 
@@ -24,6 +24,34 @@ ui_right_sidebar <- function() {
       )
 }
 
+# The modules as tabs on the map's right edge, shown while the sidebar is
+# collapsed so the modules stay visible; a tab opens the sidebar on its module.
+# Titles match the accordion panels' titles (their values); labels are short
+# enough to stack down the edge.
+module_tabs <- list(
+      list(title = "Community composition", label = "Community",         icon = "layer-group"),
+      list(title = "Value distributions",   label = "Distributions",     icon = "chart-column"),
+      list(title = "Climate relationships", label = "Relationships",     icon = "chart-line"),
+      list(title = "Model evaluation",      label = "Evaluation",        icon = "bullseye"),
+      list(title = "Climate models",        label = "Climate models",    icon = "earth-americas"),
+      list(title = "Focal site analogs",    label = "Site analogs",      icon = "location-dot")
+)
+
+# A module's icon, shared by its tab and its panel header
+module_icon <- function(title) {
+      m <- Filter(function(m) m$title == title, module_tabs)
+      if (length(m) != 1) stop("No module tab titled '", title, "'")
+      icon(m[[1]]$icon, class = "fa-fw")   # fixed width, so header titles align
+}
+
+ui_module_tabs <- function() {
+      div(class = "ts-module-tabs", role = "tablist", `aria-label` = "Analysis modules",
+          lapply(module_tabs, function(m)
+                tags$button(type = "button", class = "ts-module-tab", role = "tab",
+                            title = m$title, `data-module` = m$title,
+                            icon(m$icon), span(m$label))))
+}
+
       ## First panel: the map-level community measures
       ## reduce ACROSS entities, which is exactly the
       ## information this panel restores. A turnover or
@@ -34,6 +62,7 @@ ui_right_sidebar <- function() {
 ui_panel_community_composition <- function() {
       accordion_panel(
             "Community composition",
+            icon = module_icon("Community composition"),
             helpText("When you select the 'community composition' FIA variable at left,
                                              the map summarizes across species or forest types into one summary number per cell.
                                              This module lets you unpack the individual species behind those summaries. The two settings
@@ -110,6 +139,7 @@ ui_panel_community_composition <- function() {
 ui_panel_value_distributions <- function() {
       accordion_panel(
             "Value distributions",
+            icon = module_icon("Value distributions"),
             helpText("This module summarizes how the predicted values on the map differ across geographic areas.
                                              It shows one curve (or bar stack, for categorical variables) for the whole bounding box,
                                              and one for each area you have set: your focal polygon, that polygon
@@ -126,6 +156,7 @@ ui_panel_value_distributions <- function() {
 ui_panel_climate_relationships <- function() {
       accordion_panel(
             "Climate relationships",
+            icon = module_icon("Climate relationships"),
             helpText("This plot shows how the mapped variable changes along a climate gradient. The curve is a smoothed
                                              relationship fitted to either the FIA plot observations or the modeled grid cells; the
                                              density histogram above it shows how much data sits at each point along the gradient.
@@ -159,6 +190,7 @@ ui_panel_climate_relationships <- function() {
 ui_panel_model_evaluation <- function() {
       accordion_panel(
             "Model evaluation",
+            icon = module_icon("Model evaluation"),
             helpText("This module uses 'leave-one-out cross validation' to quantify the accuracy of the model's present-day predictions.
                                              Each FIA plot is held out in turn, predicted from the others, and compared against what was actually measured there.
                                              The first plot below shows accuracy for the currently-displayed results, while the second section shows how accuracy
@@ -228,6 +260,7 @@ ui_panel_model_evaluation <- function() {
 ui_panel_climate_models <- function() {
       accordion_panel(
             "Climate models",
+            icon = module_icon("Climate models"),
             helpText("This module helps you choose among, and contextualize, climate models.
                                              It can take a couple minutes to run.
                                              For every available emissions scenario and GCM, it plots the projected climate change
@@ -289,6 +322,7 @@ ui_panel_climate_models <- function() {
 ui_panel_focal_site_analogs <- function() {
       accordion_panel(
             "Focal site analogs",
+            icon = module_icon("Focal site analogs"),
             helpText(
                   "This module helps you explore where a model prediction at a given location actually comes from:
                                           the 'analog' FIA plots that are geographically close and climatically similar.

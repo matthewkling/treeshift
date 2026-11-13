@@ -16,7 +16,7 @@ ui_left_sidebar <- function(s) {
             open = "always",
             width = 320,
 
-            ui_sidebar_group("Model settings"),
+            ui_sidebar_group("Model settings", "sliders"),
 
             ## Applies the model settings (server/model_settings.R). Starts
             ## up to date: the page was built from the settings the model
@@ -38,7 +38,7 @@ ui_left_sidebar <- function(s) {
                   ui_panel_connectivity(s)
             ),
 
-            ui_sidebar_group("Display settings"),
+            ui_sidebar_group("Display settings", "eye"),
             accordion(
                   id = "display_acc",
                   open = FALSE,
@@ -53,8 +53,8 @@ ui_left_sidebar <- function(s) {
 }
 
 # Heading over a group of panels
-ui_sidebar_group <- function(title) {
-      div(class = "ts-group", tags$h2(class = "ts-group-title", title))
+ui_sidebar_group <- function(title, icon_name) {
+      div(class = "ts-group", tags$h2(class = "ts-group-title", icon(icon_name), title))
 }
 
 ui_panel_fia_variable <- function(s) {
