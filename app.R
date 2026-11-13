@@ -63,6 +63,14 @@ result_cache <- tryCatch(ts_cache(), error = function(e) {
       NULL
 })
 
+# The usage log (R/log.R; events in server/usage_log.R). Files over a year old
+# are deleted here, at each process start. Without a usable log directory the
+# app still works; it just doesn't log.
+usage_log <- tryCatch(ts_log_open(), error = function(e) {
+      warning("Usage log unavailable, not logging: ", conditionMessage(e), call. = FALSE)
+      NULL
+})
+
 .ssp_label_map <- c(ssp126 = "SSP1-2.6", ssp245 = "SSP2-4.5",
                     ssp370 = "SSP3-7.0", ssp585 = "SSP5-8.5")
 scenario_meta <- core_data$scenarios %>%
@@ -224,7 +232,7 @@ ui <- function(request) {
 # this function's environment, in the order below, so the files share reactives
 # exactly as if they were written inline. The order matters: observers run in
 # the order they are created, and some files use objects defined in earlier ones.
-server_files <- c("shared", "url_state", "model_settings", "data", "controls", "climate", "climate_models",
+server_files <- c("usage_log", "shared", "url_state", "model_settings", "data", "controls", "climate", "climate_models",
                   "aim", "connectivity", "map_base", "community", "map_layers",
                   "site_plots", "polygon_values", "evaluation", "climate_response", "downloads")
 

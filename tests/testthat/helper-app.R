@@ -7,6 +7,9 @@ app_dir <- normalizePath(file.path(testthat::test_path(), "..", ".."))
 # rather than a fresh computation with its cached copy.
 withr::local_envvar(TREESHIFT_CACHE_DIR = withr::local_tempdir(.local_envir = teardown_env()),
                     .local_envir = teardown_env())
+# Likewise the usage log (R/log.R), so test sessions stay out of the real one
+withr::local_envvar(TREESHIFT_LOG_DIR = withr::local_tempdir(.local_envir = teardown_env()),
+                    .local_envir = teardown_env())
 
 # Evaluate app.R's global setup (everything before the UI) into the global
 # environment, for tests of the helpers that need the app's data and choices.

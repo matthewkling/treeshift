@@ -12,6 +12,7 @@ data/clim_historical.tif
 data/wind_quantized.tif
 data/boundaries.gpkg
 cache
+logs
 CLAUDE.md
 
 # Local secrets (e.g. GITHUB_PAT for the data releases)

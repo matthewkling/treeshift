@@ -123,3 +123,15 @@ test_that("a cached community run is the computed one", {
             expect_identical(as.vector(terra::ext(cached[[t]])), as.vector(terra::ext(live[[t]])))
       }
 })
+
+test_that("ts_cached reports where each result came from", {
+      cache <- ts_cache(withr::local_tempdir())
+      r <- terra::rast(nrows = 2, ncols = 2, vals = 1:4)
+      got <- character(0)
+      report <- function(s) got <<- c(got, s)
+      ts_cached(cache, "k", function() r, report)
+      ts_cached(cache, "k", function() r, report)
+      ts_cached(NULL, "k", function() r, report)
+      ts_cached(cache, NULL, function() r, report)
+      expect_identical(got, c("miss", "hit", "off", "off"))
+})

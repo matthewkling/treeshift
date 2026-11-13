@@ -33,6 +33,9 @@ multi_aim <- reactive({
       # The refusal is explained by comm_cost_note in the sidebar, which
       # is a render context and can say it properly.
       cost <- comm_run_cost()
+      if (cost$gb > comm_max_gb)
+            log_event("model_run", kind = "community", outcome = "refused",
+                      gb = round(cost$gb, 2), query = log_query())
       req(cost$gb <= comm_max_gb)
 
       # From the result cache when this community has been run before
@@ -40,8 +43,10 @@ multi_aim <- reactive({
       # check above stays ahead of the cache, so a configuration is refused
       # or allowed the same way whether or not it was run before.
       settings <- lapply(setNames(nm = surfaces_setting_ids), function(id) model[[id]])
-      ts_cached(result_cache, ts_surfaces_key(settings, core_data, community = TRUE), function()
-            ts_multi_surfaces(clim(), pool(), y, model$theta_clim, model$theta_geog))
+      logged_run("community", ts_surfaces_key(settings, core_data, community = TRUE), function()
+            ts_multi_surfaces(clim(), pool(), y, model$theta_clim, model$theta_geog),
+            describe = function(r) list(cells = terra::ncell(r$bsl),
+                                        entities = length(setdiff(names(r$bsl), "sum_weights"))))
 })
 
 ## Reduce the per-entity stack to one community surface. Reduction reads

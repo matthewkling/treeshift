@@ -39,13 +39,23 @@ ts_cache <- function(dir = Sys.getenv("TREESHIFT_CACHE_DIR", "cache"),
 #'   when the result can't be fingerprinted.
 #' @param compute A function of no arguments that computes the result: a
 #'   SpatRaster, or a list of them.
-ts_cached <- function(cache, key, compute) {
-      if (is.null(cache) || is.null(key)) return(compute())
+#' @param report Optional function, called with where the result came from:
+#'   "hit" (the cache), "miss" (computed, then cached) or "off" (computed, no
+#'   cache or key).
+ts_cached <- function(cache, key, compute, report = function(source) NULL) {
+      if (is.null(cache) || is.null(key)) {
+            report("off")
+            return(compute())
+      }
       hit <- tryCatch(cache$get(key), error = function(e) cachem::key_missing())
       if (!cachem::is.key_missing(hit)) {
             value <- tryCatch(ts_unpack(hit), error = function(e) NULL)
-            if (!is.null(value)) return(value)
+            if (!is.null(value)) {
+                  report("hit")
+                  return(value)
+            }
       }
+      report("miss")
       value <- compute()
       tryCatch(cache$set(key, ts_pack(value)),
                error = function(e) warning("Couldn't save to the result cache: ",

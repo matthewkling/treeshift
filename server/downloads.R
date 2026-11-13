@@ -5,6 +5,7 @@ output$download_raster <- downloadHandler(
       },
 
       content = function(file) {
+            log_event("download", what = "raster", query = log_query())
             terra::writeRaster(display_layer(), file)
       }
 )
@@ -22,6 +23,7 @@ output$download_points <- downloadHandler(
             # is the truthful answer to that, and always a valid CSV.
             pd <- tryCatch(isolate(export_points()),
                            error = function(e) export_points_empty())
+            log_event("download", what = "points", rows = nrow(pd), query = log_query())
 
             write_csv(pd, file)
       }
@@ -33,6 +35,7 @@ output$download_record <- downloadHandler(
       },
 
       content = function(file) {
+            log_event("download", what = "settings record", query = log_query())
             writeLines(provenance_text(current_state(), url_ctx, link_url(), app_info), file)
       }
 )

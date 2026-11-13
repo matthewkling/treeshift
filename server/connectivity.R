@@ -114,7 +114,8 @@ connectivity <- reactive({
                          function(id) model[[id]])
       site_xy <- if ("selected site" %in% c(model$cs_sources, model$cs_targets) && !is.null(site$y))
             c(site$x, site$y)
-      ts_cached(result_cache, ts_connectivity_key(settings, core_data, site_xy), solve_connectivity)
+      logged_run("connectivity", ts_connectivity_key(settings, core_data, site_xy), solve_connectivity,
+                 describe = function(r) list(cells = terra::ncell(r)))
 })
 
 solve_connectivity <- function() {

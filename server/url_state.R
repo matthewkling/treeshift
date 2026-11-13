@@ -52,7 +52,12 @@ observe({
       q <- link_query()
       changed <- !identical(q, shown_query)
       push <- changed && history_step && !is.null(shown_query)
-      if (changed) history_step <<- FALSE
+      if (changed) {
+            history_step <<- FALSE
+            # Each distinct link shown is a view (server/usage_log.R);
+            # after_run marks the ones a model run produced
+            log_event("view", query = q, after_run = push)
+      }
       shown_query <<- q
       updateQueryString(paste0(q, if (identical(input$main_nav, "about")) "#about"),
                         mode = if (push) "push" else "replace")
