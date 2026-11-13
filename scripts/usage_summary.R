@@ -20,7 +20,7 @@ show <- function(title, x) {
       print(as.data.frame(x), row.names = FALSE)
 }
 # Fields only some events have are absent from a log without those events
-fields <- c("from_link", "user_agent", "kind", "outcome", "cache", "seconds",
+fields <- c("from_link", "referrer", "user_agent", "kind", "outcome", "cache", "seconds",
             "message", "what", "query")
 for (f in setdiff(fields, names(log))) log[[f]] <- NA
 
@@ -49,6 +49,14 @@ if (nrow(runs)) {
       if (nrow(problems))
             show("Refused or failed runs", dplyr::count(problems, kind, outcome, message, sort = TRUE))
 }
+
+# By site: links from other sites usually arrive as the site alone. "none" is
+# a typed or bookmarked address, or a site that withholds referrers.
+show("Sessions by referring site", starts |>
+           dplyr::mutate(site = dplyr::if_else(is.na(referrer), "none",
+                                               sub("^[a-z]+://([^/]+).*$", "\\1", referrer))) |>
+           dplyr::count(site, sort = TRUE) |>
+           utils::head(15))
 
 downloads <- dplyr::filter(log, event == "download")
 if (nrow(downloads)) show("Downloads", dplyr::count(downloads, what, sort = TRUE))

@@ -66,6 +66,7 @@ test_that("a session logs its start, runs, views, downloads and end", {
       expect_equal(nrow(start), 1)
       expect_true(start$from_link)
       expect_match(start$user_agent, "Chrome")
+      expect_true(is.na(start$referrer))   # opened directly, not from a link on a page
       ev <- dplyr::filter(x, session == start$session)
 
       run <- dplyr::filter(ev, event == "model_run")

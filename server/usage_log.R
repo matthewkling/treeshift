@@ -2,7 +2,8 @@
 #
 # What this session does, in the usage log (R/log.R). Every event carries the
 # session's id and the app version. The events:
-#   session_start  the link the page opened on, and the browser
+#   session_start  the link the page opened on, the page that linked to it,
+#                  and the browser
 #   model_run      a model result: where it came from and how long it took
 #   view           the settings link, each time it changes (url_state.R)
 #   download       an export (downloads.R)
@@ -28,11 +29,14 @@ log_query <- function() {
 # Logged when the browser reports itself (ui/head.R), just after it connects:
 # Shiny Server passes no request headers on to the app, so the browser can't
 # be read from the request. The first view is usually logged a moment before.
-# Visitors' IP addresses aren't logged here; the web server's access log has
-# them.
+# The referrer is null when there was none (a typed or bookmarked address);
+# for another site's link, browsers usually send only the site, not the page. Visitors'
+# IP addresses aren't logged here; the web server's access log has them.
 observeEvent(input$ts_client, once = TRUE, {
       query <- isolate(session$clientData$url_search)
+      referrer <- input$ts_client$referrer
       log_event("session_start", query = query, from_link = nzchar(query),
+                referrer = if (nzchar(referrer %||% "")) referrer,
                 user_agent = input$ts_client$user_agent)
 })
 

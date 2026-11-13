@@ -13,11 +13,13 @@ ui_head <- function() {
   });
 ")),
 
-            ## The browser, for the usage log (server/usage_log.R), which
-            ## can't read it from the request behind Shiny Server
+            ## The browser and the page that linked here, for the usage log
+            ## (server/usage_log.R), which can't read them from the request
+            ## behind Shiny Server
             tags$script(HTML("
   $(document).on('shiny:connected', function() {
-    Shiny.setInputValue('ts_client', {user_agent: navigator.userAgent});
+    Shiny.setInputValue('ts_client', {user_agent: navigator.userAgent,
+                                      referrer: document.referrer});
   });
 ")),
 
