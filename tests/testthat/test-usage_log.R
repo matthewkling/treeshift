@@ -65,7 +65,6 @@ test_that("a session logs its start, runs, views, downloads and end", {
       start <- dplyr::filter(x, event == "session_start", grepl("sp=Pinus_ponderosa", query))
       expect_equal(nrow(start), 1)
       expect_true(start$from_link)
-      expect_true(nzchar(start$ip))
       expect_match(start$user_agent, "Chrome")
       ev <- dplyr::filter(x, session == start$session)
 

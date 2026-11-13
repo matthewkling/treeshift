@@ -13,6 +13,14 @@ ui_head <- function() {
   });
 ")),
 
+            ## The browser, for the usage log (server/usage_log.R), which
+            ## can't read it from the request behind Shiny Server
+            tags$script(HTML("
+  $(document).on('shiny:connected', function() {
+    Shiny.setInputValue('ts_client', {user_agent: navigator.userAgent});
+  });
+")),
+
             ## A module tab (ui/right_sidebar.R) opens the modules sidebar
             ## and expands its module.
             tags$script(HTML("

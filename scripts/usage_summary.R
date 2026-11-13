@@ -20,7 +20,7 @@ show <- function(title, x) {
       print(as.data.frame(x), row.names = FALSE)
 }
 # Fields only some events have are absent from a log without those events
-fields <- c("from_link", "ip", "forwarded_for", "kind", "outcome", "cache", "seconds",
+fields <- c("from_link", "user_agent", "kind", "outcome", "cache", "seconds",
             "message", "what", "query")
 for (f in setdiff(fields, names(log))) log[[f]] <- NA
 
@@ -53,8 +53,12 @@ if (nrow(runs)) {
 downloads <- dplyr::filter(log, event == "download")
 if (nrow(downloads)) show("Downloads", dplyr::count(downloads, what, sort = TRUE))
 
-# Visitors: the forwarded address when the proxy passes it on, else the direct one
-show("Sessions per address (top 10)", starts |>
-           dplyr::mutate(address = dplyr::coalesce(as.character(forwarded_for), as.character(ip))) |>
-           dplyr::count(address, sort = TRUE) |>
-           utils::head(10))
+# Phone browsers mark themselves "Mobi"; tablets mostly don't (iPads report
+# themselves as desktop Safari), so they count as desktop or tablet
+show("Sessions by device", starts |>
+           dplyr::mutate(device = dplyr::case_when(is.na(user_agent) ~ "unknown",
+                                                   grepl("Mobi", user_agent) ~ "phone",
+                                                   TRUE ~ "desktop or tablet")) |>
+           dplyr::count(device, sort = TRUE))
+
+# Visitors' IP addresses aren't in this log; the web server's access log has them
