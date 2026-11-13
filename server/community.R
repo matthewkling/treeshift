@@ -35,7 +35,13 @@ multi_aim <- reactive({
       cost <- comm_run_cost()
       req(cost$gb <= comm_max_gb)
 
-      ts_multi_surfaces(clim(), pool(), y, model$theta_clim, model$theta_geog)
+      # From the result cache when this community has been run before
+      # (R/cache.R); on a hit, pool() and the run are skipped. The cost
+      # check above stays ahead of the cache, so a configuration is refused
+      # or allowed the same way whether or not it was run before.
+      settings <- lapply(setNames(nm = surfaces_setting_ids), function(id) model[[id]])
+      ts_cached(result_cache, ts_surfaces_key(settings, core_data, community = TRUE), function()
+            ts_multi_surfaces(clim(), pool(), y, model$theta_clim, model$theta_geog))
 })
 
 ## Reduce the per-entity stack to one community surface. Reduction reads

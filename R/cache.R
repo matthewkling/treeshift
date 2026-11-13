@@ -1,6 +1,7 @@
 # Result cache -------------------------------------------------------------------
 #
-# Computed model surfaces and connectivity solves, kept on disk so that settings
+# Computed model surfaces (single-entity and community) and connectivity solves,
+# kept on disk so that settings
 # already run -- the defaults, a shared link, a step back -- reload instead of
 # recomputing. Shared by every session and R process using the same directory.
 #
@@ -72,19 +73,24 @@ ts_unpack <- function(x) {
 
 # Settings -----------------------------------------------------------------------
 
-#' The settings a run's single-entity surfaces are computed from
+#' The settings a run's surfaces are computed from
 #'
-#' The entity is read only on its own track (ts_plots(), ts_response()): the
-#' species on the Species track, the forest type or group on theirs. The life
-#' stage and metric enter only through `fia_var`. Values are normalized so a
-#' setting reached by different routes (a slider, a link, a script) gives the
-#' same key; menu orders are kept as given, since they set layer order.
+#' For a single entity, the entity is read only on its own track (ts_plots(),
+#' ts_response()): the species on the Species track, the forest type or group
+#' on theirs. A community run models every entity the track and variable give
+#' (ts_multi_response()), so no single entity enters. The life stage and metric
+#' enter only through `fia_var`. Values are normalized so a setting reached by
+#' different routes (a slider, a link, a script) gives the same key; menu
+#' orders are kept as given, since they set layer order.
 #'
 #' @param settings `ts_settings()`, or the app's model settings.
-ts_surfaces_spec <- function(settings) {
+#' @param community Whether the surfaces are a community run's per-entity
+#'   stack. Stated by the caller, not read from the settings, so a key can't
+#'   pair one kind of result with the other.
+ts_surfaces_spec <- function(settings, community = FALSE) {
       s <- settings
       list(track = as.character(s$track),
-           entity = switch(s$track,
+           entity = if (community) "community" else switch(s$track,
                            "Species"      = as.character(s$species),
                            "Forest type"  = as.integer(s$forest_type),
                            "Forest group" = as.integer(s$forest_group),
@@ -152,6 +158,7 @@ surfaces_code_files <- function() {
       c(sort(list.files("R", pattern = "^[^_].*[.]R$", full.names = TRUE)),
         "server/aim.R", "server/climate.R", "server/climate_models.R", "server/data.R")
 }
+community_code_files <- function() c(surfaces_code_files(), "server/community.R")
 connectivity_code_files <- function() {
       c(surfaces_code_files(), "server/connectivity.R", "helpers/vectors.R")
 }
@@ -159,22 +166,24 @@ connectivity_code_files <- function() {
 # Packages whose code computes the surfaces
 surfaces_packages <- c("analogs", "terra", "dplyr", "tidyr", "purrr", "readr", "tibble")
 
-#' Cache key for a run's single-entity surfaces
+#' Cache key for a run's surfaces
 #'
 #' @param settings `ts_settings()`, or the app's model settings.
 #' @param data `ts_data()`.
+#' @param community See `ts_surfaces_spec()`.
 #' @return A key string, or NULL if a file it depends on is missing.
-ts_surfaces_key <- function(settings, data) {
+ts_surfaces_key <- function(settings, data, community = FALSE) {
       inputs <- c(file.path(data$dir, c("fia.csv", "forest_type_codes.csv", "clim_scales.rds")),
                   data$clim_historical,
                   ts_scenario_paths(data, settings$scenario_ssp, settings$scenario_period,
                                     settings$scenario_model))
-      parts <- list(spec = ts_surfaces_spec(settings),
+      code <- if (community) community_code_files() else surfaces_code_files()
+      parts <- list(spec = ts_surfaces_spec(settings, community),
                     data = file_hashes(inputs),
-                    code = file_hashes(surfaces_code_files()),
+                    code = file_hashes(code),
                     packages = package_fingerprint(surfaces_packages, by_files = "analogs"))
       if (is.null(parts$data) || is.null(parts$code)) return(NULL)
-      paste0("surfaces-", rlang::hash(parts))
+      paste0(if (community) "community-" else "surfaces-", rlang::hash(parts))
 }
 
 # The Julia version and the environment (Manifest.toml) that pins Circuitscape,

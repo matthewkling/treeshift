@@ -14,7 +14,8 @@ fake_data <- function() {
       list(dir = dir, clim_historical = file.path(dir, "clim_historical.tif"),
            clim_future_dir = file.path(dir, "clim_future"))
 }
-key <- function(settings, data) withr::with_dir(app_dir, ts_surfaces_key(settings, data))
+key <- function(settings, data, community = FALSE)
+      withr::with_dir(app_dir, ts_surfaces_key(settings, data, community))
 
 test_that("the surfaces key changes with every setting it is computed from", {
       d <- fake_data()
@@ -44,6 +45,17 @@ test_that("the surfaces key changes when an input file's content changes", {
       expect_false(identical(key(ts_settings(), d), base))
       file.remove(file.path(d$dir, "fia.csv"))
       expect_null(key(ts_settings(), d))   # a missing input disables caching
+})
+
+test_that("community keys are their own, and read the track and variable but no entity", {
+      d <- fake_data()
+      base <- key(ts_settings(), d, community = TRUE)
+      expect_false(identical(base, key(ts_settings(), d)))   # never a single-entity result
+      expect_match(base, "^community-")
+      expect_identical(key(ts_settings(species = "Pinus ponderosa"), d, community = TRUE), base)
+      expect_false(identical(key(ts_settings(track = "Forest type", forest_type = 221), d, community = TRUE), base))
+      expect_false(identical(key(ts_settings(stage = "seedling"), d, community = TRUE), base))
+      expect_false(identical(key(ts_settings(theta_geog = 40), d, community = TRUE), base))
 })
 
 test_that("the connectivity key includes the focal site only when an electrode uses it", {
@@ -94,4 +106,20 @@ test_that("a cached result is the computed one, and a bad entry is recomputed", 
       ts_cached(NULL, k, compute)
       ts_cached(cache, NULL, compute)
       expect_equal(runs, 4)
+})
+
+test_that("a cached community run is the computed one", {
+      skip_on_cran()
+      data <- withr::with_dir(app_dir, ts_data("data"))
+      s <- ts_settings(entity_scope = "multi", bbox_x = c(-112, -108), bbox_y = c(38, 42))
+      cache <- ts_cache(withr::local_tempdir())
+      k <- key(s, data, community = TRUE)
+      live <- ts_cached(cache, k, function() ts_model(s, data)$surfaces)
+      cached <- ts_cached(cache, k, function() stop("should have been read from the cache"))
+      for (t in c("bsl", "fut")) {
+            expect_gt(terra::nlyr(live[[t]]), 2)
+            expect_identical(names(cached[[t]]), names(live[[t]]))
+            expect_identical(terra::values(cached[[t]]), terra::values(live[[t]]))
+            expect_identical(as.vector(terra::ext(cached[[t]])), as.vector(terra::ext(live[[t]])))
+      }
 })
