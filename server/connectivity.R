@@ -102,11 +102,22 @@ leakage <- reactive({
 })
 
 ### Circuitscape --------------
+# From the result cache when these settings have been solved before
+# (R/cache.R). The focal site is part of the key only when an electrode uses
+# it, so moving the site doesn't discard an otherwise identical solve.
 connectivity <- reactive({
       # Belt and braces: the stat option is withdrawn in community mode,
       # but a stale selection during a flush must not reach a solve.
       req(!multi_mode())
 
+      settings <- lapply(setNames(nm = c(surfaces_setting_ids, connectivity_setting_ids)),
+                         function(id) model[[id]])
+      site_xy <- if ("selected site" %in% c(model$cs_sources, model$cs_targets) && !is.null(site$y))
+            c(site$x, site$y)
+      ts_cached(result_cache, ts_connectivity_key(settings, core_data, site_xy), solve_connectivity)
+})
+
+solve_connectivity <- function() {
       # First connectivity computation in this R process pays the Julia /
       # Circuitscape warmup; subsequent calls are a no-op. See the
       # ensure_cs_setup() definition in global setup.
@@ -146,4 +157,4 @@ connectivity <- reactive({
       c(current, voltage, curr_dest, curr_loss, curr_power,
         resistance()$conductance, leakage(), curr_dir) %>%
             mask(aim()$bsl$response)
-})
+}

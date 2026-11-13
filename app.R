@@ -56,6 +56,13 @@ clim_bbox <- c(floor(clim_bbox[c(1, 3)] / bbox_res) * bbox_res, ceiling(clim_bbo
 # The model's input data (R/data.R). The globals below are views of it.
 core_data <- ts_data("data")
 
+# Computed results, shared by every session and process (R/cache.R). Without a
+# usable cache directory the app still works; it just computes every time.
+result_cache <- tryCatch(ts_cache(), error = function(e) {
+      warning("Result cache unavailable, computing every run: ", conditionMessage(e), call. = FALSE)
+      NULL
+})
+
 .ssp_label_map <- c(ssp126 = "SSP1-2.6", ssp245 = "SSP2-4.5",
                     ssp370 = "SSP3-7.0", ssp585 = "SSP5-8.5")
 scenario_meta <- core_data$scenarios %>%

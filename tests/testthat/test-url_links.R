@@ -56,11 +56,13 @@ test_that("a community link reopens the same results", {
       })
 })
 
+# Shows a connectivity layer, so the second session's download is the cached solve
 test_that("a link with connectivity settings reopens them", {
       q <- check_link(function(a) {
-            set_in_order(a, track = "All trees", stage = "adult", cs_enable = TRUE,
-                         cs_sources = "FIA plots", cs_loss_layer = "mean suitability",
-                         cs_loss_scale = -2)
+            set_in_order(a, track = "All trees", stage = "adult", bbox_x = c(-112, -106),
+                         bbox_y = c(37, 42), cs_enable = TRUE, cs_sources = "FIA plots",
+                         cs_loss_layer = "mean suitability", cs_loss_scale = -2,
+                         stat = "connectivity", cs_stat = "current pinch points")
       })
       expect_match(q, "cs=1&csrc=plots&ctgt=cells&ccl=suit&cll=suit&ccs=0&cls=-2", fixed = TRUE)
 })

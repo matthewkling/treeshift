@@ -1,9 +1,15 @@
 ## ANALOG IMPACT MODEL -----------------------------------------
 
 ### full raster -----------------------
-# Single-entity surfaces for both timeframes (R/aim.R). A community run's
-# per-entity surfaces are multi_aim() (server/community.R).
-aim <- reactive(ts_surfaces(clim(), pool(), model$fia_var, model$theta_clim, model$theta_geog))
+# Single-entity surfaces for both timeframes (R/aim.R), from the result cache
+# when these settings have been run before (R/cache.R). On a hit, clim() and
+# pool() aren't computed at all. A community run's per-entity surfaces are
+# multi_aim() (server/community.R).
+aim <- reactive({
+      settings <- lapply(setNames(nm = surfaces_setting_ids), function(id) model[[id]])
+      ts_cached(result_cache, ts_surfaces_key(settings, core_data), function()
+            ts_surfaces(clim(), pool(), model$fia_var, model$theta_clim, model$theta_geog))
+})
 
 ### focal site ------------------------
 site_analogs <- reactive({

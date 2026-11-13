@@ -23,7 +23,11 @@ fia_in_box <- function(data, pool_bbox) {
 #' One row per FIA plot in the pool, summarized around a focal species
 #'
 #' The row order defines the plot index that the pool and every response are
-#' aligned to.
+#' aligned to: plots sorted by x, then y.
+#'
+#' Summarized with rowsum() and tabulate() over a plot index rather than a
+#' grouped summarize(): with tens of thousands of plots, evaluating each summary
+#' once per plot took several seconds, and this runs on every model run.
 #'
 #' @param species The focal species. Its columns (`pres`, `batot`, ...) are
 #'   used by the Species track only; the plot totals serve the other tracks.
@@ -31,40 +35,52 @@ ts_plots <- function(data, pool_bbox, species) {
       # Plot-level type->group lookup (one row per forest_type code)
       ft_to_fg <- dplyr::distinct(data$forest_types, forest_type, forest_group)
 
-      fia_in_box(data, pool_bbox) |>
-            dplyr::mutate(focal = species == !!species & !is.na(species)) |>
-            dplyr::group_by(x, y) |>
-            dplyr::summarize(
-                  samp_method_cd = mean(samp_method_cd),
-                  pres = as.integer(any(focal)), # focal species presence/absence (any life stage)
-                  pres_seed = as.integer(any(focal & n_seedlings > 0)), # focal species seedling presence
-                  pres_sap = as.integer(any(focal & n_saplings > 0)), # focal species sapling presence
-                  pres_tree = as.integer(any(focal & n_trees > 0)), # focal species adult (tree) presence
-                  batot = sum(basal_area[focal]), # total focal species basal area
-                  baprop = stats::weighted.mean(focal, basal_area), #  proportion ba
-                  baplot = sum(basal_area), # total plot ba, all species
-                  nttot = sum(n_trees[focal]), # focal species tree count
-                  ntplot = sum(n_trees), # total plot tree count, all species
-                  satot = sum(n_saplings[focal]), # focal species sapling count
-                  saplot = sum(n_saplings), # total plot sapling count, all species
-                  nstot = sum(n_seedlings[focal]), # focal species seedling count
-                  nsplot = sum(n_seedlings), # total plot seedling count, all species
-                  # Plot species richness, by stage. A count of distinct
-                  # species is an aggregation ACROSS species done at the
-                  # plot, exactly like baplot and ntplot -- which is what
-                  # makes it an All-trees variable rather than something
-                  # only the multi-entity path can produce. Because AIM is
-                  # a weighted mean (linear) with entity-independent
-                  # weights, generalizing this equals summing the
-                  # per-entity occurrence surfaces. The two routes should
-                  # agree to floating point, which makes each a check on
-                  # the other.
-                  nspp      = dplyr::n_distinct(species[!is.na(species)]),
-                  nspp_seed = dplyr::n_distinct(species[!is.na(species) & n_seedlings > 0]),
-                  nspp_sap  = dplyr::n_distinct(species[!is.na(species) & n_saplings > 0]),
-                  nspp_tree = dplyr::n_distinct(species[!is.na(species) & n_trees > 0]),
-                  forest_type = dplyr::first(forest_type), # plot-level FORTYPCD
-                  .groups = "drop") |>
+      # Rows grouped by plot, keeping their order within each plot
+      f <- fia_in_box(data, pool_bbox)
+      f <- f[order(f$x, f$y), ]
+      first <- c(TRUE, diff(f$x) != 0 | diff(f$y) != 0)
+      plot <- cumsum(first)
+      n <- sum(first)
+
+      focal <- f$species == species & !is.na(f$species)
+      sums <- function(v) unname(rowsum(v, plot, reorder = FALSE)[, 1])
+      any_of <- function(cond) as.integer(sums(as.integer(cond)) > 0)
+      # Distinct species per plot among the rows meeting cond
+      n_species <- function(cond) {
+            keep <- cond & !is.na(f$species)
+            p <- plot[keep]
+            tabulate(p[!duplicated(data.frame(p, f$species[keep]))], nbins = n)
+      }
+
+      tibble::tibble(
+            x = f$x[first], y = f$y[first],
+            samp_method_cd = sums(f$samp_method_cd) / tabulate(plot, nbins = n),
+            pres = any_of(focal), # focal species presence/absence (any life stage)
+            pres_seed = any_of(focal & f$n_seedlings > 0), # focal species seedling presence
+            pres_sap = any_of(focal & f$n_saplings > 0), # focal species sapling presence
+            pres_tree = any_of(focal & f$n_trees > 0), # focal species adult (tree) presence
+            batot = sums(f$basal_area * focal), # total focal species basal area
+            baprop = batot / sums(f$basal_area), # proportion ba
+            baplot = sums(f$basal_area), # total plot ba, all species
+            nttot = sums(f$n_trees * focal), # focal species tree count
+            ntplot = sums(f$n_trees), # total plot tree count, all species
+            satot = sums(f$n_saplings * focal), # focal species sapling count
+            saplot = sums(f$n_saplings), # total plot sapling count, all species
+            nstot = sums(f$n_seedlings * focal), # focal species seedling count
+            nsplot = sums(f$n_seedlings), # total plot seedling count, all species
+            # Plot species richness, by stage. A count of distinct species is
+            # an aggregation ACROSS species done at the plot, exactly like
+            # baplot and ntplot -- which is what makes it an All-trees variable
+            # rather than something only the multi-entity path can produce.
+            # Because AIM is a weighted mean (linear) with entity-independent
+            # weights, generalizing this equals summing the per-entity
+            # occurrence surfaces. The two routes should agree to floating
+            # point, which makes each a check on the other.
+            nspp      = n_species(TRUE),
+            nspp_seed = n_species(f$n_seedlings > 0),
+            nspp_sap  = n_species(f$n_saplings > 0),
+            nspp_tree = n_species(f$n_trees > 0),
+            forest_type = f$forest_type[first]) |> # plot-level FORTYPCD
             dplyr::left_join(ft_to_fg, by = "forest_type") |>
             dplyr::mutate(baprop = ifelse(baplot == 0, 0, baprop),
                           # Per-plot regeneration fractions (focal species), on an

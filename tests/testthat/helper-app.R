@@ -1,6 +1,13 @@
 # Shared by the tests. The app directory is two levels up from tests/testthat.
 app_dir <- normalizePath(file.path(testthat::test_path(), "..", ".."))
 
+# Each test run starts from an empty result cache (R/cache.R), inherited by the
+# app processes the tests launch: the app's own cache would otherwise serve
+# results from earlier runs, and a link test would compare the cache with itself
+# rather than a fresh computation with its cached copy.
+withr::local_envvar(TREESHIFT_CACHE_DIR = withr::local_tempdir(.local_envir = teardown_env()),
+                    .local_envir = teardown_env())
+
 # Evaluate app.R's global setup (everything before the UI) into the global
 # environment, for tests of the helpers that need the app's data and choices.
 load_app_globals <- function() {
