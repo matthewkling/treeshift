@@ -14,7 +14,7 @@ Future maps show what today's forests suggest about a projected climate, for one
 
 ### Ratios near zero
 
-Measures that are ratios, such as evenness or regeneration fractions, take extreme values where the species or community is barely present. The support floor setting hides cells where there is too little to measure.
+Measures that are ratios, such as evenness or regeneration fractions, have extreme values where the species or community is barely present. The `support floor` setting hides cells where there is too little to measure.
 
 ### Use it alongside other knowledge
 

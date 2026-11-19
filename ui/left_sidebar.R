@@ -335,7 +335,8 @@ ui_panel_interpolation <- function(s) {
 ui_panel_connectivity <- function(s) {
       accordion_panel(
             "Landscape connectivity",
-            helpText("Connectivity models estimate how long-distance movement routes across the mapped grid are constrained by local habitat resistance.
+            helpText("Connectivity models run as a second stage on top of gridded suitability results.
+                     They estimate how long-distance movement between suitable cells is constrained by local habitat resistance.
                      Under 'Map layers', select 'connectivity', and change the `timeframe` to model either omnidirectional habitat connectivity within an era or
                      directional connectivity between present and future habitat.",
                      about_link("More details", "about-how_it_works-landscape-connectivity")),
