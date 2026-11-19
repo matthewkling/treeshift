@@ -17,3 +17,5 @@ CLAUDE.md
 
 # Local secrets (e.g. GITHUB_PAT for the data releases)
 .Renviron
+data/ghm.tif
+data/ghm_strips

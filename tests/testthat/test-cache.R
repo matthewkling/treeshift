@@ -8,11 +8,11 @@ fake_data <- function() {
       dir <- withr::local_tempdir(.local_envir = parent.frame())
       dir.create(file.path(dir, "clim_future"))
       files <- c("fia.csv", "forest_type_codes.csv", "clim_scales.rds", "clim_historical.tif",
-                 "wind_quantized.tif", "clim_future/ssp585_2041-2070_gfdl-esm4.tif",
+                 "conus.tif", "ghm.tif", "clim_future/ssp585_2041-2070_gfdl-esm4.tif",
                  "clim_future/ssp585_2041-2070_mri-esm2-0.tif")
       for (f in files) writeLines(f, file.path(dir, f))
       list(dir = dir, clim_historical = file.path(dir, "clim_historical.tif"),
-           clim_future_dir = file.path(dir, "clim_future"))
+           conus = file.path(dir, "conus.tif"), clim_future_dir = file.path(dir, "clim_future"))
 }
 key <- function(settings, data, community = FALSE)
       withr::with_dir(app_dir, ts_surfaces_key(settings, data, community))
@@ -43,6 +43,9 @@ test_that("the surfaces key changes when an input file's content changes", {
       base <- key(ts_settings(), d)
       writeLines("revised", file.path(d$dir, "fia.csv"))
       expect_false(identical(key(ts_settings(), d), base))
+      revised <- key(ts_settings(), d)
+      writeLines("revised", d$conus)   # the US mask changes the grid
+      expect_false(identical(key(ts_settings(), d), revised))
       file.remove(file.path(d$dir, "fia.csv"))
       expect_null(key(ts_settings(), d))   # a missing input disables caching
 })
@@ -58,19 +61,16 @@ test_that("community keys are their own, and read the track and variable but no 
       expect_false(identical(key(ts_settings(theta_geog = 40), d, community = TRUE), base))
 })
 
-test_that("the connectivity key includes the focal site only when an electrode uses it", {
+test_that("each connectivity map has its own key, which follows its settings", {
       d <- fake_data()
-      cs <- function(sources = "grid cells")
-            c(ts_settings(), list(cs_sources = sources, cs_targets = "grid cells",
-                                  cs_conductance_layer = "suitability", cs_loss_layer = "none",
-                                  cs_conductance_scale = 0, cs_loss_scale = -1))
-      spec <- function(s, site) ts_connectivity_spec(s, site)
-      expect_identical(spec(cs(), c(-105, 40)), spec(cs(), c(-106, 41)))
-      expect_identical(spec(cs(), c(-105, 40)), spec(cs(), NULL))
-      site_spec <- spec(cs("selected site"), c(-105, 40))
-      expect_false(identical(site_spec, spec(cs("selected site"), c(-106, 41))))
-      expect_false(identical(site_spec, spec(cs("selected site"), NULL)))
-      expect_false(identical(spec(cs("selected site"), NULL), spec(cs("FIA plots"), NULL)))
+      cs <- function(reach = "100", landuse = 50) c(ts_settings(), list(cs_reach = reach, cs_landuse = landuse))
+      ckey <- function(s, era) withr::with_dir(app_dir, ts_connectivity_key(s, d, era))
+      skip_if(is.null(ckey(cs(), "hist")), "Julia not found")
+      keys <- c(ckey(cs(), "hist"), ckey(cs(), "fut"), ckey(cs(), "shift"), ckey(cs("Inf"), "hist"),
+                ckey(cs(landuse = 75), "hist"),
+                ckey(modifyList(cs(), list(theta_geog = 40)), "hist"))
+      expect_false(anyDuplicated(keys) > 0)
+      expect_identical(ckey(cs(), "hist"), keys[1])
 })
 
 test_that("a cached result is the computed one, and a bad entry is recomputed", {

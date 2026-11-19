@@ -9,7 +9,10 @@ aim <- reactive({
       settings <- lapply(setNames(nm = surfaces_setting_ids), function(id) model[[id]])
       logged_run("surfaces", ts_surfaces_key(settings, core_data), function()
             ts_surfaces(clim(), pool(), model$fia_var, model$theta_clim, model$theta_geog),
-            describe = function(r) list(cells = terra::ncell(r$bsl)))
+            describe = function(r) list(cells = terra::ncell(r$bsl)),
+            message = "Running the model.",
+            detail = "Predicting cells from FIA by climate and location.",
+            parts = 2)   # historical and future
 })
 
 ### focal site ------------------------

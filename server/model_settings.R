@@ -12,8 +12,15 @@ model_menus <- model_setting_menus(url_ctx)
 
 controls_now <- reactive(lapply(setNames(nm = model_setting_ids), function(id) input[[id]]))
 
-pending <- reactive(pending_settings(c(controls_now(), list(cs_enable = input$cs_enable)),
-                                     reactiveValuesToList(model)))
+# Connectivity is solved only while it is on the map (server/connectivity.R),
+# so its settings cost nothing while it isn't: they wait for Run model only
+# while it is shown, and otherwise apply straight away (below).
+connectivity_shown <- reactive(identical(input$stat, "connectivity"))
+
+pending <- reactive({
+      p <- pending_settings(controls_now(), reactiveValuesToList(model))
+      if (connectivity_shown()) p else setdiff(p, connectivity_setting_ids)
+})
 
 # Apply the given values (by default, the controls'). Unchanged settings are
 # left alone, so they don't invalidate anything.
@@ -29,6 +36,11 @@ apply_model_settings <- function(values = isolate(controls_now())) {
 }
 
 observeEvent(input$update_model, apply_model_settings())
+
+observe({
+      req(!connectivity_shown())
+      apply_model_settings(lapply(setNames(nm = connectivity_setting_ids), function(id) input[[id]]))
+})
 
 observe({
       n <- length(pending())

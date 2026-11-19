@@ -16,6 +16,10 @@ multi_mode <- reactive({
             isTruthy(model$track) && model$track != "All trees"
 })
 
+## Whether connectivity applies to the applied model (url_cs_available())
+cs_available <- reactive(url_cs_available(list(track = model$track, entity_scope = model$entity_scope,
+                                               metric = model$metric)))
+
 focal_id <- reactive({
       if (multi_mode())
             return(paste0("all_", tolower(gsub(" ", "_", model$track))))
@@ -90,13 +94,7 @@ display_bounds <- reactive({
       } else if (rast_stat() == "focal site similarity") {
             c(0, Inf)
       } else if (rast_stat() == "connectivity") {
-            if (input$cs_stat == "current direction") {
-                  c(0, 360)
-            } else {
-                  # other connectivity stats: non-negative magnitudes
-                  c(0, Inf)
-            }
-      } else if (input$stat == "FIA variable") {
+            c(0, Inf)   # a ratio of flows else if (input$stat == "FIA variable") {
             if (input$time == "delta") {
                   c(-Inf, Inf)
             } else if (response_is_binary()) {

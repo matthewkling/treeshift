@@ -333,17 +333,18 @@
         "R (>= 3.5.0)"
       ],
       "Imports": [
+        "progressr (>= 0.13.0)",
         "Rcpp (>= 1.0.0)",
         "RcppParallel (>= 5.0.0)",
-        "stats",
-        "utils"
+        "stats"
       ],
       "Suggests": [
         "geosphere",
         "knitr",
         "rmarkdown",
         "terra",
-        "testthat (>= 3.0.0)"
+        "testthat (>= 3.0.0)",
+        "withr"
       ],
       "SystemRequirements": "C++17",
       "Config/testthat/edition": "3",
@@ -356,7 +357,7 @@
       "RemoteUsername": "matthewkling",
       "RemoteRepo": "analogs",
       "RemoteRef": "main",
-      "RemoteSha": "de56ceb00a27df9c7486d968d0d3d40197361dce"
+      "RemoteSha": "248457296f4f224fd291650b4af742bfb90fff94"
     },
     "askpass": {
       "Package": "askpass",
@@ -741,13 +742,13 @@
     },
     "circuitscaper": {
       "Package": "circuitscaper",
-      "Version": "0.2.0",
-      "Source": "Repository",
-      "Title": "'Circuitscape' and 'Omniscape' Connectivity Analysis via 'Julia'",
+      "Version": "0.2.0.9000",
+      "Source": "GitHub",
+      "Title": "Circuit-Theory Connectivity with 'Circuitscape', 'Omniscape' and Dipole Methods",
       "Authors@R": "person(\"Matthew\", \"Kling\", email = \"mattkling@berkeley.edu\", role = c(\"aut\", \"cre\", \"cph\"))",
       "Author": "Matthew Kling [aut, cre, cph]",
       "Maintainer": "Matthew Kling <mattkling@berkeley.edu>",
-      "Description": "Provides an R-native interface to the 'Circuitscape.jl' and 'Omniscape.jl' 'Julia' packages for landscape connectivity modeling using circuit theory. Users work entirely in R with familiar objects (SpatRaster, file paths) while 'Julia' handles computation invisibly. Supports all four 'Circuitscape' modes (pairwise, one-to-all, all-to-one, advanced) and 'Omniscape' moving-window analysis. Methods are described in  McRae (2006) <doi:10.1111/j.0014-3820.2006.tb00500.x> and  Landau et al. (2021) <doi:10.21105/joss.02829>.",
+      "Description": "Landscape connectivity modeling with circuit theory. Users work entirely in R with familiar objects (SpatRaster, file paths) while 'Julia' handles computation invisibly. Runs all four 'Circuitscape' modes (pairwise, one-to-all, all-to-one, advanced) and 'Omniscape' moving-window analysis through the 'Circuitscape.jl' and 'Omniscape.jl' 'Julia' packages; these methods are described in McRae (2006) <doi:10.1111/j.0014-3820.2006.tb00500.x> and Landau et al. (2021) <doi:10.21105/joss.02829>. Also provides experimental dipole methods, which map pairwise, omnidirectional and cross-era connectivity from random source-sink pairs superposed on a single factored circuit, at a cost that doesn't grow with the number of pairs.",
       "License": "MIT + file LICENSE",
       "URL": "https://github.com/matthewkling/circuitscaper, https://matthewkling.github.io/circuitscaper/",
       "BugReports": "https://github.com/matthewkling/circuitscaper/issues",
@@ -757,11 +758,13 @@
       "Imports": [
         "terra",
         "JuliaConnectoR (>= 1.1.3)",
+        "progressr",
         "rjson",
         "tools",
         "utils"
       ],
       "Suggests": [
+        "Matrix",
         "testthat (>= 3.0.0)",
         "withr",
         "knitr",
@@ -769,11 +772,17 @@
       ],
       "VignetteBuilder": "knitr",
       "Encoding": "UTF-8",
+      "Roxygen": "list(markdown = TRUE)",
       "Config/testthat/edition": "3",
-      "SystemRequirements": "Julia (>= 1.10), Circuitscape.jl, Omniscape.jl",
+      "SystemRequirements": "Julia (>= 1.10); Circuitscape.jl and Omniscape.jl for the 'Circuitscape' and 'Omniscape' functions",
+      "LazyData": "true",
       "Config/roxygen2/version": "8.0.0",
-      "NeedsCompilation": "no",
-      "Repository": "CRAN"
+      "RemoteType": "github",
+      "RemoteHost": "api.github.com",
+      "RemoteUsername": "matthewkling",
+      "RemoteRepo": "circuitscaper",
+      "RemoteRef": "main",
+      "RemoteSha": "726d40fbcafc439d8c6db8dbe1e07a461bac8add"
     },
     "class": {
       "Package": "class",
@@ -3193,6 +3202,55 @@
       "Maintainer": "Gábor Csárdi <csardi.gabor@gmail.com>",
       "Repository": "CRAN"
     },
+    "progressr": {
+      "Package": "progressr",
+      "Version": "1.1.0",
+      "Source": "Repository",
+      "Title": "An Inclusive, Unifying API for Progress Updates",
+      "Description": "A minimal, unifying API for scripts and packages to report progress updates from anywhere including when using parallel processing.  The package is designed such that the developer can to focus on what progress should be reported on without having to worry about how to present it.  The end user has full control of how, where, and when to render these progress updates, e.g. in the terminal using utils::txtProgressBar(), cli::cli_progress_bar(), in a graphical user interface using utils::winProgressBar(), tcltk::tkProgressBar() or shiny::withProgress(), via the speakers using beepr::beep(), or on a file system via the size of a file. Anyone can add additional, customized, progression handlers. The 'progressr' package uses R's condition framework for signaling progress updated. Because of this, progress can be reported from almost anywhere in R, e.g. from classical for and while loops, from map-reduce API:s like the lapply() family of functions, 'purrr', 'plyr', and 'foreach'. It will also work with parallel processing via the 'future' framework, e.g. 'lapply(...) |> futurize()' and 'purrr::map(...) |> futurize()', which uses future.apply::future_lapply() and furrr::future_map() internally. The package is compatible with Shiny applications.",
+      "Authors@R": "c(person(\"Henrik\", \"Bengtsson\", role = c(\"aut\", \"cre\", \"cph\"), email = \"henrikb@braju.com\", comment = c(ORCID = \"0000-0002-7579-5165\")))",
+      "License": "Apache License (>= 2)",
+      "Depends": [
+        "R (>= 3.5.0)"
+      ],
+      "Imports": [
+        "tools",
+        "utils"
+      ],
+      "Suggests": [
+        "graphics",
+        "tcltk",
+        "beepr",
+        "cli",
+        "crayon",
+        "digest",
+        "pbmcapply",
+        "progress",
+        "purrr",
+        "foreach",
+        "plyr",
+        "doFuture",
+        "future",
+        "future.apply",
+        "furrr",
+        "ntfy",
+        "RPushbullet",
+        "rstudioapi",
+        "shiny",
+        "commonmark",
+        "base64enc"
+      ],
+      "VignetteBuilder": "progressr",
+      "Language": "en-US",
+      "Encoding": "UTF-8",
+      "URL": "https://progressr.futureverse.org, https://github.com/futureverse/progressr",
+      "BugReports": "https://github.com/futureverse/progressr/issues",
+      "Config/roxygen2/version": "8.1.1",
+      "NeedsCompilation": "no",
+      "Author": "Henrik Bengtsson [aut, cre, cph] (ORCID: <https://orcid.org/0000-0002-7579-5165>)",
+      "Maintainer": "Henrik Bengtsson <henrikb@braju.com>",
+      "Repository": "CRAN"
+    },
     "promises": {
       "Package": "promises",
       "Version": "1.5.0",
@@ -3964,36 +4022,6 @@
       "NeedsCompilation": "no",
       "Author": "Winston Chang [aut] (ORCID: <https://orcid.org/0000-0002-1576-2126>), Joe Cheng [aut], JJ Allaire [aut], Carson Sievert [aut, cre] (ORCID: <https://orcid.org/0000-0002-4958-2844>), Barret Schloerke [aut] (ORCID: <https://orcid.org/0000-0001-9986-114X>), Garrick Aden-Buie [aut] (ORCID: <https://orcid.org/0000-0002-7111-0077>), Yihui Xie [aut], Jeff Allen [aut], Jonathan McPherson [aut], Alan Dipert [aut], Barbara Borges [aut], Posit Software, PBC [cph, fnd] (ROR: <https://ror.org/03wc8by49>), jQuery Foundation [cph] (jQuery library and jQuery UI library), jQuery contributors [ctb, cph] (jQuery library; authors listed in inst/www/shared/jquery-AUTHORS.txt), jQuery UI contributors [ctb, cph] (jQuery UI library; authors listed in inst/www/shared/jqueryui/AUTHORS.txt), Mark Otto [ctb] (Bootstrap library), Jacob Thornton [ctb] (Bootstrap library), Bootstrap contributors [ctb] (Bootstrap library), Twitter, Inc [cph] (Bootstrap library), Prem Nawaz Khan [ctb] (Bootstrap accessibility plugin), Victor Tsaran [ctb] (Bootstrap accessibility plugin), Dennis Lembree [ctb] (Bootstrap accessibility plugin), Srinivasu Chakravarthula [ctb] (Bootstrap accessibility plugin), Cathy O'Connor [ctb] (Bootstrap accessibility plugin), PayPal, Inc [cph] (Bootstrap accessibility plugin), Stefan Petre [ctb, cph] (Bootstrap-datepicker library), Andrew Rowls [ctb, cph] (Bootstrap-datepicker library), Brian Reavis [ctb, cph] (selectize.js library), Salmen Bejaoui [ctb, cph] (selectize-plugin-a11y library), Denis Ineshin [ctb, cph] (ion.rangeSlider library), Sami Samhuri [ctb, cph] (Javascript strftime library), SpryMedia Limited [ctb, cph] (DataTables library), Ivan Sagalaev [ctb, cph] (highlight.js library), R Core Team [ctb, cph] (tar implementation from R)",
       "Maintainer": "Carson Sievert <carson@posit.co>",
-      "Repository": "CRAN"
-    },
-    "shinybusy": {
-      "Package": "shinybusy",
-      "Version": "0.3.3",
-      "Source": "Repository",
-      "Title": "Busy Indicators and Notifications for 'Shiny' Applications",
-      "Authors@R": "c(person(\"Fanny\", \"Meyer\", role = \"aut\"), person(\"Victor\", \"Perrier\", email = \"victor.perrier@dreamrs.fr\", role = c(\"aut\", \"cre\")), person(\"Silex Technologies\", comment = \"https://www.silex-ip.com\", role = \"fnd\"))",
-      "Description": "Add indicators (spinner, progress bar, gif) in your 'shiny' applications to show the user that the server is busy. And other tools to let your users know something is happening (send notifications, reports, ...).",
-      "License": "GPL-3",
-      "Encoding": "UTF-8",
-      "Imports": [
-        "htmltools",
-        "shiny",
-        "jsonlite",
-        "htmlwidgets"
-      ],
-      "RoxygenNote": "7.3.1",
-      "URL": "https://github.com/dreamRs/shinybusy, https://dreamrs.github.io/shinybusy/",
-      "BugReports": "https://github.com/dreamRs/shinybusy/issues",
-      "Suggests": [
-        "testthat",
-        "covr",
-        "knitr",
-        "rmarkdown"
-      ],
-      "VignetteBuilder": "knitr",
-      "NeedsCompilation": "no",
-      "Author": "Fanny Meyer [aut], Victor Perrier [aut, cre], Silex Technologies [fnd] (https://www.silex-ip.com)",
-      "Maintainer": "Victor Perrier <victor.perrier@dreamrs.fr>",
       "Repository": "CRAN"
     },
     "shinytest2": {

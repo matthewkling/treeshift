@@ -8,7 +8,6 @@ library(analogs) # renv::install("matthewkling/analogs")
 library(dplyr)
 library(readr)
 library(bslib)
-library(shinybusy)
 library(leaflet.extras2)
 library(sf)
 library(leafgl)
@@ -30,6 +29,9 @@ for (.src in c(list.files("R", pattern = "^[^_].*[.]R$", full.names = TRUE),
       source(.src, local = TRUE, encoding = "UTF-8", keep.source = TRUE)
 }
 
+# Model runs report their progress through progressr (server/usage_log.R),
+# which by default stays silent in a non-interactive R process, as the app runs
+options(progressr.enable = TRUE)
 
 # Fetch climate data if absent. Runs once at app process startup, before any
 # rast("data/...") call below. On the production shiny-server deployment,
@@ -164,8 +166,7 @@ ui <- function(request) {
       page_navbar(
             id = "main_nav",
 
-            header = tagList(ui_head(),
-                             add_busy_spinner(spin = "cube-grid", position = "bottom-right")),
+            header = ui_head(),
 
             ## Monochrome header: very dark gray. The selected tab is white;
             ## the title and other tabs are gray, turning white on hover.

@@ -33,11 +33,11 @@ test_that("only changes to settings in use are pending", {
       expect_identical(pending_settings(now, d), "theta_geog")
       now$track <- "Forest type"
       expect_setequal(pending_settings(now, d), c("track", "forest_type", "theta_geog"))
-      # Connectivity settings count only while connectivity is on
-      now <- modifyList(d, list(cs_loss_scale = -2))
-      expect_length(pending_settings(now, d), 0)
-      now$cs_enable <- TRUE
-      expect_identical(pending_settings(now, d), "cs_loss_scale")
+      # The dispersal reach counts only where connectivity applies
+      now <- modifyList(d, list(cs_reach = "250"))
+      expect_identical(pending_settings(now, d), "cs_reach")
+      now$entity_scope <- "multi"
+      expect_identical(pending_settings(now, d), "entity_scope")
 })
 
 test_that("the pending line names each change once", {

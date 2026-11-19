@@ -211,7 +211,7 @@ eval_var_set <- function(clim_vars, vary_bandwidths = TRUE){
       # be negative -- unlike the old cor(pred,obs)^2. There is no AIC
       # equivalent: AIC is an in-sample criterion and cv_performance()
       # is a held-out CV tool, so `delta AIC` was dropped from the UI.
-      eval <- function(theta_clim, theta_geog, summarize = TRUE){
+      eval <- function(theta_clim, theta_geog, summarize = TRUE, progress = FALSE){
             k <- aim_kernels(theta_clim, theta_geog)
             cv <- suppressWarnings(analogs::analog_cv(
                   fun        = analogs::analog_impact,
@@ -221,7 +221,8 @@ eval_var_set <- function(clim_vars, vary_bandwidths = TRUE){
                   env        = k$env,
                   geog       = k$geog,
                   stat       = "weighted_mean",
-                  coord_type = "projected"))
+                  coord_type = "projected",
+                  progress   = progress))
 
             if(!summarize){
                   # Scatterplot path: return the cv object itself plus the
@@ -273,8 +274,9 @@ eval_var_set <- function(clim_vars, vary_bandwidths = TRUE){
                   purrr::list_rbind() %>%
                   mutate(clim_vars = paste(clim_vars, collapse = "_"))
       }else{
+            # One cross-validation, so analogs' progress is the run's
             e <- eval(model$theta_clim, model$theta_geog,
-                      summarize = FALSE)
+                      summarize = FALSE, progress = TRUE)
       }
 
       return(e)
@@ -297,7 +299,14 @@ observeEvent(input$run_eval, {
             v <- list(model$clim_vars)
       }
 
-      e <- v %>% lapply(eval_var_set) %>% bind_rows()
+      e <- withProgress(message = "Evaluating the model.",
+                        detail = "Each setting is scored by leaving out one FIA plot at a time.", {
+            lapply(v, function(x) {
+                  r <- eval_var_set(x)
+                  incProgress(1 / length(v))
+                  r
+            }) %>% bind_rows()
+      })
 
       model_eval$comparison <- e
       # Snapshot the settings these results describe, plus the dimensions
@@ -456,7 +465,10 @@ output$eval_heatmap <- renderPlot({
 
 
 eval_scatter_data <- reactive({
-      eval_var_set(model$clim_vars, vary_bandwidths = FALSE)
+      progressr::withProgressShiny(eval_var_set(model$clim_vars, vary_bandwidths = FALSE),
+                                   value = NULL, message = "Evaluating the model.",
+                                   detail = "Each FIA plot is estimated with that plot left out.",
+                                   inputs = list(message = NULL, detail = NULL))
 })
 
 # Scope resolution for the single-configuration section. Shared by the

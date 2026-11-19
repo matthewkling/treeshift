@@ -13,7 +13,8 @@
 #   - What the map shows (raster and point layers, analog direction) is written
 #     only when it differs from the default.
 #   - Settings that don't apply are left out: a species link has no forest
-#     type, and connectivity settings appear only when connectivity is on.
+#     type, and the connectivity setting appears only where connectivity
+#     applies.
 #
 # Every value is checked against the app's own choices and bounds. A value that
 # fails falls back to the default and is reported, never silently dropped, and
@@ -38,8 +39,10 @@
 #   poly   focal polygon (boundary library id);  site  focal site (lon,lat)
 #   cv     climate variables;  ssp, era, gcm  scenario
 #   tg, tc geographic and climate bandwidths
-#   cs     connectivity on (1); csrc, ctgt, ccl, cll, ccs, cls its settings
-#   r      raster layer;  rev  evidence measure;  rcs  connectivity layer
+#   crch   connectivity dispersal reach (km, or inf);  clu  land use weight (%)
+#   r      raster layer;  rev  evidence measure
+#   rcm    retired: there is no longer a choice of connectivity measure, so
+#          old links' values are ignored
 #   pts    point layer
 #   an     analog direction
 
@@ -47,7 +50,7 @@ url_schema_version <- 1L
 
 url_keys <- c("v", "e", "es", "sp", "ft", "fg", "st", "m", "t", "cm", "n", "sf",
               "g", "bx", "by", "poly", "site", "cv", "ssp", "era", "gcm", "tg", "tc",
-              "cs", "csrc", "ctgt", "ccl", "cll", "ccs", "cls", "r", "rev", "rcs", "pts", "an")
+              "crch", "clu", "r", "rev", "rcm", "pts", "an")
 
 # Short codes for enumerated settings: code = app value
 url_codes <- list(
@@ -61,14 +64,10 @@ url_codes <- list(
                        gain = "expected gains", loss = "expected losses",
                        coldem = "colonization demand", lossfrac = "loss fraction",
                        win = "biggest winner", lose = "biggest loser"),
-      electrode = c(cells = "grid cells", plots = "FIA plots", site = "selected site"),
-      conductance = c(suit = "suitability", wind = "wind", suitwind = "suitability * wind",
-                      uniform = "uniform"),
-      loss = c(none = "none", uniform = "uniform", suit = "mean suitability"),
+      reach = stats::setNames(cs_reach_choices, sub("Inf", "inf", cs_reach_choices)),
       stat = c(fia = "FIA variable", evid = "evidence", sim = "focal site similarity",
                conn = "connectivity"),
       evidence = c(sup = "support", close = "closeness", spread = "spread"),
-      cs_stat = stats::setNames(cs_stat_names, cs_stats),
       vector = c(occ = "occupied FIA plots", all = "all FIA plots", analogs = "focal site analogs",
                  anim = "current animation", field = "current field", none = "none"),
       analog = c(contemp = "Contemporary analogs", reverse = "Reverse analogs",
@@ -78,7 +77,7 @@ url_codes <- list(
 # Slider bounds, shared with the UI so a link can't hold a value the UI can't
 url_bounds <- list(
       clim_agg = c(1, 10), theta_geog = c(5, 100), theta_clim = c(0.05, 0.5),
-      comm_top_n = c(2, 25), cs_conductance_scale = c(-2, 2), cs_loss_scale = c(-3, 2)
+      comm_top_n = c(2, 25)
 )
 
 # The app's valid choices, gathered once at startup (app.R). Choice vectors
@@ -113,17 +112,15 @@ url_defaults <- function(ctx) {
            clim_vars = url_menu_order(d$clim_vars, clim_vars()), scenario_ssp = ctx$default_ssp,
            scenario_period = ctx$default_period, scenario_model = ctx$default_model,
            theta_geog = d$theta_geog, theta_clim = d$theta_clim,
-           cs_enable = FALSE, cs_sources = "grid cells", cs_targets = "grid cells",
-           cs_conductance_layer = "suitability", cs_loss_layer = "none",
-           cs_conductance_scale = 0, cs_loss_scale = -1,
-           stat = "FIA variable", evidence_stat = "support", cs_stat = cs_stat_names[1],
+           cs_reach = "100", cs_landuse = 50,
+           stat = "FIA variable", evidence_stat = "support",
            vector = "occupied FIA plots", analog_direction = "Contemporary analogs")
 }
 
 # Which settings apply, from the settings they depend on. Shared by the encoder
 # and decoder, and mirroring the UI's conditionalPanels.
 url_multi <- function(s) identical(s$entity_scope, "multi") && !identical(s$track, "All trees")
-url_cs_on <- function(s) isTRUE(s$cs_enable) && !url_multi(s)
+url_cs_available <- function(s) !url_multi(s) && isTRUE(s$metric %in% cs_metrics)
 url_has_stage <- function(s) s$track %in% c("Species", "All trees")
 url_has_floor <- function(s) {
       (url_multi(s) && !s$comm_measure %in% c("richness", "expected gains", "expected losses")) ||
@@ -190,18 +187,12 @@ url_fields <- function(s, ctx) {
             f["gcm"] <- paste(url_menu_order(s$scenario_model, ctx$models), collapse = ",")
       f["tg"] <- url_num(s$theta_geog)
       f["tc"] <- url_num(s$theta_clim)
-      if (url_cs_on(s)) {
-            f["cs"] <- "1"
-            f["csrc"] <- code_of(url_codes$electrode, s$cs_sources)
-            f["ctgt"] <- code_of(url_codes$electrode, s$cs_targets)
-            f["ccl"] <- code_of(url_codes$conductance, s$cs_conductance_layer)
-            f["cll"] <- code_of(url_codes$loss, s$cs_loss_layer)
-            f["ccs"] <- url_num(s$cs_conductance_scale)
-            f["cls"] <- url_num(s$cs_loss_scale)
+      if (url_cs_available(s)) {
+            f["crch"] <- code_of(url_codes$reach, s$cs_reach)
+            f["clu"] <- url_num(s$cs_landuse)
       }
       if (!identical(s$stat, d$stat)) f["r"] <- code_of(url_codes$stat, s$stat)
       if (identical(s$stat, "evidence")) f["rev"] <- code_of(url_codes$evidence, s$evidence_stat)
-      if (identical(s$stat, "connectivity")) f["rcs"] <- code_of(url_codes$cs_stat, s$cs_stat)
       if (!identical(s$vector, d$vector)) f["pts"] <- code_of(url_codes$vector, s$vector)
       if (!identical(s$analog_direction, d$analog_direction))
             f["an"] <- code_of(url_codes$analog, s$analog_direction)
@@ -357,36 +348,18 @@ url_decode <- function(search, ctx) {
       set("theta_geog", nums("tg", "Geographic bandwidth", url_bounds$theta_geog[1], url_bounds$theta_geog[2]))
       set("theta_clim", nums("tc", "Climate bandwidth", url_bounds$theta_clim[1], url_bounds$theta_clim[2]))
 
-      if (!is.null(q$cs)) {
-            if (!identical(q$cs, "1")) {
-                  note("Connectivity", q$cs)
-            } else if (url_multi(s)) {
-                  problems <- c(problems, "Connectivity doesn't apply to community composition, so it was left off.")
-            } else {
-                  s$cs_enable <- TRUE
-            }
-      }
-      if (url_cs_on(s)) {
-            set("cs_sources", code("csrc", url_codes$electrode, "Connectivity sources"))
-            set("cs_targets", code("ctgt", url_codes$electrode, "Connectivity targets"))
-            set("cs_conductance_layer", code("ccl", url_codes$conductance, "Horizontal conductance"))
-            set("cs_loss_layer", code("cll", url_codes$loss, "Connectivity loss"))
-            set("cs_conductance_scale", nums("ccs", "Conductance scale", url_bounds$cs_conductance_scale[1],
-                                             url_bounds$cs_conductance_scale[2]))
-            set("cs_loss_scale", nums("cls", "Loss scale", url_bounds$cs_loss_scale[1], url_bounds$cs_loss_scale[2]))
+      if (url_cs_available(s)) {
+            set("cs_reach", code("crch", url_codes$reach, "Dispersal reach"))
+            set("cs_landuse", one_of("clu", cs_landuse_steps, "Land use weight",
+                                     transform = function(x) suppressWarnings(as.numeric(x))))
       }
 
       set("stat", code("r", url_codes$stat, "Raster layer",
-                       allowed = if (url_cs_on(s)) stat_choices_cs else stat_choices_base))
+                       allowed = if (url_cs_available(s)) stat_choices_cs else stat_choices_base))
       if (identical(s$stat, "evidence"))
             set("evidence_stat", code("rev", url_codes$evidence, "Evidence measure"))
-      if (identical(s$stat, "connectivity")) {
-            set("cs_stat", code("rcs", url_codes$cs_stat, "Connectivity layer"))
-            # The app shows connectivity as change only
-            s$time <- "delta"
-      }
       set("vector", code("pts", url_codes$vector, "Point layer",
-                         allowed = if (url_cs_on(s)) vector_choices_cs else vector_choices_base))
+                         allowed = if (url_cs_available(s)) vector_choices_cs else vector_choices_base))
       set("analog_direction", code("an", url_codes$analog, "Analog direction"))
 
       list(state = s, problems = problems)

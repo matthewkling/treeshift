@@ -56,12 +56,8 @@ TS_PHASES <- c(
       scenario_model       = 6,
       theta_geog           = 6,
       theta_clim           = 6,
-      cs_sources           = 6,
-      cs_targets           = 6,
-      cs_conductance_layer = 6,
-      cs_loss_layer        = 6,
-      cs_conductance_scale = 6,
-      cs_loss_scale        = 6,
+      cs_reach             = 6,
+      cs_landuse           = 6,
       stat                 = 6,
       time                 = 6,
       vector               = 6,
@@ -69,7 +65,6 @@ TS_PHASES <- c(
       rast_transform       = 6,
       rast_palette         = 6,
 
-      cs_stat              = 7,   # conditionalPanel on stat == "connectivity"
 
       window_domain        = 8    # button: snap to current map view
 )
@@ -307,12 +302,10 @@ ts_render <- function(app,
                       theta_geog = NULL, theta_clim = NULL,
 
                       # connectivity
-                      cs_sources = NULL, cs_targets = NULL,
-                      cs_conductance_layer = NULL, cs_loss_layer = NULL,
-                      cs_conductance_scale = NULL, cs_loss_scale = NULL,
+                      cs_reach = NULL, cs_landuse = NULL,
 
                       # map layer / cartography
-                      stat = NULL, cs_stat = NULL, time = NULL, vector = NULL,
+                      stat = NULL, time = NULL, vector = NULL,
                       vector_scale = NULL, rast_transform = NULL,
                       rast_palette = NULL,
 

@@ -12,9 +12,7 @@ model_setting_ids <- c("track", "entity_scope", "species", "forest_type", "fores
                        "stage", "metric", "fia_var",
                        "clim_agg", "bbox_x", "bbox_y",
                        "clim_vars", "scenario_ssp", "scenario_period", "scenario_model",
-                       "theta_geog", "theta_clim",
-                       "cs_sources", "cs_targets", "cs_conductance_layer", "cs_loss_layer",
-                       "cs_conductance_scale", "cs_loss_scale")
+                       "theta_geog", "theta_clim", "cs_reach", "cs_landuse")
 
 # How each is named in the "what changed" line under the button
 model_setting_labels <- c(track = "entity", entity_scope = "entity", species = "species",
@@ -24,11 +22,7 @@ model_setting_labels <- c(track = "entity", entity_scope = "entity", species = "
                           clim_vars = "climate variables", scenario_ssp = "emissions pathway",
                           scenario_period = "time period", scenario_model = "climate models",
                           theta_geog = "geographic bandwidth", theta_clim = "climate bandwidth",
-                          cs_sources = "connectivity settings", cs_targets = "connectivity settings",
-                          cs_conductance_layer = "connectivity settings",
-                          cs_loss_layer = "connectivity settings",
-                          cs_conductance_scale = "connectivity settings",
-                          cs_loss_scale = "connectivity settings")
+                          cs_reach = "dispersal reach", cs_landuse = "land use weight")
 
 # Multi-selects, kept in menu order so that reordering a selection isn't a
 # change
@@ -44,10 +38,9 @@ same_setting <- function(a, b) {
 }
 
 # The settings that apply given the others, as the link schema decides
-# (helpers/url_state.R). `s` needs the model settings plus cs_enable.
+# (helpers/url_state.R).
 model_settings_in_use <- function(s) {
       single <- !url_multi(s)
-      cs <- grep("^cs_", model_setting_ids, value = TRUE)
       model_setting_ids[c(
             track = TRUE, entity_scope = !identical(s$track, "All trees"),
             species = single && identical(s$track, "Species"),
@@ -57,7 +50,7 @@ model_settings_in_use <- function(s) {
             clim_agg = TRUE, bbox_x = TRUE, bbox_y = TRUE,
             clim_vars = TRUE, scenario_ssp = TRUE, scenario_period = TRUE, scenario_model = TRUE,
             theta_geog = TRUE, theta_clim = TRUE,
-            stats::setNames(rep(url_cs_on(s), length(cs)), cs))[model_setting_ids]]
+            cs_reach = url_cs_available(s), cs_landuse = url_cs_available(s))[model_setting_ids]]
 }
 
 # The settings in use that differ between the controls and the applied

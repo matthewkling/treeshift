@@ -228,8 +228,7 @@ ui_panel_raster_grid <- function(s) {
       ## ones: they apply right away and don't change the grid. The
       ## exception is 'Snap box to polygon', which sets the bounding box
       ## under Raster grid, like 'Apply optimal parameters' in the
-      ## evaluation panel. (A focal site used as a connectivity
-      ## electrode does feed the model; it is left live for now.)
+      ## evaluation panel.
 ui_panel_focal_places <- function(s) {
       accordion_panel(
             "Focal polygon and site",
@@ -329,53 +328,35 @@ ui_panel_interpolation <- function(s) {
       )
 }
 
-# Connectivity settings are model settings: they wait for Run model like the
-# rest (model_setting_ids). The switch itself is not one -- it only offers the
-# connectivity layers in the Map layers menus -- so it stays out of the
-# "what changed" list.
+# The reach and land use weight are model settings: they wait for Run model like the rest
+# (model_setting_ids). Connectivity has no switch of its own: its layers are
+# entries in the Map layers menus, and a map is computed only while it is shown
+# (server/connectivity.R). The JavaScript condition mirrors url_cs_available().
 ui_panel_connectivity <- function(s) {
       accordion_panel(
             "Landscape connectivity",
-            helpText("Model circuit-based landscape connectivity between historical (source) and future (target) FIA surfaces.
-                      This approach can identify key movement corridors and pinch points for large-scale climate connectivity.
-                      Turn it on to show its settings and to add its layers to the 'Map layers' menus under Display settings.
-                      To view connectivity results, choose 'connectivity' as the raster variable there.
-                      The first connectivity result may take a couple of minutes while the solver starts up; later ones are faster."), hr(),
+            helpText("Connectivity models estimate how long-distance movement routes across the mapped grid are constrained by local habitat resistance.
+                     Under 'Map layers', select 'connectivity', and change the `timeframe` to model either omnidirectional habitat connectivity within an era or
+                     directional connectivity between present and future habitat.",
+                     about_link("More details", "about-how_it_works-landscape-connectivity")),
+            hr(),
             uiOutput("cs_note"),
             conditionalPanel(
-                  condition = "input.track == 'All trees' || input.entity_scope != 'multi'",
-                  input_switch("cs_enable", "Enable connectivity", s$cs_enable) %>%
-                        tooltip("Adds the connectivity raster and current animation/field vector layers
-                                 to the 'Map layers' menus under Display settings.")
-            ),
-            conditionalPanel(
-                  condition = "input.cs_enable && (input.track == 'All trees' || input.entity_scope != 'multi')",
-                  selectInput("cs_sources", "Origin electrodes (sources)", c("grid cells", "FIA plots", "selected site"),
-                              selected = s$cs_sources) %>%
-                        tooltip("Sites where current is injected. If `grid cells` or `FIA plots` is selected, current is injected
-                                            in proportion to modeled or observed (respectively) values of the selected FIA variable.
-                                            If `selected site` is chosen, current is injected only at the focal site."),
-                  selectInput("cs_targets", "Destination electrodes (target grounds)", c("grid cells", "FIA plots", "selected site"),
-                              selected = s$cs_targets) %>%
-                        tooltip("Grounding sites that 'pull' current and allow it to exit the circuit.
-                                            If `grid cells` or `FIA plots` is selected, ground conductance is proportional to modeled values
-                                            of the selected FIA variable. If `selected site` is chosen, the focal site."),
-                  selectInput("cs_conductance_layer", "Horizontal conductance", c("suitability", "wind", "suitability * wind", "uniform"),
-                              selected = s$cs_conductance_layer) %>%
-                        tooltip("The inverse of landscape resistance, horizontal conductance determines how easily current can flow across a site.
-                                            `Suitability` models conductance proportional to the mean of historical and future FIA raster values.
-                                            `Wind` models conductance proportional to the frequency and speed with which wind blows toward targets."),
-                  selectInput("cs_loss_layer", "Loss (non-target grounds)", c("none", "uniform", "suitability" = "mean suitability"),
-                              selected = s$cs_loss_layer) %>%
-                        tooltip("Choose whether and how to model current 'leakage' representing dispersers that are removed from the pool
-                                            (via mortality or permanent settlement) before reaching target grounds."),
-                  sliderInput("cs_conductance_scale", "log10 conductance scale", url_bounds$cs_conductance_scale[1],
-                              url_bounds$cs_conductance_scale[2], value = s$cs_conductance_scale, step = .1) %>%
-                        tooltip("Relative strength of horizontal conductance, compared to source, target, and loss components."),
-                  sliderInput("cs_loss_scale", "log10 loss scale", url_bounds$cs_loss_scale[1],
-                              url_bounds$cs_loss_scale[2], value = s$cs_loss_scale, step = .1) %>%
-                        tooltip("Relative strength of loss conductance, compared to source, target, and horizontal components.
-                                                        Ignored if loss is set to 'none.'")
+                  condition = "(input.track == 'All trees' || input.entity_scope != 'multi') &&
+                               ['occurrence', 'abundance', 'basal area'].indexOf(input.metric) >= 0",
+                  selectInput("cs_reach", "Dispersal reach", cs_reach_choices, selected = s$cs_reach) %>%
+                        tooltip("The connectivity model superimposes many potential movement routes linking pairs of cells.
+                                 This setting limits how far apart two places can be and still be linked. For the 'change' map, read it as
+                                 how far the species could move over the projection period. 'No limit' links all habitat
+                                 however far apart."),
+                  sliderInput("cs_landuse", "What hinders movement (weight on land use)", min(cs_landuse_steps), max(cs_landuse_steps),
+                              value = s$cs_landuse, step = 25, post = "%") %>%
+                        tooltip("This setting specifies the landscape resistance layer, which determines whether movement between cells
+                                is hindered by low climate suitability (0%), by human-modified land (100%), or a mix.
+                                (Regardless, climatically suitable habitat defines the endpoints between which connectivity is modeled.)
+                                Future maps use present-day land use."),
+                  div(style = "display:flex; justify-content:space-between; margin-top:-0.75rem;",
+                      class = "form-text", span("habitat quality only"), span("land use only"))
             )
       )
 }
@@ -384,16 +365,16 @@ ui_panel_map_layers <- function(s) {
       accordion_panel(
             "Map layers",
             helpText("Choose which model results are drawn on the map."), hr(),
-            ## Connectivity entries are offered only when it is on; see
-            ## the cs_enable observer in server/controls.R
+            ## Connectivity entries are offered only where it applies; see
+            ## the cs_available() observer in server/controls.R
             selectInput("stat", "Raster variable",
-                        if (url_cs_on(s)) stat_choices_cs else stat_choices_base,
+                        if (url_cs_available(s)) stat_choices_cs else stat_choices_base,
                         selected = s$stat) %>%
                   tooltip(HTML("<dl style='margin:0;'>
                                               <dt>FIA variable</dt> <dd>Predicted values of the variable selected above.</dd>
                                               <dt>Analog evidence</dt> <dd>Measures of the FIA evidence behind each cell's estimate: its support, closeness, or spread. Choose one in the menu that appears below.</dd>
                                               <dt>Focal site similarity</dt> <dd>How climatically similar each cell is to the site you clicked on the map. Which climates are compared is set by the analog type, under 'Focal polygon and site'.</dd>
-                                              <dt>Connectivity</dt> <dd>Circuit-based connectivity outputs between historical and future surfaces (available when connectivity is turned on under 'Landscape connectivity'); choose the specific connectivity variable below</dd>
+                                              <dt>Connectivity</dt> <dd>How strongly movement through the mapped habitat is funneled through each place, compared with an even landscape: well above 1 in corridors and pinch points, below 1 where movement is impeded; see 'Landscape connectivity'. The timeframe picks the map: within historical or future habitat, or ('change') the pathways linking them. Available for occurrence, abundance and basal area of a single entity.</dd>
                                           </dl>")),
             ## The analog evidence entry's measure; see evidence_choices
             ## (helpers/menus.R)
@@ -409,20 +390,6 @@ ui_panel_map_layers <- function(s) {
                                           </dl>"))
             ),
             uiOutput("stat_note"),
-            conditionalPanel(
-                  condition = "input.stat == 'connectivity'",
-                  selectInput("cs_stat", "Connectivity variable", cs_stat_names, selected = s$cs_stat) %>%
-                        tooltip(HTML("<dl style='margin:0;'>
-                                              <dt>Current flow</dt> <dd>Total current passing through each cell; high values indicate important range shift corridors</dd>
-                                              <dt>Current on target</dt> <dd>Current delivered to destination grounds; shows where dispersers successfully reach future-suitable habitat</dd>
-                                              <dt>Current loss</dt> <dd>Current lost to non-target grounds; represents dispersers removed via mortality or settlement before reaching destinations</dd>
-                                              <dt>Current pinch points</dt> <dd>Power dissipation (I²R); highlights bottlenecks where connectivity is both concentrated and tenuous — priorities for restoration or protection</dd>
-                                              <dt>Current direction</dt> <dd>Bearing of net current flow through each cell</dd>
-                                              <dt>Voltage</dt> <dd>How connected each cell is to source populations; high values indicate greater accessibility for dispersers</dd>
-                                              <dt>Conductance</dt> <dd>Model input: ease of movement across the landscape (inverse of resistance)</dd>
-                                              <dt>Loss</dt> <dd>Model input: rate at which dispersers are removed from the migrating pool at each cell</dd>
-                                          </dl>"))
-            ),
             ## Timeframe comes first among these because it is the
             ## first cut on the community measures below: "state or
             ## change" narrows the list before the user reads it.
@@ -436,7 +403,7 @@ ui_panel_map_layers <- function(s) {
                         c("historical", "future", "change" = "delta"),
                         selected = s$time) %>%
                   tooltip("Choose whether to display historical (2000-2025) or future (scenario selected under 'Climate data') model predictions, or the change between them.
-                                      Only relevant for the `FIA variable` raster variable and the analog support, closeness and spread layers."),
+                                      Only relevant for the `FIA variable` raster variable, the analog support, closeness and spread layers, and connectivity, where 'change' shows the pathways linking historical habitat to future habitat."),
             ## Community mode only: how the per-entity surfaces are
             ## combined into one map. It sits below the timeframe,
             ## which narrows the list, and is filtered by the
@@ -499,15 +466,14 @@ ui_panel_map_layers <- function(s) {
                                                 This also rescales the color palette, since the extreme values from near-empty cells otherwise compress the rest of the map into a narrow band."))
             ),
             selectInput("vector", "Vector variable",
-                        if (url_cs_on(s)) vector_choices_cs else vector_choices_base,
+                        if (url_cs_available(s)) vector_choices_cs else vector_choices_base,
                         selected = s$vector) %>%
                   tooltip(HTML("Select which point or line layer is displayed:<br><br>
                                           <dl style='margin:0;'>
                                               <dt>Occupied FIA plots</dt> <dd>Plots where the selected species was recorded</dd>
                                               <dt>All FIA plots</dt> <dd>All plots including non-forested plots not surveyed</dd>
                                               <dt>Focal site analogs</dt> <dd>Plots within climatic and geographic range of the selected site. Which climates are matched &mdash; contemporary, reverse or forward &mdash; is set by the analog type, under 'Focal polygon and site'.</dd>
-                                              <dt>Current animation</dt> <dd>Animation with particle movement showing direction and magnitude of mean current flow (available when connectivity is turned on)</dd>
-                                              <dt>Current field</dt> <dd>Vector field showing showing direction and magnitude of mean current flow (available when connectivity is turned on)</dd>
+                                              <dt>Range shift flow</dt> <dd>The net direction of movement from historical toward future habitat, as moving particles (animated) or as arrows. Their length shows how much flow passes, relative to the strongest on the map. Available where connectivity is.</dd>
                                           </dl>"))
       )
 }

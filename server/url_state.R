@@ -25,8 +25,8 @@ current_state <- reactive({
              support_floor = input$support_floor,
              polygon_unit = if (is.null(polygon_active())) "" else polygon_active(),
              site = if (is.null(site$x)) NULL else c(site$x, site$y),
-             cs_enable = input$cs_enable,
-             stat = input$stat, evidence_stat = input$evidence_stat, cs_stat = input$cs_stat, vector = input$vector,
+             stat = input$stat, evidence_stat = input$evidence_stat,
+             vector = input$vector,
              analog_direction = input$analog_direction))
 })
 

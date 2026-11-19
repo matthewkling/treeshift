@@ -10,7 +10,14 @@
 # short as the page grows. Below the md breakpoint the column stacks above the
 # text and doesn't stick.
 
-about_slug <- function(x) gsub("^-+|-+$", "", gsub("[^a-z0-9]+", "-", tolower(x)))
+# A link from elsewhere in the app to a section of the About tab, by its id
+# (as about_section() makes it). The script in ui/head.R opens the tab and
+# scrolls to the section.
+about_link <- function(label, id) {
+      tags$a(label, href = paste0("#", id), class = "ts-about-link")
+}
+
+about_slug <- function(x)gsub("^-+|-+$", "", gsub("[^a-z0-9]+", "-", tolower(x)))
 
 # One Markdown file as HTML, with ids on its subsection headings, plus the
 # entries for the contents list

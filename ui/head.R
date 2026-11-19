@@ -23,6 +23,115 @@ ui_head <- function() {
   });
 ")),
 
+            ## The wash over a stale map (output$map_pending,
+            ## server/model_settings.R) goes as soon as Run model applies the
+            ## settings, before the map is redrawn. A copy holds it from the
+            ## click until the app next goes idle, by which time the new map
+            ## has been sent, or its error shown.
+            tags$script(HTML("
+  (function() {
+    var hold = null, busy = false;
+    $(document).on('click', '#update_model', function() {
+      var area = document.querySelector('.ts-map-area');
+      if (hold || !area) return;
+      hold = document.createElement('div');
+      hold.className = 'ts-map-stale';
+      area.appendChild(hold);
+      busy = false;
+    });
+    $(document).on('shiny:busy', function() { if (hold) busy = true; });
+    $(document).on('shiny:idle', function() {
+      if (hold && busy) { hold.remove(); hold = null; }
+    });
+  })();
+")),
+
+            ## Progress messages sit in the middle of the map rather than in
+            ## the corner with other notifications. They stay in Shiny's
+            ## notification panel, where Shiny finds them to update and
+            ## remove them, and are pinned to the map's center (CSS below),
+            ## which this keeps current as the sidebars open and close. While
+            ## the app is busy for more than a moment with something that has
+            ## no message of its own (a model run's comes from withProgress(),
+            ## server/usage_log.R), a generic one in the same style.
+            tags$script(HTML("
+  (function() {
+    function center() {
+      var m = document.getElementById('map');
+      var r = m && m.getBoundingClientRect();
+      var root = document.documentElement.style;
+      // (The map has no size while another tab is shown: the window's center)
+      root.setProperty('--ts-map-cx', r && r.width ? (r.left + r.width / 2) + 'px' : '50vw');
+      root.setProperty('--ts-map-cy', r && r.height ? (r.top + r.height / 2) + 'px' : '50vh');
+    }
+    $(document).on('shiny:connected', function() {
+      center();
+      new ResizeObserver(center).observe(document.getElementById('map'));
+      window.addEventListener('resize', center);
+      document.addEventListener('shown.bs.tab', center);
+    });
+
+    var timer = null;
+    function panel() {
+      var p = document.getElementById('shiny-notification-panel');
+      if (!p) {
+        p = document.createElement('div');
+        p.id = 'shiny-notification-panel';
+        document.body.appendChild(p);
+      }
+      return p;
+    }
+    $(document).on('shiny:busy', function() {
+      clearTimeout(timer);
+      timer = setTimeout(function() {
+        if (document.getElementById('ts-busy')) return;
+        var n = document.createElement('div');
+        n.id = 'ts-busy';
+        n.className = 'shiny-notification shiny-progress-notification';
+        n.innerHTML = '<div class=\"progress active\"><div class=\"progress-bar\"></div></div>' +
+                      '<div class=\"progress-text\"><span class=\"progress-message\">Updating</span></div>';
+        panel().appendChild(n);
+      }, 700);
+    });
+    $(document).on('shiny:idle', function() {
+      clearTimeout(timer);
+      var n = document.getElementById('ts-busy');
+      if (n) n.remove();
+    });
+  })();
+")),
+
+            ## Gradient legend labels sit beside their ticks. addLegend() draws
+            ## them as SVG text anchored at the far end of the label column, so
+            ## short labels float away from the bar; SVG text's anchor and
+            ## offset are attributes, out of reach of CSS. Each legend is
+            ## re-anchored as it is added.
+            tags$script(HTML("
+  new MutationObserver(function() {
+    document.querySelectorAll('.info.legend svg text[text-anchor=\"end\"]').forEach(function(t) {
+      t.setAttribute('text-anchor', 'start');
+      t.setAttribute('dx', '8');
+    });
+  }).observe(document.documentElement, {childList: true, subtree: true});
+")),
+
+            ## A link to an About section (about_link(), ui/about.R) opens the
+            ## About tab and scrolls to the section once the tab is shown.
+            tags$script(HTML("
+  document.addEventListener('click', function(e) {
+    var link = e.target.closest('.ts-about-link');
+    if (!link) return;
+    e.preventDefault();
+    var target = document.getElementById(link.getAttribute('href').slice(1));
+    var tab = document.querySelector('#main_nav a[data-value=\"about\"]');
+    if (!target || !tab) return;
+    var go = function() { target.scrollIntoView(); };
+    if (tab.classList.contains('active')) return go();
+    tab.addEventListener('shown.bs.tab', go, {once: true});
+    bootstrap.Tab.getOrCreateInstance(tab).show();
+  });
+")),
+
             ## A module tab (ui/right_sidebar.R) opens the modules sidebar
             ## and expands its module.
             tags$script(HTML("
@@ -88,6 +197,11 @@ ui_head <- function() {
     flex-direction: row;
     align-items: flex-start;
     gap: 10px;
+  }
+  /* Room for the labels' offset from their ticks (see the legend script) */
+  #map .info.legend svg {
+    overflow: visible;
+    margin-right: 8px;
   }
   #map .info.legend > div:first-child {
     max-width: 11em;
@@ -169,6 +283,35 @@ ui_head <- function() {
     margin-top: 0.4rem;
   }
 
+  /* Progress messages, pinned to the map's center (see the script above).
+     The generic busy message gives way to a model run's own. */
+  #shiny-notification-panel .shiny-notification:has(.shiny-progress-notification),
+  #ts-busy {
+    position: fixed;
+    left: var(--ts-map-cx, 50vw);
+    top: var(--ts-map-cy, 50vh);
+    transform: translate(-50%, -50%);
+    width: min(360px, 90vw);
+    margin: 0;
+    opacity: 1;
+  }
+  #shiny-notification-panel:has(.shiny-notification:not(#ts-busy) .shiny-progress-notification) #ts-busy { display: none; }
+  /* A bar with no value set (withProgress(value = NULL), and the busy
+     message) shows that work is going on, not how far along it is: full
+     width, with moving stripes. A bar given a value fills as usual. Shiny
+     hides the bar until it has a value, with an inline style. */
+  .shiny-progress-notification .progress:has(.progress-bar:not([style*='width'])) {
+    display: flex !important;
+  }
+  .shiny-progress-notification .progress-bar:not([style*='width']) {
+    width: 100%;
+    background-image: linear-gradient(45deg, rgba(255, 255, 255, 0.25) 25%, transparent 25%,
+                                      transparent 50%, rgba(255, 255, 255, 0.25) 50%,
+                                      rgba(255, 255, 255, 0.25) 75%, transparent 75%, transparent);
+    background-size: 1rem 1rem;
+    animation: progress-bar-stripes 1s linear infinite;
+  }
+
   /* Wash over the map while settings are pending. Above the legends
      (Leaflet's controls sit at z-index 1000) so they fade with the layers
      they describe; clicks pass through to the map. */
@@ -179,6 +322,8 @@ ui_head <- function() {
     background: rgba(255, 255, 255, 0.65);
     pointer-events: none;
   }
+  /* The copy that outlasts it (see the script above) isn't stacked on it */
+  .ts-map-area:has(#map_pending .ts-map-stale) > .ts-map-stale { display: none; }
 
   /* Module tabs down the map's right edge (ui/right_sidebar.R), in place of
      the sidebar's own toggle while the sidebar is collapsed. The toggle is

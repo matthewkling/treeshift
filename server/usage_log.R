@@ -52,7 +52,23 @@ session$onSessionEnded(function() {
 #' @param key,compute As for `ts_cached()`.
 #' @param describe Function of the result, returning extra fields to log
 #'   (e.g. its cell count).
-logged_run <- function(kind, key, compute, describe = function(value) list()) {
+#' @param message,detail Shown while a result is computed. A cached result
+#'   comes back at once, without a message. The bar fills as analogs (the
+#'   model) or circuitscaper (connectivity) reports progress through
+#'   progressr; until a run reports any, it shows only that the run is going
+#'   (ui/head.R).
+#' @param parts How many progress counters the run reports, one after another
+#'   (e.g. one per era). Each fills its share of the bar: progressr's Shiny
+#'   handler adds each counter's steps to the bar, whose full width is `parts`.
+logged_run <- function(kind, key, compute, describe = function(value) list(),
+                       message = NULL, detail = NULL, parts = 1) {
+      if (!is.null(message)) {
+            run <- compute
+            # (inputs: analogs' own progress messages don't replace these)
+            compute <- function() progressr::withProgressShiny(
+                  run(), message = message, detail = detail, value = NULL, max = parts,
+                  inputs = list(message = NULL, detail = NULL))
+      }
       start <- Sys.time()
       source <- NULL
       log_run <- function(outcome, ...) {

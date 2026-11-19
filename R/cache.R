@@ -11,8 +11,7 @@
 #   - the content of the data files it reads;
 #   - the versions of the packages it calls, and the installed files of the
 #     non-CRAN ones (analogs, circuitscaper), which change without a version bump;
-#   - for connectivity, the Julia version and the Julia environment that pins
-#     Circuitscape;
+#   - for connectivity, the Julia version;
 #   - the content of the code files that compute it.
 # Anything that can't be fingerprinted disables caching for that result (the key
 # is NULL) rather than risking a stale one. Any failure to read or write the cache
@@ -119,26 +118,22 @@ surfaces_setting_ids <- c("track", "species", "forest_type", "forest_group", "fi
                           "clim_vars", "scenario_ssp", "scenario_period", "scenario_model",
                           "bbox_x", "bbox_y", "clim_agg", "theta_geog", "theta_clim")
 
-#' The settings a connectivity solve is computed from
+#' The settings a connectivity map is computed from
 #'
-#' The surfaces it is built on, the connectivity settings, and the focal site
-#' when an electrode uses it. A "selected site" electrode with no site set falls
-#' back to the FIA plots (server/connectivity.R), so "no site" is part of the key
-#' too.
+#' The surfaces it is built on, the dispersal reach and land use weight
+#' settings, and which map:
+#' connectivity within the historical or future habitat, or the range shift
+#' between them (server/connectivity.R).
 #'
-#' @param site c(lon, lat), or NULL.
-ts_connectivity_spec <- function(settings, site = NULL) {
-      s <- settings
-      uses_site <- "selected site" %in% c(s$cs_sources, s$cs_targets)
-      list(surfaces = ts_surfaces_spec(s),
-           electrodes = c(as.character(s$cs_sources), as.character(s$cs_targets)),
-           layers = c(as.character(s$cs_conductance_layer), as.character(s$cs_loss_layer)),
-           scales = as.numeric(c(s$cs_conductance_scale, s$cs_loss_scale)),
-           site = if (uses_site && !is.null(site)) as.numeric(site) else if (uses_site) "none")
+#' @param era "hist", "fut" or "shift".
+ts_connectivity_spec <- function(settings, era) {
+      list(surfaces = ts_surfaces_spec(settings),
+           reach = as.character(settings$cs_reach),
+           landuse = as.numeric(settings$cs_landuse),
+           era = era)
 }
 
-connectivity_setting_ids <- c("cs_sources", "cs_targets", "cs_conductance_layer",
-                              "cs_loss_layer", "cs_conductance_scale", "cs_loss_scale")
+connectivity_setting_ids <- c("cs_reach", "cs_landuse")
 
 
 # Fingerprints -------------------------------------------------------------------
@@ -169,9 +164,7 @@ surfaces_code_files <- function() {
         "server/aim.R", "server/climate.R", "server/climate_models.R", "server/data.R")
 }
 community_code_files <- function() c(surfaces_code_files(), "server/community.R")
-connectivity_code_files <- function() {
-      c(surfaces_code_files(), "server/connectivity.R", "helpers/vectors.R")
-}
+connectivity_code_files <- function() c(surfaces_code_files(), "server/connectivity.R")
 
 # Packages whose code computes the surfaces
 surfaces_packages <- c("analogs", "terra", "dplyr", "tidyr", "purrr", "readr", "tibble")
@@ -184,7 +177,7 @@ surfaces_packages <- c("analogs", "terra", "dplyr", "tidyr", "purrr", "readr", "
 #' @return A key string, or NULL if a file it depends on is missing.
 ts_surfaces_key <- function(settings, data, community = FALSE) {
       inputs <- c(file.path(data$dir, c("fia.csv", "forest_type_codes.csv", "clim_scales.rds")),
-                  data$clim_historical,
+                  data$clim_historical, data$conus,
                   ts_scenario_paths(data, settings$scenario_ssp, settings$scenario_period,
                                     settings$scenario_model))
       code <- if (community) community_code_files() else surfaces_code_files()
@@ -196,40 +189,31 @@ ts_surfaces_key <- function(settings, data, community = FALSE) {
       paste0(if (community) "community-" else "surfaces-", rlang::hash(parts))
 }
 
-# The Julia version and the environment (Manifest.toml) that pins Circuitscape,
-# read without starting Julia; NULL if either can't be found
+# The Julia version, read without starting Julia; NULL if it can't be found.
+# The dipole methods use only Julia's standard library, which comes with it, and
+# their own Julia code, which the package fingerprint covers.
 julia_fingerprint <- function() {
-      home <- tryCatch(circuitscaper:::find_system_julia(), error = function(e) NULL)
-      if (is.null(home)) return(NULL)
-      julia <- file.path(home, "julia")
-      version <- tryCatch(system2(julia, "--version", stdout = TRUE, stderr = FALSE),
-                          error = function(e) NULL, warning = function(w) NULL)
-      v <- regmatches(version, regexpr("[0-9]+[.][0-9]+", version))
-      if (!length(v)) return(NULL)
-      depot <- strsplit(Sys.getenv("JULIA_DEPOT_PATH", "~/.julia"), .Platform$path.sep)[[1]][1]
-      project <- Sys.getenv("JULIA_PROJECT")
-      env <- if (nzchar(project)) project else file.path(depot, "environments", paste0("v", v))
-      manifest <- file_hashes(path.expand(file.path(env, "Manifest.toml")))
-      if (is.null(manifest)) return(NULL)
-      list(version = version, manifest = manifest)
+      v <- tryCatch(circuitscaper:::julia_version(circuitscaper:::find_julia_bin()),
+                    error = function(e) NULL)
+      if (!length(v)) NULL else as.character(v)
 }
 
-#' Cache key for a connectivity solve
+#' Cache key for a connectivity map
 #'
-#' @param site c(lon, lat), or NULL.
-#' @return A key string, or NULL if the surfaces, the wind layer or the solver
-#'   can't be fingerprinted.
-ts_connectivity_key <- function(settings, data, site = NULL) {
+#' @param era See `ts_connectivity_spec()`.
+#' @return A key string, or NULL if the surfaces, the human modification layer
+#'   or the solver can't be fingerprinted.
+ts_connectivity_key <- function(settings, data, era) {
       surfaces <- ts_surfaces_key(settings, data)
       julia <- julia_fingerprint()
       parts <- list(surfaces = surfaces,
-                    spec = ts_connectivity_spec(settings, site),
-                    wind = file_hashes(file.path(data$dir, "wind_quantized.tif")),
+                    spec = ts_connectivity_spec(settings, era),
+                    ghm = file_hashes(file.path(data$dir, "ghm.tif")),
                     code = file_hashes(connectivity_code_files()),
-                    packages = package_fingerprint(c("circuitscaper", "JuliaCall", "terra"),
+                    packages = package_fingerprint(c("circuitscaper", "JuliaConnectoR", "terra"),
                                                    by_files = "circuitscaper"),
                     julia = julia)
-      if (is.null(surfaces) || is.null(parts$wind) || is.null(parts$code) || is.null(julia))
+      if (is.null(surfaces) || is.null(parts$ghm) || is.null(parts$code) || is.null(julia))
             return(NULL)
       paste0("connectivity-", rlang::hash(parts))
 }

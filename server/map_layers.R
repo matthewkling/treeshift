@@ -35,8 +35,16 @@ evidence_note <- reactive({
       }
 })
 
+## Why a connectivity map can't be drawn (its shiny::validate() message), or
+## NULL. The map's observer would otherwise drop the message silently.
+connectivity_note <- reactive({
+      if (!identical(rast_stat(), "connectivity")) return(NULL)
+      tryCatch({ connectivity_layer(); NULL },
+               shiny.silent.error = function(e) if (nzchar(conditionMessage(e))) conditionMessage(e))
+})
+
 output$stat_note <- renderUI({
-      msg <- evidence_note()
+      msg <- c(evidence_note(), connectivity_note())
       if (!is.null(msg)) div(class = "ts-notice", msg)
 })
 
@@ -102,7 +110,7 @@ display_layer <- reactive({
 
       # In All mode the community reduction takes the place of the
       # per-entity response. The model diagnostics (support, closeness, focal
-      # site similarity, connectivity) are entity-independent and keep working
+      # site similarity) are entity-independent and keep working
       # unchanged, so only the "FIA variable" branch is replaced -- and
       # aim() is not required, so All mode does not also pay for a
       # single-entity run it will not display.
@@ -116,8 +124,7 @@ display_layer <- reactive({
       }else if(rast_stat() == "focal site similarity"){
             r <- site_diff()
       }else if(rast_stat() == "connectivity"){
-            st <- cs_stats[cs_stat_names == input$cs_stat]
-            r <- connectivity()[[st]]
+            r <- connectivity_layer()
       }else{ # rast_stat() == "FIA variable"
             req(isTruthy(model$fia_var))
             r <- ts_value_layer(aim(), model$fia_var, input$time, input$support_floor)
@@ -150,6 +157,14 @@ raster_title <- reactive({
       }else if(rast_stat() == "focal site similarity"){
             add(gsub(" analogs", "", input$analog_direction))
             add("climate distance from focal site")
+
+      }else if(rast_stat() == "connectivity"){
+            add(focal_label())
+            add(switch(input$time, historical = "connectivity within historical habitat",
+                       future = "connectivity within future habitat",
+                       delta = "range shift connectivity, historical to future habitat"))
+            add(paste("dispersal reach:", names(cs_reach_choices)[cs_reach_choices == model$cs_reach]))
+            add("(movement compared with an even landscape)", dim = TRUE)
 
       }else if(multi_mode() && rast_stat() == "FIA variable"){
             add(focal_label())
@@ -196,7 +211,6 @@ raster_title <- reactive({
                        "number of seedlings" = "(seedlings / acre)",
                        NULL),
                 dim = TRUE)
-            if(rast_stat() == "connectivity") add(input$cs_stat)
       }
 
       # When the layer is categorical the marker legend is suppressed --
@@ -237,8 +251,14 @@ observe({
 
       # Scale transforms are meaningless on category codes, and
       # setValues() would drop the factor levels the legend reads from.
-      # Support's fixed classes already do the job of a transform.
-      binned <- identical(rast_stat(), "support")
+      # Fixed classes (support, connectivity) already do the job of a
+      # transform.
+      bins <- switch(rast_stat(),
+                     support = list(breaks = support_breaks, labels = support_labels,
+                                    palette = "viridis"),
+                     connectivity = list(breaks = cs_breaks, labels = cs_break_labels,
+                                         palette = cs_break_colors))
+      binned <- !is.null(bins)
       # Maps a transformed value back to the variable's units, for the legend
       # labels: colors follow the transformed scale, labels stay in the
       # original units. NULL while the drawn raster is untransformed.
@@ -291,8 +311,9 @@ observe({
             # Fill non-analog NAs -- except where the NAs are a deliberate
             # mask (species not found within range, or below the support
             # floor). Filling those would read as "no change" on the
-            # diverging scale rather than "no information".
-            if(!masked_layer()) r[is.na(r[])] <- 0
+            # diverging scale rather than "no information". Only within the
+            # grid's climate: outside the contiguous US nothing is estimated.
+            if(!masked_layer()) r[is.na(r) & !is.na(clim()$hst[[1]])] <- 0
             mm <- minmax(r)
             dom <- max(abs(mm)) * c(-1, 1)
             rast_pal <- colorNumeric(
@@ -302,9 +323,9 @@ observe({
             )
       } else if(binned){
             rast_pal <- colorBin(
-                  palette = "viridis" %>% choose_palette(),
+                  palette = bins$palette %>% choose_palette(),
                   domain = NULL,
-                  bins = support_breaks,
+                  bins = bins$breaks,
                   na.color = "transparent"
             )
       } else if(rast_stat() %in% names(evidence_layers)){
@@ -339,14 +360,6 @@ observe({
                         na.color = "transparent"
                   )
             }
-      } else if(rast_stat() == "connectivity" && input$cs_stat == "current direction") {
-            proj_method <- "ngb" # because bilinear interpolation breaks for a circular variable
-            dom <- if(input$rast_transform == "identity") c(0, 360) else mm
-            rast_pal <- colorNumeric(
-                  palette = rainbow(20)[c(1:20, 1)],
-                  domain = dom,
-                  na.color = "transparent"
-            )
       } else if(rast_stat() == "focal site similarity") {
             rast_pal <- colorNumeric(
                   palette = "magma" %>% choose_palette(),
@@ -393,12 +406,13 @@ observe({
                   # Manual form, for plain labels ("100 or more", not
                   # "100 - Inf"); colors read from the palette at a value
                   # inside each class
-                  inside <- head(support_breaks, -1) + c(diff(head(support_breaks, -1)) / 2, 1)
+                  b <- head(bins$breaks, -1)
+                  inside <- b + c(diff(b) / 2, 1)
                   proxy %>%
                         addLegend(
                               position = "topright",
                               colors   = rast_pal(inside),
-                              labels   = support_labels,
+                              labels   = bins$labels,
                               title    = HTML(raster_title()),
                               layerId  = "raster_legend",
                               opacity  = input$rast_opacity,
@@ -543,16 +557,22 @@ observe({
                   )
       }
 
+      # Net flow of the range shift, scaled so the strongest is 1
+      flow <- function() {
+            f <- cs_shift()[[c("flow_x", "flow_y")]]
+            f / max(global(sqrt(f[[1]]^2 + f[[2]]^2), "max", na.rm = TRUE)$max)
+      }
+
       if(input$vector == "current animation"){
-            v_data <- format_velocity_data(connectivity()[["current_flow"]],
-                                           connectivity()[["current_direction"]])
+            f <- flow()
+            v_data <- format_velocity_data(f[[1]], f[[2]])
             proxy <- proxy %>%
                   addVelocity(
                         content = v_data,
                         options = velocityOptions(
                               colorScale = c("#000000", "#000000"),
                               lineWidth = 2,
-                              velocityScale = 10^input$vector_scale * 25,
+                              velocityScale = 10^input$vector_scale * 1,
                               particleMultiplier = 0.005,
                               displayValues = FALSE,
                               velocityType = "Current",
@@ -563,9 +583,8 @@ observe({
       }
 
       if(input$vector == "current field"){
-            mag <- connectivity()[["current_flow"]]
-            mag <- mag / minmax(mag)[2]
-            spokes <- make_spokes(mag, connectivity()[["current_direction"]],
+            f <- flow()
+            spokes <- make_spokes(f[[1]], f[[2]],
                                   subsample = 11 - model$clim_agg,
                                   arrow_scale = 10^input$vector_scale * .1)
 

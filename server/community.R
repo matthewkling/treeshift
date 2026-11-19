@@ -46,7 +46,10 @@ multi_aim <- reactive({
       logged_run("community", ts_surfaces_key(settings, core_data, community = TRUE), function()
             ts_multi_surfaces(clim(), pool(), y, model$theta_clim, model$theta_geog),
             describe = function(r) list(cells = terra::ncell(r$bsl),
-                                        entities = length(setdiff(names(r$bsl), "sum_weights"))))
+                                        entities = length(setdiff(names(r$bsl), "sum_weights"))),
+            message = "Running the community model.",
+            detail = "Every species or forest type in the area is mapped, which can take a while.",
+            parts = 2)   # historical and future
 })
 
 ## Reduce the per-entity stack to one community surface. Reduction reads

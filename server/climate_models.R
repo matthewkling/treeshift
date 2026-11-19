@@ -51,7 +51,9 @@ model_deltas <- reactive({
       # extra cost is reading 6 raster layers per file instead of 2,
       # which is minor next to the per-file I/O.
       all_vars <- clim_vars()
-      hst <- rast("data/clim_historical.tif")[[all_vars]]
+      # Masked to the contiguous US, so every summary below (each future
+      # minus this) covers only the area the model does
+      hst <- mask(rast("data/clim_historical.tif")[[all_vars]], rast(core_data$conus))
 
       # Region geometry resolved once, outside the per-file loop. The
       # buffered polygon and the site neighborhood differ from their

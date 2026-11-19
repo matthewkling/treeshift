@@ -1,19 +1,34 @@
 # Choice lists for the map-layer menus.
 
-cs_stat_names <- c("current flow", "current on target", "current loss", "current pinch points",
-                   "current direction", "voltage", "conductance", "loss")
-cs_stats <- c("current_flow", "current_destinations", "current_loss", "current_power",
-              "current_direction", "voltage", "conductance", "loss")
+# Connectivity's map classes (server/map_layers.R), as multiples of an even
+# landscape's flow. The detail is at the funneled end; everything under half
+# is one class. Classes include their lower break.
+cs_breaks <- c(0, 0.5, 1, 2, 5, 10, Inf)
+cs_break_labels <- c("under ½ (impeded)", "½ to 1", "1 to 2", "2 to 5", "5 to 10",
+                     "10 or more (funneled)")
+cs_break_colors <- c("#bdbdbd", "#f0f0f0", "#fed976", "#fd8d3c", "#e31a1c", "#800026")
 
-# Left-sidebar menu choices, in connectivity-off and connectivity-on variants.
-# Connectivity is a niche module, so its entries are kept out of the core
-# `stat` and `vector` menus unless the user flips "Enable connectivity" in the
-# Landscape connectivity panel (left sidebar, model settings). The `*_base` sets are the UI defaults; the
-# observeEvent(input$cs_enable) handler in the server swaps between the two.
-# Listed explicitly rather than appended so "none" stays last in the vector menu.
+# The weight (%) connectivity's conductance gives human land use over habitat
+# quality (server/connectivity.R)
+cs_landuse_steps <- seq(0, 100, by = 25)
+
+# Connectivity's dispersal reach (km, as text so "Inf" survives a menu)
+cs_reach_choices <- c("10 km" = "10", "25 km" = "25", "50 km" = "50", "100 km" = "100",
+                      "250 km" = "250", "no limit" = "Inf")
+
+# The variables connectivity is offered for: those that measure how much of
+# the entity a place holds, so they can stand for habitat. Ratio variables
+# (proportion basal area, regeneration fraction) and richness don't.
+cs_metrics <- c("occurrence", "abundance", "basal area")
+
+# Left-sidebar menu choices, without and with the connectivity entries, which
+# are offered only where connectivity applies (url_cs_available()). The
+# `*_base` sets are the UI defaults; an observer in server/controls.R swaps
+# between the two. Listed explicitly rather than appended so "none" stays
+# last in the vector menu.
 # The evidence layers describe the FIA plots behind each cell's estimate
 # (server/map_layers.R). They share one "analog evidence" entry in the raster
-# menu, with the measure chosen in a second menu, as connectivity does.
+# menu, with the measure chosen in a second menu.
 evidence_choices <- c("analog support" = "support", "analog closeness" = "closeness",
                       "analog spread" = "spread")
 stat_choices_base <- c("FIA variable", "analog evidence" = "evidence", "focal site similarity")
@@ -22,7 +37,8 @@ stat_choices_cs   <- c(stat_choices_base, "connectivity")
 vector_choices_base <- c("occupied FIA plots", "all FIA plots", "focal site analogs",
                          "none")
 vector_choices_cs   <- c("occupied FIA plots", "all FIA plots", "focal site analogs",
-                         "current animation", "current field", "none")
+                         "range shift flow (animated)" = "current animation",
+                         "range shift flow (arrows)" = "current field", "none")
 
 # Single-or-community choices. Only the labels follow the track ("single
 # species" vs "single forest type"); the values stay single/multi. All trees

@@ -135,46 +135,35 @@ observeEvent(input$window_domain, {
       updateSliderInput(session, "bbox_y", value = c(bb$south, bb$north))
 })
 
-# for circuitscape rasters, time period must be "delta"
-observe({
-      if(input$stat == "connectivity"){
-            updateSelectInput(session, "time", selected = "delta")
-      }
+## Why the connectivity setting is hidden, where it doesn't apply to the
+## applied model. Explains the withdrawal rather than leaving the connectivity
+## layers to vanish from the menus unannounced.
+output$cs_note <- renderUI({
+      req(!cs_available())
+      div(class = "ts-notice",
+          if (multi_mode())
+                "Connectivity models movement through one species' or forest type's habitat, so it
+                 does not apply to community composition. For connectivity of the forest as a whole,
+                 set the entity to 'all trees'."
+          else
+                "Connectivity treats the mapped variable as habitat, so it is available for
+                 occurrence, abundance and basal area, not for ratio variables or richness.")
 })
 
-## Show or hide the connectivity entries in the left-sidebar "Map layers"
-## menus, driven by the "Enable connectivity" switch in the Landscape
-## connectivity panel. Connectivity is a niche analysis, so its options are
-## kept out of the core menus until the user asks for them.
+## Offer the connectivity entries in the left-sidebar "Map layers" menus only
+## where connectivity applies (cs_available()). Under community composition it
+## would silently describe whichever species the hidden picker still holds;
+## the All trees track already gives connectivity of the forest as a whole.
 ##
 ## updateSelectInput() resets the selection to the first choice whenever
-## `choices` changes, so `selected` is always passed explicitly. On enable,
-## the current pick is preserved; on disable, a connectivity pick is no
-## longer offered and falls back to the menu default.
+## `choices` changes, so `selected` is always passed explicitly: the current
+## pick is kept if it's still offered, and otherwise falls back to the menu
+## default.
 ##
-## ignoreInit: the UI is built with the connectivity-off choices and the
-## switch defaults to FALSE, so the two already agree at startup.
-## Explains the withdrawal rather than leaving a switch that has silently
-## stopped doing anything.
-output$cs_note <- renderUI({
-      req(multi_mode())
-      div(class = "ts-notice",
-          "Connectivity models the movement of one species or forest type between its
-                 current and future range, so it does not apply to community composition. For
-                 connectivity of the forest as a whole, set the entity to 'all trees'.")
-})
-
-## Also fires on multi_mode(): connectivity is a single-entity analysis.
-## Its electrodes are built from one entity's historical and future
-## surfaces and then solved, so under community composition it would
-## silently describe whichever species the hidden picker still holds --
-## producing something that looks like community connectivity and is not.
-##
-## There is no community version worth building here. The one that would
-## be well defined is connectivity of an aggregate surface, and the All
-## trees track already provides exactly that.
-observeEvent(list(input$cs_enable, multi_mode()), {
-      on <- isTRUE(input$cs_enable) && !multi_mode()
+## ignoreInit: the UI is built with the choices for the link's settings, which
+## the applied model starts from, so the two already agree at startup.
+observeEvent(cs_available(), {
+      on <- cs_available()
 
       stat_choices <- if(on) stat_choices_cs else stat_choices_base
       vector_choices <- if(on) vector_choices_cs else vector_choices_base

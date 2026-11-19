@@ -60,11 +60,10 @@ test_that("a community link reopens the same results", {
 test_that("a link with connectivity settings reopens them", {
       q <- check_link(function(a) {
             set_in_order(a, track = "All trees", stage = "adult", bbox_x = c(-112, -106),
-                         bbox_y = c(37, 42), cs_enable = TRUE, cs_sources = "FIA plots",
-                         cs_loss_layer = "mean suitability", cs_loss_scale = -2,
-                         stat = "connectivity", cs_stat = "current pinch points")
+                         bbox_y = c(37, 42), cs_reach = "100", cs_landuse = 50, stat = "connectivity",
+                         time = "delta")
       })
-      expect_match(q, "cs=1&csrc=plots&ctgt=cells&ccl=suit&cll=suit&ccs=0&cls=-2", fixed = TRUE)
+      expect_match(q, "crch=100&clu=50&r=conn", fixed = TRUE)
 })
 
 test_that("a bad link opens on defaults and says what it couldn't use", {

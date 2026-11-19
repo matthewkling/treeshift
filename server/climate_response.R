@@ -140,9 +140,6 @@ output$climate_response <- renderPlot({
             model$fia_var == "proportion basal area"
       fam <- if (input$cr_data == "FIA plots") {
             if (bounded01) quasibinomial() else quasipoisson()
-      } else if (input$stat == "connectivity" &&
-                 isTRUE(input$cs_stat == "current direction")) {
-            gaussian()                      # circular (0-360 deg): a log link is meaningless
       } else if (input$stat != "FIA variable") {
             quasipoisson()                  # evidence / similarity / connectivity magnitudes: non-negative
       } else if (input$time == "delta") {

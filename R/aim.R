@@ -67,7 +67,9 @@ aim_method <- function(pts_list, index, theta_clim, theta_geog, n_y, n_sums) {
 # against one pool, on each raster's own grid. `pool` is pool()'s list, of which
 # this uses the AIM-coordinate plot table (`aim_pts`) and its index
 # (`aim_index`). Returns a list of SpatRasters named like `focals`, with the
-# layers analog_impact() would give for a raster.
+# layers analog_impact() would give for a raster. analogs reports its progress
+# through progressr, which a caller can show (the app's progress box,
+# server/usage_log.R) or leave unshown.
 aim_surfaces <- function(focals, pool, y, theta_clim, theta_geog, stat) {
       k <- aim_kernels(theta_clim, theta_geog)
       cells <- lapply(focals, function(r) as.data.frame(r, xy = TRUE, cells = TRUE, na.rm = TRUE))
@@ -77,7 +79,7 @@ aim_surfaces <- function(focals, pool, y, theta_clim, theta_geog, stat) {
             if (method == "exact") {
                   suppressWarnings(analogs::analog_impact(
                         x = p, pool = pool$aim_index, env = k$env, geog = k$geog,
-                        stat = stat, y = y, coord_type = "projected"))
+                        stat = stat, y = y, coord_type = "projected", progress = TRUE))
             } else {
                   span <- vapply(p[, c("x", "y")], function(v) diff(range(v)), numeric(1))
                   suppressWarnings(analogs::tiled_analog_search(
@@ -85,7 +87,7 @@ aim_surfaces <- function(focals, pool, y, theta_clim, theta_geog, stat) {
                         n_tiles = max(1, round(prod(span) / aim_tile_km^2)),
                         fun = analogs::analog_impact, env = k$env, geog = k$geog,
                         stat = stat, method = "fft", coord_type = "projected",
-                        progress = FALSE))
+                        progress = TRUE))
             }
       })
 

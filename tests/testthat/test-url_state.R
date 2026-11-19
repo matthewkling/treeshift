@@ -13,7 +13,7 @@ roundtrip <- function(s) {
 test_that("the default link is fully specified", {
       expect_identical(
             url_encode(d, ctx),
-            "?v=1&e=sp&es=single&sp=Pinus_edulis&st=any&m=occ&t=hist&g=10&bx=-116,-100&by=29,43&cv=aet,cwd&ssp=ssp585&era=2041-2070&gcm=gfdl-esm4&tg=30&tc=0.1")
+            "?v=1&e=sp&es=single&sp=Pinus_edulis&st=any&m=occ&t=hist&g=10&bx=-116,-100&by=29,43&cv=aet,cwd&ssp=ssp585&era=2041-2070&gcm=gfdl-esm4&tg=30&tc=0.1&crch=100&clu=50")
 })
 
 test_that("links round-trip without problems", {
@@ -31,11 +31,10 @@ test_that("links round-trip without problems", {
                   track = "Forest type", forest_type = ctx$forest_types[5], time = "future",
                   vector = "none", analog_direction = "Reverse analogs")),
             connectivity = modifyList(d, list(
-                  track = "All trees", metric = "species richness", stage = "adult",
-                  fia_var = resolve_var("All trees", "species richness", "adult"),
-                  cs_enable = TRUE, cs_sources = "FIA plots", cs_loss_layer = "mean suitability",
-                  cs_loss_scale = -2.5, stat = "connectivity", cs_stat = "voltage",
-                  time = "delta", vector = "current field")))
+                  track = "All trees", metric = "basal area", stage = "any",
+                  fia_var = resolve_var("All trees", "basal area", "any"),
+                  cs_reach = "Inf", cs_landuse = 75, stat = "connectivity", time = "future",
+                  vector = "current field")))
       for (nm in names(states)) {
             r <- roundtrip(states[[nm]])
             expect_identical(r$again, r$query, label = nm)
@@ -48,8 +47,9 @@ test_that("settings that don't apply are left out", {
       expect_false(grepl("&sp=", q, fixed = TRUE))
       expect_false(grepl("&st=", q, fixed = TRUE))
       expect_true(grepl("&ft=", q, fixed = TRUE))
-      # Connectivity settings appear only when it is on
-      expect_false(grepl("&cs=|&csrc=", url_encode(d, ctx)))
+      # The dispersal reach appears only where connectivity applies
+      expect_true(grepl("&crch=100", url_encode(d, ctx), fixed = TRUE))
+      expect_false(grepl("&crch=", url_encode(modifyList(d, list(entity_scope = "multi")), ctx), fixed = TRUE))
 })
 
 test_that("a short link takes defaults for what it leaves out", {
@@ -75,21 +75,36 @@ test_that("bad values fall back to defaults and are reported", {
       expect_true(any(grepl("wilderness:654", r$problems)))
 })
 
+test_that("the land use weight must be one of the slider's steps", {
+      for (bad in c("30", "125", "lots")) {
+            r <- url_decode(paste0("?clu=", bad), ctx)
+            expect_identical(r$state$cs_landuse, d$cs_landuse)
+            expect_true(any(grepl(paste0("^Land use weight: '", bad, "'"), r$problems)))
+      }
+      expect_identical(url_decode("?clu=25", ctx)$state$cs_landuse, 25)
+})
+
+test_that("links from before the connectivity measure was retired still open cleanly", {
+      r <- url_decode("?r=conn&rcm=choke", ctx)
+      expect_identical(r$state$stat, "connectivity")
+      expect_length(r$problems, 0)
+})
+
 test_that("dependent settings are checked against the settings they depend on", {
       # Categorical measures aren't offered as change
       r <- url_decode("?es=multi&cm=domid&t=chg", ctx)
       expect_identical(r$state$comm_measure, "richness")
       expect_length(r$problems, 1)
-      # Connectivity is single-entity only
-      r <- url_decode("?es=multi&cs=1", ctx)
-      expect_false(r$state$cs_enable)
-      expect_length(r$problems, 1)
-      # The connectivity raster needs connectivity on
-      r <- url_decode("?r=conn", ctx)
+      # Connectivity is single-entity only, and needs a habitat variable
+      r <- url_decode("?es=multi&r=conn", ctx)
       expect_identical(r$state$stat, "FIA variable")
-      # ...and is shown as change
-      r <- url_decode("?cs=1&r=conn", ctx)
-      expect_identical(r$state$time, "delta")
+      expect_length(r$problems, 1)
+      r <- url_decode("?e=all&m=rich&r=conn", ctx)
+      expect_identical(r$state$stat, "FIA variable")
+      # ...and is shown for the timeframe the link gives
+      r <- url_decode("?r=conn&t=fut&crch=inf", ctx)
+      expect_identical(r$state[c("stat", "time", "cs_reach")],
+                       list(stat = "connectivity", time = "future", cs_reach = "Inf"))
 })
 
 test_that("multi-selects are written in menu order", {

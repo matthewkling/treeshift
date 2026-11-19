@@ -62,3 +62,13 @@ test_that("the per-entity response matrix is row-aligned with the plots", {
       expect_identical(y[["Pinus ponderosa"]],
                        as.numeric(ts_response(plots, "Species", "presence probability")))
 })
+
+test_that("nothing is estimated outside the contiguous US", {
+      # A domain straddling the Minnesota-Manitoba-Ontario border
+      res <- ts_model(ts_settings(bbox_x = c(-97, -93), bbox_y = c(47, 50), clim_agg = 5), data)
+      b <- res$surfaces$bsl
+      pts <- rbind(canada = c(-95, 49.6), us = c(-95, 47.8))
+      v <- terra::extract(c(b$response, b$sum_weights), pts)
+      expect_true(all(is.na(v[1, ])))
+      expect_false(anyNA(v[2, ]))
+})

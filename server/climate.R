@@ -59,10 +59,8 @@ clim <- reactive(ts_climate_grid(clim_pool(), model$bbox_x, model$bbox_y, model$
 cr_grid <- reactive({
       v <- input$cr_v1
       req(isTruthy(v), v %in% display_vars())
-      bb_ext <- ext(c(model$bbox_x, model$bbox_y))
-
-      grid_of <- function(r) r %>% crop(bb_ext) %>%
-            aggregate(model$clim_agg, na.rm = TRUE)
+      conus <- rast(core_data$conus)
+      grid_of <- function(r) ts_grid_of(r, conus, model$bbox_x, model$bbox_y, model$clim_agg)
 
       if (!is.null(display_extra_vars[[v]])) {
             # A static covariate: the same raster for both timeframes,

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "treeshift",
+      "runtimeExecutable": "Rscript",
+      "runtimeArgs": ["-e", "shiny::runApp(port = 4321, launch.browser = FALSE)"],
+      "port": 4321
+    }
+  ]
+}

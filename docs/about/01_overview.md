@@ -2,7 +2,7 @@ TreeShift is in beta and still under development.
 
 ## What TreeShift does
 
-TreeShift maps forest conditions across the contiguous United States, under recent and projected future climates. It is based on data from the US Forest Service's Forest Inventory and Analysis (FIA) program, which surveys about 160,000 plots across the contiguous US.
+TreeShift maps forest conditions across the contiguous United States, under recent and projected future climates. It is based on data from the US Forest Service's Forest Inventory and Analysis (FIA) program, which surveys about 160,000 plots across the contiguous US. Maps stop at the US borders, since there are no FIA plots beyond them.
 
 Models are run in real time based on your selected settings. For any location, TreeShift looks at FIA plots that are nearby and have a similar climate, and summarizes what grows on them. It can map:
 
