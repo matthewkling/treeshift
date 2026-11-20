@@ -81,9 +81,10 @@ cs_permeability <- reactive({
 # Conductance: a weighted geometric mean of habitat and permeability, with
 # weight `landuse` (%) on permeability. At 0 it is habitat alone; at 100 it is
 # land use alone, and habitat only places the sources. Never quite zero.
+# Cells outside the circuit stay NA (the mask: terra takes NA^0 as 1).
 cs_conductance <- function(habitat, permeability = NULL, landuse = 0) {
       w <- landuse / 100
-      if (!is.null(permeability)) habitat <- habitat^(1 - w) * permeability^w
+      if (!is.null(permeability)) habitat <- mask(habitat^(1 - w) * permeability^w, habitat)
       habitat / global(habitat, "mean", na.rm = TRUE)$mean + cs_floor
 }
 
