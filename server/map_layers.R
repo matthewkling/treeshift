@@ -54,21 +54,21 @@ output$stat_note <- renderUI({
 ## even when input$time happens to be "delta". Expected gains and losses
 ## are strictly non-negative; turnover runs 0 (identical) to 1 (no
 ## overlap). None of them center on zero.
-paired_layer <- reactive({
-      isTruthy(rast_stat()) && rast_stat() == "FIA variable" &&
-            multi_mode() && isTruthy(input$comm_measure) &&
-            input$comm_measure %in% paired_measures
+## The *_var reactives say what kind of FIA-variable layer is selected,
+## whatever the map shows; the *_layer ones, whether the map shows it.
+paired_var <- reactive({
+      multi_mode() && isTruthy(input$comm_measure) && input$comm_measure %in% paired_measures
 })
+paired_layer <- reactive(isTruthy(rast_stat()) && rast_stat() == "FIA variable" && paired_var())
 
 ## Categorical layers: the value is an entity index, not a quantity.
 ## Everything that assumes continuity has to branch on this -- palette,
 ## reprojection method, scale transform, and the panels that plot value
 ## distributions.
-categorical_layer <- reactive({
-      isTruthy(rast_stat()) && rast_stat() == "FIA variable" &&
-            multi_mode() && isTruthy(input$comm_measure) &&
-            input$comm_measure %in% categorical_measures
+categorical_var <- reactive({
+      multi_mode() && isTruthy(input$comm_measure) && input$comm_measure %in% categorical_measures
 })
+categorical_layer <- reactive(isTruthy(rast_stat()) && rast_stat() == "FIA variable" && categorical_var())
 
 ## Category codes, labels and colors for the categorical layers. Derived
 ## from the raster's own factor levels so the markers cannot drift from the
@@ -85,24 +85,24 @@ comm_categories <- reactive({
 ## Diversity is deliberately NOT here: it is exp(H) in effective-entity
 ## units, unbounded, and shares units with richness -- keeping the two on
 ## the same sequential palette is what makes them comparable.
-bounded_ratio_layer <- reactive({
-      if (!isTruthy(rast_stat()) || rast_stat() != "FIA variable") return(FALSE)
+bounded_ratio_var <- reactive({
       if (multi_mode()) return(isTruthy(input$comm_measure) &&
                                      input$comm_measure %in% c("evenness", "dominance"))
       isTruthy(model$fia_var) && grepl("fraction", model$fia_var)
 })
+bounded_ratio_layer <- reactive(isTruthy(rast_stat()) && rast_stat() == "FIA variable" && bounded_ratio_var())
 
 ## Layers whose NAs carry meaning -- a support mask or an entity not found
 ## within range -- rather than merely marking the edge of the analog
 ## domain. Filling these with 0 on a delta map would read as "no change"
 ## instead of "no information", and for a ratio 0 is a real value at one
 ## end of the scale.
-masked_layer <- reactive({
-      if (!isTruthy(rast_stat()) || rast_stat() != "FIA variable") return(FALSE)
+masked_var <- reactive({
       if (multi_mode()) return(isTruthy(input$comm_measure) &&
                                      !identical(input$comm_measure, "richness"))
       isTruthy(model$fia_var) && grepl("fraction", model$fia_var)
 })
+masked_layer <- reactive(isTruthy(rast_stat()) && rast_stat() == "FIA variable" && masked_var())
 
 
 display_layer <- reactive({
@@ -204,13 +204,7 @@ raster_title <- reactive({
             add(focal_label())
             add(time_label())
             add(tolower(model$fia_var))
-            add(switch(model$fia_var,
-                       "total basal area"    = "(ft2 BA / acre)",
-                       "number of trees"     = "(trees / acre)",
-                       "number of saplings"  = "(saplings / acre)",
-                       "number of seedlings" = "(seedlings / acre)",
-                       NULL),
-                dim = TRUE)
+            add(fia_var_units(model$fia_var), dim = TRUE)
       }
 
       # When the layer is categorical the marker legend is suppressed --
@@ -245,30 +239,43 @@ raster_title <- reactive({
              ">", lines, "</div>", collapse = "")
 })
 
-observe({
-      r <- display_layer()
-      req(r)
+## How a raster layer is drawn: the values drawn (transformed, if a scale
+## transform is chosen), the palette and its domain, and `color()`, which gives
+## a value in the layer's own units its color on that scale, clamped to the
+## ends of the scale. `stat` is the kind of layer (a rast_stat() value). Shared
+## by the map and the Model sensitivity panel (server/sensitivity.R), so the panel's
+## points take the colors the legend shows.
+raster_scale_of <- function(r, stat) {
+      fia <- stat == "FIA variable"
+      categorical <- fia && categorical_var()
+      raw_layer <- r
 
       # Scale transforms are meaningless on category codes, and
       # setValues() would drop the factor levels the legend reads from.
       # Fixed classes (support, connectivity) already do the job of a
       # transform.
-      bins <- switch(rast_stat(),
+      bins <- switch(stat,
+                     # Reversed, so well-supported cells take the dark, cool end
                      support = list(breaks = support_breaks, labels = support_labels,
-                                    palette = "viridis"),
+                                    palette = rev(scales::viridis_pal()(length(support_labels)))),
                      connectivity = list(breaks = cs_breaks, labels = cs_break_labels,
                                          palette = cs_break_colors))
       binned <- !is.null(bins)
       # Maps a transformed value back to the variable's units, for the legend
       # labels: colors follow the transformed scale, labels stay in the
       # original units. NULL while the drawn raster is untransformed.
+      # `to_scale` puts any other value on the transformed scale.
       untransform <- NULL
-      if (!categorical_layer() && !binned && input$rast_transform != "identity") {
+      to_scale <- identity
+      if (!categorical && !binned && input$rast_transform != "identity") {
             raw <- r[]
             trans <- switch(input$rast_transform,
                             "log10" = log10,
                             "sqrt" = sqrt,
                             "uniform" = function(x) scales::rescale(rank(x, na.last = "keep")))
+            to_scale <- switch(input$rast_transform,
+                               "uniform" = function(x) stats::ecdf(raw)(x),
+                               trans)
             # Ranks have no formula to undo: a value's rescaled rank is its
             # percentile, so the label is the data's value at that percentile
             untransform <- switch(input$rast_transform,
@@ -279,10 +286,6 @@ observe({
             r[!is.finite(r[])] <- NA
       }
 
-      proxy <- leafletProxy("map") %>%
-            clearImages() %>%
-            removeControl("raster_legend")
-
       ## palettes ##
       proj_method <- "bilinear"
       mm <- minmax(r)
@@ -290,7 +293,7 @@ observe({
 
       choose_palette <- function(x) if(input$rast_palette == "default") x else input$rast_palette
 
-      if(categorical_layer()){
+      if(categorical){
             # Nearest neighbour: bilinear interpolation of category codes
             # invents indices that mean nothing. Same reason current
             # direction uses it.
@@ -304,16 +307,17 @@ observe({
             rast_pal <- colorFactor(palette = cc$colors, levels = cc$codes,
                                     na.color = "transparent")
             dom <- cc$codes
-      } else if(input$time == "delta" && rast_stat() == "FIA variable" && !paired_layer()){
+      } else if(input$time == "delta" && fia && !paired_var()){
             # units are deltas, drawn untransformed
-            r <- display_layer()
+            r <- raw_layer
             untransform <- NULL
+            to_scale <- identity
             # Fill non-analog NAs -- except where the NAs are a deliberate
             # mask (species not found within range, or below the support
             # floor). Filling those would read as "no change" on the
             # diverging scale rather than "no information". Only within the
             # grid's climate: outside the contiguous US nothing is estimated.
-            if(!masked_layer()) r[is.na(r) & !is.na(clim()$hst[[1]])] <- 0
+            if(!masked_var()) r[is.na(r) & !is.na(clim()$hst[[1]])] <- 0
             mm <- minmax(r)
             dom <- max(abs(mm)) * c(-1, 1)
             rast_pal <- colorNumeric(
@@ -328,19 +332,20 @@ observe({
                   bins = bins$breaks,
                   na.color = "transparent"
             )
-      } else if(rast_stat() %in% names(evidence_layers)){
+            dom <- range(bins$breaks[is.finite(bins$breaks)])
+      } else if(stat %in% names(evidence_layers)){
             # Closeness has a fixed 0-1 scale, so its colors mean the same
             # thing on every map. Viridis sets these diagnostics apart from
             # the variable's own gray-to-green palette.
-            if(rast_stat() == "closeness" && input$rast_transform == "identity") dom <- c(0, 1)
+            if(stat == "closeness" && input$rast_transform == "identity") dom <- c(0, 1)
             rast_pal <- colorNumeric(
                   palette = "viridis" %>% choose_palette(),
                   domain = dom,
                   na.color = "transparent"
             )
-      } else if(rast_stat() == "FIA variable") {
+      } else if(fia) {
             # historical or future estimate: domain is unit except for total BA
-            if(bounded_ratio_layer()){
+            if(bounded_ratio_var()){
                   # Bounded [0, 1] ratios -- the regeneration fractions
                   # (relict <-> colonizing), and community evenness and
                   # dominance -- default to RdBu. Fixing the domain to the
@@ -360,7 +365,7 @@ observe({
                         na.color = "transparent"
                   )
             }
-      } else if(rast_stat() == "focal site similarity") {
+      } else if(stat == "focal site similarity") {
             rast_pal <- colorNumeric(
                   palette = "magma" %>% choose_palette(),
                   domain = dom,
@@ -374,6 +379,45 @@ observe({
                   na.color = "transparent"
             )
       }
+
+      color <- function(x) {
+            v <- to_scale(x)
+            if (!categorical) v <- pmin(pmax(v, min(dom)), max(dom))
+            rast_pal(v)
+      }
+      list(r = r, pal = rast_pal, dom = dom, untransform = untransform, bins = bins,
+           binned = binned, proj_method = proj_method, color = color)
+}
+
+# The map's raster layer, as drawn
+raster_scale <- reactive({
+      r <- display_layer()
+      req(r)
+      raster_scale_of(r, rast_stat())
+})
+
+# The FIA variable's scale at the map's timeframe: the map's own while the map
+# shows the variable, otherwise the one it would have
+variable_scale <- reactive({
+      if (identical(rast_stat(), "FIA variable")) return(raster_scale())
+      req(aim(), isTruthy(model$fia_var))
+      raster_scale_of(ts_value_layer(aim(), model$fia_var, input$time, input$support_floor),
+                      "FIA variable")
+})
+
+observe({
+      sc <- raster_scale()
+      r <- sc$r
+      rast_pal <- sc$pal
+      dom <- sc$dom
+      bins <- sc$bins
+      binned <- sc$binned
+      untransform <- sc$untransform
+      proj_method <- sc$proj_method
+
+      proxy <- leafletProxy("map") %>%
+            clearImages() %>%
+            removeControl("raster_legend")
 
       proxy <- proxy %>%
             addRasterImage(

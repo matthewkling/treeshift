@@ -8,7 +8,7 @@ The weighting is the analog impact model (AIM) implemented in the [`analogs`](ht
 
 ### The two bandwidths
 
-The *geographic bandwidth* (in kilometers) sets how quickly weight falls off with distance. The *climate bandwidth* sets how quickly it falls off with climate difference, measured in standard deviations of each climate variable relative to variation across all FIA plots. Narrow bandwidths stay close to local plots but rest on fewer of them; wide bandwidths draw on more plots but blur local differences. There is no single correct setting, and it is worth checking whether a conclusion holds across a range of them. The *Model evaluation* panel helps with this.
+The *geographic bandwidth* (in kilometers) sets how quickly weight falls off with distance. The *climate bandwidth* sets how quickly it falls off with climate difference, measured in standard deviations of each climate variable relative to variation across all FIA plots. Narrow bandwidths stay close to local plots but rest on fewer of them; wide bandwidths draw on more plots but blur local differences. There is no single correct setting, and it is worth checking whether a conclusion holds across a range of them. The *Model evaluation* panel shows which settings fit the FIA data best, and the *Model sensitivity* panel shows how much the estimate at a site changes across them.
 
 ### Future climate
 

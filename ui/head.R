@@ -147,6 +147,15 @@ ui_head <- function() {
   });
 ")),
 
+            ## The Model sensitivity panel's hover readout (server/sensitivity.R)
+            tags$style(HTML("
+  .ts-plot-tooltip {
+    position: absolute; z-index: 10; pointer-events: none; max-width: 320px;
+    background: rgba(255, 255, 255, 0.95); border: 1px solid #bbb; border-radius: 4px;
+    padding: 4px 8px; font-size: 12px; line-height: 1.35;
+  }
+")),
+
             tags$style(HTML("
   /* Only tiles belonging to the provider tile layer */
   #map .leaflet-layer.basemap-gray img.leaflet-tile {

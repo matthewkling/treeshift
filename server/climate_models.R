@@ -1,4 +1,4 @@
-## CLIMATE MODELS ---------------------------------------------
+## CLIMATE FUTURES --------------------------------------------
 
 # Projected climate change (future minus historical, in native units) for
 # every scenario, period and model, averaged over the applied model bounding
@@ -77,7 +77,7 @@ output$model_delta_plot <- renderPlot({
       ggplot(d, aes(dx, dy, color = model_label, group = interaction(scenario, model))) +
             geom_hline(yintercept = 0, color = "gray70", linewidth = .3) +
             geom_vline(xintercept = 0, color = "gray70", linewidth = .3) +
-            stat_chull(aes(group = era), fill = "gray70", alpha = .5, color = "gray30", linewidth = .25) +
+            stat_chull(aes(group = era), fill = "gray70", alpha = .5, color = NA, linewidth = .25) +
             geom_path() +
             geom_point(data = sel, aes(shape = era), size = size_vals[as.character(sel$era)] + 2,
                        color = "black", show.legend = FALSE) +
@@ -87,7 +87,10 @@ output$model_delta_plot <- renderPlot({
             scale_shape_manual(values = shape_vals, breaks = eras) +
             scale_size_manual(values = size_vals) +
             coord_cartesian(clip = "off") +
-            theme(legend.position = "top", legend.direction = "vertical") +
+            theme(legend.position = if (plot_is_wide(session, "model_delta_plot")) "right" else "bottom",
+                  legend.direction = "vertical",
+                  panel.grid.minor = element_blank(),
+                  panel.grid.major = element_line(alpha = .5)) +
             strip_style +
             labs(x = paste0("\u0394 ", vx, " (", unit_lab(vx), ")"),
                  y = paste0("\u0394 ", vy, " (", unit_lab(vy), ")"),

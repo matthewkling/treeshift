@@ -6,11 +6,11 @@ Start with model settings: what to map (a species, forest type, or the whole tre
 
 ### Map
 
-Click the map to set a focal site. Several panels use it: they show which plots inform the value there, which places share its climate, and summarize modeled results at the focal site and its the surrounding area.
+Click the map to set a focal site. Several panels use it: they show which plots inform the value there, which places share its climate, how much the estimate there depends on your settings, and the modeled results at the focal site and its surrounding area.
 
 ### Right sidebar: modules
 
-The modules on the right offer different ways of summarizing and understanding the model results shown on the map. Each panel has its own controls and figures: community composition, value distributions across areas, climate relationships, model evaluation, climate models, and focal site analogs.
+The modules on the right offer different ways of summarizing and understanding the model results shown on the map. Each panel has its own controls and figures: value distributions across areas, community composition, climate relationships, climate futures (how the climate models differ in their projected change), model sensitivity (how much estimates depend on the choices behind them, checked one site at a time), model evaluation, and focal site analogs.
 
 ### Help
 

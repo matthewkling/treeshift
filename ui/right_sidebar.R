@@ -13,11 +13,14 @@ ui_right_sidebar <- function() {
                   open = FALSE,
                   multiple = FALSE,
 
-                  ui_panel_community_composition(),
+                  ## What the map shows, then the climate behind it, then
+                  ## how far to trust it, then how an estimate is built
                   ui_panel_value_distributions(),
+                  ui_panel_community_composition(),
                   ui_panel_climate_relationships(),
-                  ui_panel_model_evaluation(),
                   ui_panel_climate_models(),
+                  ui_panel_sensitivity(),
+                  ui_panel_model_evaluation(),
                   ui_panel_focal_site_analogs()
             )
 
@@ -27,13 +30,14 @@ ui_right_sidebar <- function() {
 # The modules as tabs on the map's right edge, shown while the sidebar is
 # collapsed so the modules stay visible; a tab opens the sidebar on its module.
 # Titles match the accordion panels' titles (their values); labels are short
-# enough to stack down the edge.
+# enough to stack down the edge. In the accordion's order.
 module_tabs <- list(
-      list(title = "Community composition", label = "Community",         icon = "layer-group"),
       list(title = "Value distributions",   label = "Distributions",     icon = "chart-column"),
+      list(title = "Community composition", label = "Community",         icon = "layer-group"),
       list(title = "Climate relationships", label = "Relationships",     icon = "chart-line"),
+      list(title = "Climate futures",       label = "Climate futures",   icon = "earth-americas"),
+      list(title = "Model sensitivity",     label = "Model sensitivity", icon = "scale-balanced"),
       list(title = "Model evaluation",      label = "Evaluation",        icon = "bullseye"),
-      list(title = "Climate models",        label = "Climate models",    icon = "earth-americas"),
       list(title = "Focal site analogs",    label = "Site analogs",      icon = "location-dot")
 )
 
@@ -52,7 +56,7 @@ ui_module_tabs <- function() {
                             icon(m$icon), span(m$label))))
 }
 
-      ## First panel: the map-level community measures
+      ## The map-level community measures
       ## reduce ACROSS entities, which is exactly the
       ## information this panel restores. A turnover or
       ## richness surface says how much changes; this
@@ -259,9 +263,11 @@ ui_panel_model_evaluation <- function() {
 
 ui_panel_climate_models <- function() {
       accordion_panel(
-            "Climate models",
-            icon = module_icon("Climate models"),
-            helpText("This module compares the future climate models. For each emissions pathway and model, it plots the
+            "Climate futures",
+            icon = module_icon("Climate futures"),
+            helpText("This module compares future climate trends across global circulation models (GCMs;
+                      to compare TreeShift projections across GCMs, see the `Model sensitivity` module).
+                      For each emissions pathway and model, it plots the
                       projected climate change (future minus historical), averaged over the model bounding box, as a
                       path across time periods, so you can see which models are hotter, drier, wetter, and so on.
                       The drying options under 'Climate model' (left sidebar) rank the models by their change in
@@ -281,8 +287,39 @@ ui_panel_climate_models <- function() {
       )
 }
 
+      ## How much the model's estimates depend on the choices behind them,
+      ## checked one site at a time: the user clicks sites on the map with
+      ## the panel open.
+ui_panel_sensitivity <- function() {
+      accordion_panel(
+            "Model sensitivity",
+            icon = module_icon("Model sensitivity"),
+            helpText("This module shows how different `model settings` would change the model estimate at your selected focal site.
+                      Each row varies one choice with the others held fixed at your current settings.
+                      The bold vertical line is the estimate at your current settings (outlined points),
+                      and the wider a row's spread, the more the estimate depends on that choice.
+                      Points are colored as on the map, and sized by their analog support.
+                      Hover over a point to see its setting."),
+            hr(),
+            ## Positioned, so the hover readout can sit beside the cursor
+            div(style = "position: relative;",
+                plotOutput("sensitivity_plot", height = "auto",
+                           hover = hoverOpts("sensitivity_hover", delay = 80, delayType = "throttle")),
+                uiOutput("sensitivity_hover")),
+            uiOutput("sensitivity_evidence"),
+            helpText("Climate variable sensitivities swap one variable at a time, holding the others fixed.
+                      The FIA plot sample range comes from resampling the
+                      plots near the site; nearby plots aren't independent of one another, so it is somewhat
+                      narrower than it should be. Not shown: interactions among these choices, and the
+                      model's structural assumptions (equilibrium with climate, no dispersal lag, novel climates).
+                      The estimate uses the site's own climate, which can differ slightly from the mapped cell's.")
+      )
+}
+
       ## Last, and deliberately so. Every other panel here
-      ## reports a result; this one shows the mechanism
+      ## reports a result (Model sensitivity, just before it,
+      ## asks how much the site's result depends on the
+      ## choices behind it); this one shows the mechanism
       ## behind them -- which plots inform a prediction,
       ## and how the two bandwidths weight them. That is
       ## worth having for anyone asking where the numbers

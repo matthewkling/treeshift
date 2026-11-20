@@ -150,22 +150,26 @@ ts_pool <- function(plots, climate, values = NULL) {
       clim_hst <- terra::extract(climate$hst, xy, ID = FALSE, method = "bilinear")
       clim_fut <- terra::extract(climate$fut, xy, ID = FALSE, method = "bilinear")
 
-      # The same plots, in the same rows, in AIM coordinates (see
-      # aim_surfaces()), as a table for the FFT method and an index for the
-      # exact one. index_hst/index_fut stay lon/lat for the focal-site analog
-      # search.
-      aim_pts <- data.frame(aim_xy(xy), clim_hst)
+      # index_hst/index_fut stay lon/lat for the focal-site analog search
+      c(list(index_hst = analogs::build_analog_index(cbind(xy, clim_hst), coord_type = "lonlat",
+                                                     geog_res_adj = 4),
+             index_fut = analogs::build_analog_index(cbind(xy, clim_fut), coord_type = "lonlat",
+                                                     geog_res_adj = 4)),
+        ts_aim_pool(xy, clim_hst),
+        list(clim_hst = clim_hst,
+             clim_fut = clim_fut,
+             values = values))
+}
 
-      list(index_hst = analogs::build_analog_index(cbind(xy, clim_hst), coord_type = "lonlat",
-                                                   geog_res_adj = 4),
-           index_fut = analogs::build_analog_index(cbind(xy, clim_fut), coord_type = "lonlat",
-                                                   geog_res_adj = 4),
-           aim_pts = aim_pts,
+#' The plots in AIM coordinates (see `aim_surfaces()`), with their historical
+#' climates: as a table (`aim_pts`) for the FFT method and an index
+#' (`aim_index`) for the exact one. Only historical plot climates are needed:
+#' a future estimate matches future climate against them.
+ts_aim_pool <- function(xy, clim_hst) {
+      aim_pts <- data.frame(aim_xy(xy), clim_hst)
+      list(aim_pts = aim_pts,
            aim_index = analogs::build_analog_index(aim_pts, coord_type = "projected",
-                                                   geog_res_adj = 4),
-           clim_hst = clim_hst,
-           clim_fut = clim_fut,
-           values = values)
+                                                   geog_res_adj = 4))
 }
 
 
@@ -212,39 +216,47 @@ ts_surfaces <- function(grid, pool, fia_var, theta_clim, theta_geog) {
                            stat = c("weighted_mean", spread_stat, weight_stats))
       surf <- lapply(surf, name_outcomes, y_cols = y_cols, other = weight_stats)
 
-      # Pooled-ratio surface: ratio of the num and denom means, as the
-      # standard `response` layer.
-      #
-      # num/denom is already conditional on occurrence -- absent plots
-      # contribute 0 to both and drop out -- so it reads "the ratio among
-      # plots where the focal entity occurs".
-      #
-      # The regeneration fractions stay conditional and are MASKED (NA) where
-      # no occupied plot falls within kernel range. Multiplying by occurrence
-      # instead would drive unsuitable ground to 0 -- but 0 already means
-      # "occurs, adults only" (relict), so the product would conflate two very
-      # different states. Masking keeps them distinct: blank = doesn't occur,
-      # 0 = occurs but no regeneration. This also matches the per-plot values,
-      # NA where the species is absent and 0 where it's adults-only.
-      #
-      # Proportion basal area keeps the occurrence weighting: there 0 means
-      # "the focal species is 0% of a real stand" vs "there is no stand" --
-      # both read as "the species isn't here", so collapsing them costs
-      # little, and the unconditional surface is better behaved.
-      if (is_ratio) {
-            conditional <- grepl("fraction", fia_var)
-            combine_ratio <- function(r) {
-                  resp <- r[["num"]] / r[["denom"]]
-                  if (!conditional) resp <- r[["occ"]] * resp
-                  # denom == 0: no occupied plot in range. Undefined for the
-                  # fractions; 0 for the occurrence-weighted proportion.
-                  resp[!is.finite(resp[])] <- if (conditional) NA else 0
-                  names(resp) <- "response"
-                  c(r, resp)
-            }
-            surf <- lapply(surf, combine_ratio)
-      }
+      # Pooled-ratio surface, as the standard `response` layer
+      if (is_ratio) surf <- lapply(surf, function(r) {
+            resp <- ts_combine_ratio(r[["occ"]], r[["num"]], r[["denom"]], fia_var)
+            names(resp) <- "response"
+            c(r, resp)
+      })
       surf[c("fut", "bsl")]
+}
+
+#' A pooled-ratio variable from its generalized pieces
+#'
+#' The ratio of the num and denom means. num/denom is already conditional on
+#' occurrence -- absent plots contribute 0 to both and drop out -- so it reads
+#' "the ratio among plots where the focal entity occurs".
+#'
+#' The regeneration fractions stay conditional and are NA where no occupied plot
+#' falls within kernel range (denom == 0). Multiplying by occurrence instead
+#' would drive unsuitable ground to 0 -- but 0 already means "occurs, adults
+#' only" (relict), so the product would conflate two very different states.
+#' Leaving them blank keeps them distinct: blank = doesn't occur, 0 = occurs but
+#' no regeneration. This also matches the per-plot values, NA where the species
+#' is absent and 0 where it's adults-only.
+#'
+#' Proportion basal area keeps the occurrence weighting, and is 0 where denom
+#' == 0: there 0 means "the focal species is 0% of a real stand" vs "there is
+#' no stand" -- both read as "the species isn't here", so collapsing them costs
+#' little, and the unconditional surface is better behaved.
+#'
+#' Either way, where the pieces themselves are missing (no climate, as over
+#' water or outside the US) the ratio is missing too.
+#'
+#' @param occ,num,denom The generalized pieces: SpatRasters or numeric vectors.
+#' @return The ratio, of the same kind as the pieces.
+ts_combine_ratio <- function(occ, num, denom, fia_var) {
+      conditional <- grepl("fraction", fia_var)
+      resp <- num / denom
+      if (!conditional) resp <- occ * resp
+      vals <- function(x) if (inherits(x, "SpatRaster")) x[] else x
+      no_stand <- !is.finite(vals(resp)) & !is.na(vals(denom))
+      resp[no_stand] <- if (conditional) NA else 0
+      resp
 }
 
 #' Per-entity surfaces for a community run, both timeframes

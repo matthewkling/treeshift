@@ -153,6 +153,31 @@ theme_set(theme_bw(base_size = 16))
 strip_style <- theme(strip.text = element_text(color = "white"),
                      strip.background = element_rect(fill = "black", color = "black"))
 
+# Whether a module plot is wide enough for its legend to go beside it rather
+# than below it. The right sidebar can be dragged wider, so this changes with
+# the plot's width as the browser reports it.
+plot_is_wide <- function(session, output_id) {
+      isTRUE(session$clientData[[paste0("output_", output_id, "_width")]] >= 520)
+}
+
+# Wraps a module plot's axis title to the plot's width, in lines of even
+# length. ggplot doesn't wrap titles, so this estimates how many characters
+# fit: the plot's width as the browser reports it, times `share` (what's left
+# once the plot's other parts, like row titles or a legend beside it, take
+# theirs), at about half an em per character -- a little more than a typical
+# title averages at the theme's size. It then wraps to the narrowest width
+# that still needs no more lines, so a title doesn't end in a lone word.
+wrap_to_plot <- function(text, session, output_id, share = 0.8) {
+      width <- session$clientData[[paste0("output_", output_id, "_width")]]
+      if (is.null(width)) return(text)
+      em <- calc_element("axis.title.x", theme_get())$size   # pt, = px at Shiny's 72 dpi
+      fits <- max(15, floor(width * share / (em / 2)))
+      n_lines <- function(w) stringr::str_count(stringr::str_wrap(text, w), "\n") + 1
+      lines <- n_lines(fits)
+      widths <- seq(min(ceiling(nchar(text) / lines), fits), fits)
+      stringr::str_wrap(text, widths[which(vapply(widths, n_lines, 1) <= lines)[1]])
+}
+
 
 # The valid choices that links are checked against (helpers/url_state.R)
 url_ctx <- url_context()
@@ -238,7 +263,7 @@ ui <- function(request) {
 # the order they are created, and some files use objects defined in earlier ones.
 server_files <- c("usage_log", "shared", "url_state", "model_settings", "data", "controls", "climate", "climate_models",
                   "aim", "connectivity", "map_base", "community", "map_layers",
-                  "site_plots", "polygon_values", "evaluation", "climate_response", "downloads")
+                  "site_plots", "sensitivity", "polygon_values", "evaluation", "climate_response", "downloads")
 
 server <- function(input, output, session) {
       for (.src in file.path("server", paste0(server_files, ".R"))) {

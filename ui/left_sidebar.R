@@ -310,7 +310,7 @@ ui_panel_climate_data <- function(s) {
                   tooltip("Global climate models (GCMs) differ in how much warming and drying they project for a given emissions pathway.
                            The drying options rank the available models by their projected change in climatic water deficit (CWD, a measure of drought stress)
                            averaged over the bounding box, for the chosen pathway and period, and use the least, middle or most drying one.
-                           Or choose a specific model. The 'Climate models' panel in the right sidebar shows the ranking."),
+                           Or choose a specific model. The 'Climate futures' panel in the right sidebar shows the ranking."),
             uiOutput("storyline_preview")
       )
 }

@@ -126,7 +126,7 @@ for(era in c("2011_2040", "2041_2070", "2071_2100")){
 # climate variable, in native units (the stored z-scores times each variable's
 # SD; ppt stays log10), masked to the contiguous US and aggregated 10x. One
 # layer per <ssp>_<period>_<model>_<var>. The climate storylines rank models
-# on it (ts_storyline_model()) and the Climate models panel plots it.
+# on it (ts_storyline_model()) and the Climate futures panel plots it.
 # Self-contained: needs only data/, after data_prep/conus_prep.R.
 
 scales <- readRDS("data/clim_scales.rds")

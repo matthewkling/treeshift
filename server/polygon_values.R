@@ -251,6 +251,11 @@ output$polygon_density <- renderPlot({
       # what the module is for is reading off how one area sits relative to
       # another at a given value, which is the cumulative curve. Two panels
       # also halved the width available for either.
+      # Beside the plot in one column when it's wide; below it in two
+      # columns, reading across, when it's narrow
+      wide <- plot_is_wide(session, "polygon_density")
+      legend_guide <- if (wide) guide_legend(ncol = 1) else guide_legend(ncol = 2, byrow = TRUE)
+
       p <- ggplot(d, aes(x = value, color = source, linetype = source)) +
             stat_ecdf(aes(group = source),
                       geom = "step", linewidth = 0.7, pad = FALSE) +
@@ -260,13 +265,13 @@ output$polygon_density <- renderPlot({
                   expand = expansion(0, 0)
             ) +
             scale_color_manual(values = pal,
-                               breaks = legend_breaks) +
+                               breaks = legend_breaks, guide = legend_guide) +
             scale_linetype_manual(values = ltypes,
-                                  breaks = legend_breaks) +
-            theme(legend.position = "top",
+                                  breaks = legend_breaks, guide = legend_guide) +
+            theme(legend.position = if (wide) "right" else "bottom",
                   plot.caption = element_text(hjust = 0),
                   plot.caption.position = "plot") +
-            labs(x = x_lab,
+            labs(x = wrap_to_plot(x_lab, session, "polygon_density"),
                  y = "cumulative share of area",
                  color = NULL, linetype = NULL,
                  caption = if (polygon_outside) stringr::str_wrap(polygon_outside_msg, 45))
