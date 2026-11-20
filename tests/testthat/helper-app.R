@@ -117,7 +117,7 @@ key_inputs <- c(e = "track", es = "entity_scope", sp = "species", ft = "forest_t
                 fg = "forest_group", st = "stage", m = "metric", t = "time",
                 cm = "comm_measure", n = "comm_top_n", sf = "support_floor", g = "clim_agg",
                 bx = "bbox_x", by = "bbox_y", poly = "polygon_unit", cv = "clim_vars",
-                ssp = "scenario_ssp", era = "scenario_period", gcm = "scenario_model",
+                ssp = "scenario_ssp", era = "scenario_period", sto = "scenario_choice", gcm = "scenario_choice",
                 tg = "theta_geog", tc = "theta_clim", crch = "cs_reach", clu = "cs_landuse", r = "stat",
                 rev = "evidence_stat", pts = "vector", an = "analog_direction")
 

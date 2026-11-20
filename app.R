@@ -98,7 +98,10 @@ model_choices  <- setNames(as.list(.model_meta$model), .model_meta$model_label)
 }
 default_ssp    <- .pick_default(ts_default_settings()$scenario_ssp, .ssp_meta$ssp)
 default_period <- .pick_default(ts_default_settings()$scenario_period, .period_meta$period)
-default_model  <- .pick_default(ts_default_settings()$scenario_model, .model_meta$model)
+# The default storyline's model for the default bounding box and scenario
+default_model  <- ts_resolve_scenario(ts_settings(scenario_ssp = default_ssp,
+                                                  scenario_period = default_period),
+                                      core_data)$scenario_model
 
 fia_all <- core_data$fia
 spp <- sort(unique(fia_all$species))

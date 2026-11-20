@@ -45,10 +45,11 @@ CONST <- list(
       # exists on disk -- a missing one trips shiny::validate() in
       # scenario_file() rather than erroring. Check what you actually have:
       #     list.files("data/clim_future")
-      # These are the app's own defaults, so they are known to resolve.
+      # scenario_choice is a storyline ("least", "median", "most": the least,
+      # median or most drying model over the bounding box) or a specific model.
       scenario_ssp    = "ssp585",
       scenario_period = "2041-2070",
-      scenario_model  = "gfdl-esm4",
+      scenario_choice = "gfdl-esm4",
 
       clim_vars       = c("cwd", "aet"),   # of tmean/ppt/aet/cwd/tmincm/tmaxwm
       clim_agg        = 10                 # km; a species-range grid at 1 km is slow

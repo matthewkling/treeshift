@@ -35,22 +35,18 @@ observeEvent(list(input$track, input$metric, input$stage), {
       updateSelectInput(session, "fia_var", selected = v)
 })
 
-## Seed the climate-model chart's x/y axis variables from the user's
-## left-sidebar climate-variable selection. Done once, on the first
-## applied value of the climate variables, so it provides a sensible default
-## (the first two analog variables) without clobbering a deliberate axis
-## choice the user makes later. The dropdowns still offer all six
-## variables -- only the initial default tracks the sidebar.
-.model_delta_axes_seeded <- reactiveVal(FALSE)
-observeEvent(model$clim_vars, {
-      if (isTRUE(.model_delta_axes_seeded())) return()
-      cv <- model$clim_vars
-      req(length(cv) >= 1)
-      vx <- cv[1]
-      vy <- if (length(cv) >= 2) cv[2] else cv[1]
-      updateSelectInput(session, "model_delta_x", selected = vx)
-      updateSelectInput(session, "model_delta_y", selected = vy)
-      .model_delta_axes_seeded(TRUE)
+## The model a storyline picks, from the controls rather than the applied
+## settings, so it shows what Run model will use. Blank for a specific model.
+output$storyline_preview <- renderUI({
+      choice <- input$scenario_choice
+      req(choice %in% storyline_choices, input$scenario_ssp, input$scenario_period,
+          length(input$bbox_x) == 2, length(input$bbox_y) == 2)
+      m <- tryCatch(ts_storyline_model(core_data, choice, input$scenario_ssp,
+                                       input$scenario_period, input$bbox_x, input$bbox_y),
+                    error = function(e) NULL)
+      helpText(if (is.null(m)) "No climate data in this bounding box."
+               else paste0("\u2192 ", toupper(m), " for this bounding box"),
+               style = "margin-top: -0.5rem;")
 })
 
 ## Keep the climate-relationships module's variable menus in sync with the

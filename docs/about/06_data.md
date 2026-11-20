@@ -6,7 +6,7 @@ US Forest Service Forest Inventory and Analysis database (FIADB), downloaded Jun
 
 ### Climate data
 
-CHELSA version 2.1, at about 1 km resolution, aggregated to the grain size chosen in the app. Recent climate is the 2000-2019 average. Future climate comes from five CMIP6 global climate models (GFDL-ESM4, IPSL-CM6A-LR, MPI-ESM1-2-HR, MRI-ESM2-0, UKESM1-0-LL) under three emissions pathways (SSP1-2.6, SSP3-7.0, SSP5-8.5) for 2011-2040, 2041-2070, and 2071-2100. Water balance variables (actual evapotranspiration and climatic water deficit) are calculated from monthly temperature and precipitation using the [`hydro`](https://github.com/matthewkling/hydro) R package.
+CHELSA version 2.1, at about 1 km resolution, aggregated to the grain size chosen in the app. Historical climate is the 1981-2010 average. Future climate comes from five CMIP6 global climate models (GFDL-ESM4, IPSL-CM6A-LR, MPI-ESM1-2-HR, MRI-ESM2-0, UKESM1-0-LL) under three emissions pathways (SSP1-2.6, SSP3-7.0, SSP5-8.5) for 2011-2040, 2041-2070, and 2071-2100. Water balance variables (actual evapotranspiration and climatic water deficit) are calculated from monthly temperature and precipitation using the [`hydro`](https://github.com/matthewkling/hydro) R package.
 
 ### Human land use
 

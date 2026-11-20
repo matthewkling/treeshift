@@ -20,7 +20,7 @@ These scores apply to the present day only. Future forests can't be measured yet
 
 ### Climate models and scenarios
 
-A future projection depends on the emissions pathway, the time period, and the climate models selected under `Climate data`. When several climate models are selected, their climates are averaged before the forest model runs, so the map shows a single projection for the average climate, not the range across models. To see how much a result depends on that choice, run the climate models one at a time, or compare emissions pathways, and look for conclusions that hold across them. The `Climate models` panel shows how the models differ in their projected climate change for your area, for example which are warmer, drier or wetter, so you can choose models that span the range.
+A future projection depends on the emissions pathway, the time period, and the climate model selected under `Climate data`. Each run uses a single climate model, and different models project different futures. You can pick a model by name, or by how much drying it projects for the bounding box: the least, median or most drying of the available models, ranked by their change in climatic water deficit (a measure of drought stress). The median is the default. To see how much a result depends on the choice of model, run the least and most drying models as well, or compare emissions pathways, and look for conclusions that hold across them. The `Climate models` panel shows how the models differ in their projected climate change for your area, for example which are warmer, drier or wetter.
 
 ### What these tools don't cover
 

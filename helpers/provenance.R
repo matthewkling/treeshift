@@ -94,7 +94,7 @@ provenance_text <- function(s, ctx, link, versions, created = Sys.time()) {
         line("Climate variables", paste(toupper(s$clim_vars), collapse = ", ")),
         line("Emissions pathway", label(ctx$ssps, s$scenario_ssp)),
         line("Future time period", label(ctx$periods, s$scenario_period)),
-        line("Climate model", label(ctx$models, s$scenario_model)),
+        line("Climate model", provenance_model(s, ctx)),
         "",
         "Interpolation",
         line("Geographic bandwidth", paste(num(s$theta_geog), "km")),
@@ -120,4 +120,15 @@ provenance_text <- function(s, ctx, link, versions, created = Sys.time()) {
         line("FIA plot data", paste("data/fia.csv, checksum", versions$fia)),
         "",
         "The link reopens these settings in TreeShift. Results can differ if the app or its data have changed since.")
+}
+
+# "UKESM1-0-LL (most drying of 5 by change in climatic water deficit over the
+# bounding box)", or just the model when it was chosen directly
+provenance_model <- function(s, ctx) {
+      m <- names(ctx$models)[match(s$scenario_model, ctx$models)]
+      if (is.null(s$scenario_storyline)) return(m)
+      sc <- ctx$data$scenarios
+      n <- sum(sc$ssp == s$scenario_ssp & sc$period == s$scenario_period)
+      sprintf("%s (%s drying of %d by change in climatic water deficit over the bounding box)",
+              m, s$scenario_storyline, n)
 }

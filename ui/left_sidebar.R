@@ -301,11 +301,17 @@ ui_panel_climate_data <- function(s) {
                         choices = period_choices,
                         selected = s$scenario_period) %>%
                   tooltip("Future time period."),
-            selectInput("scenario_model", "Climate model",
-                        choices = model_choices,
-                        selected = s$scenario_model) %>%
-                  tooltip("Global climate model (GCM). Models differ in how much warming and drying they project for a given emissions pathway.
-                                      See the 'Climate models' panel in the right sidebar for help comparing GCMs and choosing among them.")
+            # One menu for two settings: a storyline (scenario_storyline) or a
+            # specific model (scenario_model); see server/model_settings.R
+            selectInput("scenario_choice", "Climate model",
+                        choices = setNames(list(as.list(storyline_choices), model_choices),
+                                           c("By drying (\u0394CWD)", "Specific model")),
+                        selected = s$scenario_storyline %||% s$scenario_model) %>%
+                  tooltip("Global climate models (GCMs) differ in how much warming and drying they project for a given emissions pathway.
+                           The drying options rank the available models by their projected change in climatic water deficit (CWD, a measure of drought stress)
+                           averaged over the bounding box, for the chosen pathway and period, and use the least, middle or most drying one.
+                           Or choose a specific model. The 'Climate models' panel in the right sidebar shows the ranking."),
+            uiOutput("storyline_preview")
       )
 }
 

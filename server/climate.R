@@ -12,9 +12,9 @@
 # downstream outputs (the map, the focal-site plots, etc.) display it
 # instead of erroring.
 scenario_file <- reactive({
-      req(isTruthy(model$scenario_ssp),
-          isTruthy(model$scenario_period),
-          isTruthy(model$scenario_model))
+      req(isTruthy(model$scenario_ssp), isTruthy(model$scenario_period))
+      shiny::validate(need(isTruthy(model$scenario_model),
+            "No climate model could be chosen: the bounding box has no climate data. Move it over the contiguous US."))
       path <- ts_scenario_path(core_data, model$scenario_ssp, model$scenario_period,
                                model$scenario_model)
       shiny::validate(need(file.exists(path),

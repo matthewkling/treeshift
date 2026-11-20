@@ -37,7 +37,10 @@
 #   cm     community measure;  n  categories shown;  sf  support floor
 #   g      grain (km);  bx, by  bounding box (lon range, lat range)
 #   poly   focal polygon (boundary library id);  site  focal site (lon,lat)
-#   cv     climate variables;  ssp, era, gcm  scenario
+#   cv     climate variables;  ssp, era  scenario
+#   sto    climate storyline: least, median, most (absent for a specific model)
+#   gcm    climate model: the storyline's model when the link was made, which
+#          the link keeps even if the storyline would now resolve differently
 #   tg, tc geographic and climate bandwidths
 #   crch   connectivity dispersal reach (km, or inf);  clu  land use weight (%)
 #   r      raster layer;  rev  evidence measure
@@ -49,7 +52,7 @@
 url_schema_version <- 1L
 
 url_keys <- c("v", "e", "es", "sp", "ft", "fg", "st", "m", "t", "cm", "n", "sf",
-              "g", "bx", "by", "poly", "site", "cv", "ssp", "era", "gcm", "tg", "tc",
+              "g", "bx", "by", "poly", "site", "cv", "ssp", "era", "sto", "gcm", "tg", "tc",
               "crch", "clu", "r", "rev", "rcm", "pts", "an")
 
 # Short codes for enumerated settings: code = app value
@@ -91,6 +94,7 @@ url_context <- function() {
            models = as_named(model_choices),
            default_ssp = default_ssp, default_period = default_period,
            default_model = default_model,
+           data = core_data,   # for resolving storylines
            units = boundary_units$id,
            unit_names = stats::setNames(boundary_units$name, boundary_units$id),
            bbox = clim_bbox)
@@ -98,7 +102,7 @@ url_context <- function() {
 
 # The model settings' defaults are the core's (R/settings.R), except where they
 # depend on the data on hand: the first forest type and group, and a scenario
-# that exists.
+# that exists, and the default storyline's model.
 url_defaults <- function(ctx) {
       d <- ts_settings()
       list(track = d$track, entity_scope = d$entity_scope, species = d$species,
@@ -110,7 +114,8 @@ url_defaults <- function(ctx) {
            clim_agg = d$clim_agg, bbox_x = d$bbox_x, bbox_y = d$bbox_y,
            polygon_unit = "", site = NULL,
            clim_vars = url_menu_order(d$clim_vars, clim_vars()), scenario_ssp = ctx$default_ssp,
-           scenario_period = ctx$default_period, scenario_model = ctx$default_model,
+           scenario_period = ctx$default_period, scenario_storyline = d$scenario_storyline,
+           scenario_model = ctx$default_model,
            theta_geog = d$theta_geog, theta_clim = d$theta_clim,
            cs_reach = "100", cs_landuse = 50,
            stat = "FIA variable", evidence_stat = "support",
@@ -183,6 +188,7 @@ url_fields <- function(s, ctx) {
       if (length(s$clim_vars)) f["cv"] <- paste(url_menu_order(s$clim_vars, clim_vars()), collapse = ",")
       f["ssp"] <- s$scenario_ssp
       f["era"] <- s$scenario_period
+      if (!is.null(s$scenario_storyline)) f["sto"] <- s$scenario_storyline
       f["gcm"] <- s$scenario_model
       f["tg"] <- url_num(s$theta_geog)
       f["tc"] <- url_num(s$theta_clim)
@@ -343,7 +349,34 @@ url_decode <- function(search, ctx) {
       set("clim_vars", subset_of("cv", clim_vars(), "Climate variables"))
       set("scenario_ssp", one_of("ssp", ctx$ssps, "Emissions pathway"))
       set("scenario_period", one_of("era", ctx$periods, "Future time period"))
-      set("scenario_model", one_of("gcm", ctx$models, "Climate model"))
+      # A storyline link keeps its model, so it reproduces exactly; a model
+      # alone is a specific model; a storyline without a model, or neither,
+      # resolves the storyline (the link's or the default) for the link's
+      # bounding box and scenario.
+      sto <- one_of("sto", storyline_choices, "Climate storyline")
+      gcm <- one_of("gcm", ctx$models, "Climate model")
+      if (is.null(sto) && !is.null(gcm)) {
+            s["scenario_storyline"] <- list(NULL)
+            s$scenario_model <- gcm
+      } else {
+            set("scenario_storyline", sto)
+            resolved <- tryCatch(
+                  ts_storyline_model(ctx$data, s$scenario_storyline, s$scenario_ssp,
+                                     s$scenario_period, s$bbox_x, s$bbox_y),
+                  error = function(e) NULL)
+            if (is.null(gcm) && is.null(resolved)) {
+                  problems <- c(problems, sprintf(
+                        "Climate storyline: no climate model could be chosen for the link's bounding box, so %s was used.",
+                        toupper(ctx$default_model)))
+            }
+            if (!is.null(gcm) && !is.null(resolved) && gcm != resolved) {
+                  problems <- c(problems, sprintf(
+                        "Climate model: the link's %s was kept, though the '%s' storyline now picks %s for this bounding box and scenario.",
+                        toupper(gcm), names(storyline_choices)[storyline_choices == s$scenario_storyline],
+                        toupper(resolved)))
+            }
+            s$scenario_model <- gcm %||% resolved %||% ctx$default_model
+      }
       set("theta_geog", nums("tg", "Geographic bandwidth", url_bounds$theta_geog[1], url_bounds$theta_geog[2]))
       set("theta_clim", nums("tc", "Climate bandwidth", url_bounds$theta_clim[1], url_bounds$theta_clim[2]))
 

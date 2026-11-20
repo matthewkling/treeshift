@@ -13,7 +13,7 @@
 source("scripts/load_core.R")
 
 data <- ts_data("data")
-settings <- ts_settings()
+settings <- ts_resolve_scenario(ts_settings(), data)
 key <- ts_surfaces_key(settings, data)
 if (is.null(key)) stop("Can't fingerprint the default run: an input file is missing.")
 

@@ -261,38 +261,21 @@ ui_panel_climate_models <- function() {
       accordion_panel(
             "Climate models",
             icon = module_icon("Climate models"),
-            helpText("This module helps you choose among, and contextualize, climate models.
-                                             It can take a couple minutes to run.
-                                             For every available emissions scenario and GCM, it plots the projected climate change
-                                             (future minus historical) as a trajectory across time periods, so
-                                             you can see which models are hot/dry, warm/wet, and so on, and how
-                                             the spread fans out over eras and emissions scenarios. The model
-                                             selected in the left sidebar is drawn at full opacity, others faded. The x and y variables can be changed
-                                             without re-clicking 'Update'."), hr(),
-            layout_column_wrap(
-                  width = 1/2,
-                  selectInput("model_delta_region", "Summarize over",
-                              choices = area_names,
-                              selected = "domain") %>%
-                        tooltip("Region over which deltas are summarized. 'Model bounding box'
-                                                        averages over the current bounding box; 'Focal site' samples
-                                                        at the clicked site; 'Focal polygon' averages over the selected
-                                                        polygon."),
-                  div(style = "padding-top: 1.9rem;",
-                      actionButton("model_delta_update", "Update chart") %>%
-                            tooltip("Recompute the chart for the current axis variables and
-                                                            summary region. The chart does not update automatically,
-                                                            since computing deltas for every available model is
-                                                            slow."))
-            ),
+            helpText("This module compares the future climate models. For each emissions pathway and model, it plots the
+                      projected climate change (future minus historical), averaged over the model bounding box, as a
+                      path across time periods, so you can see which models are hotter, drier, wetter, and so on.
+                      The drying options under 'Climate model' (left sidebar) rank the models by their change in
+                      climatic water deficit (CWD). The point outlined in black is the model, pathway and period
+                      in use."), hr(),
+            checkboxInput("model_delta_all_ssp", "Show all emissions pathways", value = FALSE),
             plotOutput("model_delta_plot"),
             layout_column_wrap(
                   width = 1/2,
                   selectInput("model_delta_x", "X variable",
-                              choices = clim_vars()) %>%
+                              choices = clim_vars(), selected = "cwd") %>%
                         tooltip("Climate variable for the x-axis (delta = future - historical)."),
                   selectInput("model_delta_y", "Y variable",
-                              choices = clim_vars()) %>%
+                              choices = clim_vars(), selected = "tmean") %>%
                         tooltip("Climate variable for the y-axis (delta = future - historical).")
             )
       )

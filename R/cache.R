@@ -107,7 +107,7 @@ ts_surfaces_spec <- function(settings, community = FALSE) {
            fia_var = as.character(s$fia_var),
            clim_vars = as.character(s$clim_vars),
            scenario = c(as.character(s$scenario_ssp), as.character(s$scenario_period),
-                        as.character(s$scenario_model)),
+                        as.character(ts_scenario_model(s))),
            bbox = as.numeric(c(s$bbox_x, s$bbox_y)),
            clim_agg = as.numeric(s$clim_agg),
            theta = as.numeric(c(s$theta_geog, s$theta_clim)))
@@ -179,7 +179,7 @@ ts_surfaces_key <- function(settings, data, community = FALSE) {
       inputs <- c(file.path(data$dir, c("fia.csv", "forest_type_codes.csv", "clim_scales.rds")),
                   data$clim_historical, data$conus,
                   ts_scenario_path(data, settings$scenario_ssp, settings$scenario_period,
-                                    settings$scenario_model))
+                                   ts_scenario_model(settings)))
       code <- if (community) community_code_files() else surfaces_code_files()
       parts <- list(spec = ts_surfaces_spec(settings, community),
                     data = file_hashes(inputs),

@@ -8,20 +8,26 @@ fake_data <- function() {
       dir <- withr::local_tempdir(.local_envir = parent.frame())
       dir.create(file.path(dir, "clim_future"))
       files <- c("fia.csv", "forest_type_codes.csv", "clim_scales.rds", "clim_historical.tif",
-                 "conus.tif", "ghm.tif", "clim_future/ssp585_2041-2070_gfdl-esm4.tif",
-                 "clim_future/ssp585_2041-2070_mri-esm2-0.tif")
+                 "conus.tif", "ghm.tif", "clim_future/ssp370_2041-2070_gfdl-esm4.tif",
+                 "clim_future/ssp370_2041-2070_mri-esm2-0.tif")
       for (f in files) writeLines(f, file.path(dir, f))
-      list(dir = dir, clim_historical = file.path(dir, "clim_historical.tif"),
-           conus = file.path(dir, "conus.tif"), clim_future_dir = file.path(dir, "clim_future"))
+      # Over the default bounding box, GFDL-ESM4 dries least (and, of two, is
+      # the median) and MRI-ESM2-0 most
+      cube <- withr::with_dir(app_dir, fake_cube(list(`gfdl-esm4` = 1, `mri-esm2-0` = 2), dir))
+      c(list(dir = dir, clim_historical = file.path(dir, "clim_historical.tif"),
+             conus = file.path(dir, "conus.tif"), clim_future_dir = file.path(dir, "clim_future")),
+        cube)
 }
+# Keys are made from resolved settings, as the app and ts_model() resolve them
 key <- function(settings, data, community = FALSE)
-      withr::with_dir(app_dir, ts_surfaces_key(settings, data, community))
+      withr::with_dir(app_dir, ts_surfaces_key(ts_resolve_scenario(settings, data), data, community))
 
 test_that("the surfaces key changes with every setting it is computed from", {
       d <- fake_data()
       base <- key(ts_settings(), d)
       changed <- list(species = "Pinus ponderosa", stage = "seedling", clim_vars = c("aet", "ppt"),
-                      scenario_model = "mri-esm2-0", bbox_x = c(-116, -101), clim_agg = 20,
+                      scenario_model = "mri-esm2-0", scenario_storyline = "most",
+                      bbox_x = c(-116, -101), clim_agg = 20,
                       theta_geog = 40, theta_clim = 0.2, track = "All trees")
       for (nm in names(changed))
             expect_false(identical(key(do.call(ts_settings, changed[nm]), d), base), info = nm)
@@ -29,6 +35,14 @@ test_that("the surfaces key changes with every setting it is computed from", {
 
 test_that("the surfaces key ignores what the run doesn't read", {
       d <- fake_data()
+      # A storyline is keyed by its model, so storylines and models that come
+      # to the same model share results
+      expect_identical(key(ts_settings(scenario_storyline = "least"), d),
+                       key(ts_settings(scenario_model = "gfdl-esm4"), d))
+      expect_identical(key(ts_settings(scenario_storyline = "most"), d),
+                       key(ts_settings(scenario_model = "mri-esm2-0"), d))
+      # An unresolved storyline has no key
+      expect_error(withr::with_dir(app_dir, ts_surfaces_key(ts_settings(), d)), "ts_resolve_scenario")
       # The species is read on the Species track only
       expect_identical(key(ts_settings(track = "All trees", species = "Pinus ponderosa"), d),
                        key(ts_settings(track = "All trees"), d))
@@ -64,7 +78,7 @@ test_that("community keys are their own, and read the track and variable but no 
 test_that("each connectivity map has its own key, which follows its settings", {
       d <- fake_data()
       cs <- function(reach = "100", landuse = 50) c(ts_settings(), list(cs_reach = reach, cs_landuse = landuse))
-      ckey <- function(s, era) withr::with_dir(app_dir, ts_connectivity_key(s, d, era))
+      ckey <- function(s, era) withr::with_dir(app_dir, ts_connectivity_key(ts_resolve_scenario(s, d), d, era))
       skip_if(is.null(ckey(cs(), "hist")), "Julia not found")
       keys <- c(ckey(cs(), "hist"), ckey(cs(), "fut"), ckey(cs(), "shift"), ckey(cs("Inf"), "hist"),
                 ckey(cs(landuse = 75), "hist"),

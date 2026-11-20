@@ -13,7 +13,7 @@ roundtrip <- function(s) {
 test_that("the default link is fully specified", {
       expect_identical(
             url_encode(d, ctx),
-            "?v=1&e=sp&es=single&sp=Pinus_edulis&st=any&m=occ&t=hist&g=10&bx=-116,-100&by=29,43&cv=aet,cwd&ssp=ssp585&era=2041-2070&gcm=gfdl-esm4&tg=30&tc=0.1&crch=100&clu=50")
+            "?v=1&e=sp&es=single&sp=Pinus_edulis&st=any&m=occ&t=hist&g=10&bx=-116,-100&by=29,43&cv=aet,cwd&ssp=ssp370&era=2041-2070&sto=median&gcm=mpi-esm1-2-hr&tg=30&tc=0.1&crch=100&clu=50")
 })
 
 test_that("links round-trip without problems", {
@@ -35,6 +35,8 @@ test_that("links round-trip without problems", {
                   fia_var = resolve_var("All trees", "basal area", "any"),
                   cs_reach = "Inf", cs_landuse = 75, stat = "connectivity", time = "future",
                   vector = "current field")))
+      # A specific model rather than a storyline
+      states$species["scenario_storyline"] <- list(NULL)
       for (nm in names(states)) {
             r <- roundtrip(states[[nm]])
             expect_identical(r$again, r$query, label = nm)
@@ -111,4 +113,40 @@ test_that("multi-selects are written in menu order", {
       a <- url_encode(modifyList(d, list(clim_vars = c("cwd", "tmean"))), ctx)
       b <- url_encode(modifyList(d, list(clim_vars = c("tmean", "cwd"))), ctx)
       expect_identical(a, b)
+})
+
+test_that("a storyline link keeps its model; a model alone is a specific model", {
+      st <- function(q) url_decode(q, ctx)
+      most <- ts_storyline_model(ctx$data, "most", d$scenario_ssp, d$scenario_period,
+                                 d$bbox_x, d$bbox_y)
+      least <- ts_storyline_model(ctx$data, "least", d$scenario_ssp, d$scenario_period,
+                                  d$bbox_x, d$bbox_y)
+      # The default link names the storyline and its model
+      expect_match(url_encode(d, ctx), paste0("&sto=median&gcm=", d$scenario_model, "&"), fixed = TRUE)
+
+      # A storyline alone resolves, for the link's bounding box
+      r <- st("?sto=most")
+      expect_identical(r$state[c("scenario_storyline", "scenario_model")],
+                       list(scenario_storyline = "most", scenario_model = most))
+      expect_length(r$problems, 0)
+      far <- st("?sto=most&bx=-90,-80&by=30,40")
+      expect_identical(far$state$scenario_model,
+                       ts_storyline_model(ctx$data, "most", d$scenario_ssp, d$scenario_period,
+                                          c(-90, -80), c(30, 40)))
+
+      # A model alone is that model, with no storyline
+      r <- st(paste0("?gcm=", most))
+      expect_null(r$state$scenario_storyline)
+      expect_true("scenario_storyline" %in% names(r$state))
+      expect_identical(r$state$scenario_model, most)
+      expect_length(r$problems, 0)
+      expect_false(grepl("sto=", url_encode(r$state, ctx), fixed = TRUE))
+
+      # A storyline with a model keeps the model, saying so if the storyline
+      # would now pick another
+      r <- st(paste0("?sto=most&gcm=", least))
+      expect_identical(r$state$scenario_model, least)
+      expect_identical(r$state$scenario_storyline, "most")
+      expect_match(r$problems, "was kept", fixed = TRUE)
+      expect_length(st(paste0("?sto=most&gcm=", most))$problems, 0)
 })

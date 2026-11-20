@@ -15,6 +15,21 @@ test_that("ts_settings() resolves the variable and rejects what it can't run", {
       expect_error(ts_settings(track = "Forest type"), "forest_type")
       expect_error(ts_settings(clim_vars = "elevation"), "Unknown climate")
       expect_error(ts_model(ts_settings(scenario_model = "nope"), data), "No climate data")
+      # The climate model is a storyline or a specific model
+      expect_identical(ts_settings()$scenario_storyline, "median")
+      expect_null(ts_settings(scenario_model = "gfdl-esm4")$scenario_storyline)
+      expect_error(ts_settings(scenario_storyline = "most", scenario_model = "gfdl-esm4"), "not both")
+      expect_error(ts_settings(scenario_storyline = "wettest"), "Unknown climate storyline")
+})
+
+test_that("ts_model() runs a storyline's model, as the cache key names it", {
+      s <- small(scenario_storyline = "most")
+      res <- ts_model(s, data)
+      most <- ts_storyline_model(data, "most", s$scenario_ssp, s$scenario_period, s$bbox_x, s$bbox_y)
+      expect_identical(res$settings$scenario_model, most)
+      key <- function(s) withr::with_dir(app_dir, ts_surfaces_key(s, data))
+      expect_false(is.null(key(res$settings)))
+      expect_identical(key(res$settings), key(small(scenario_model = most)))
 })
 
 test_that("community richness equals the All-trees richness variable", {

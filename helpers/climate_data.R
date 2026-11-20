@@ -6,6 +6,7 @@
 # (flat) asset name into a single directory. The app, however, expects
 #   data/clim_historical.tif
 #   data/ghm.tif   (human modification, for connectivity; data_prep/ghm_prep.R)
+#   data/clim_deltas.tif   (climate change summary cube; data_prep/clim_prep.R)
 #   data/clim_future/<ssp>_<period>_<model>.tif   (many files)
 # To bridge the flat release namespace and this nested layout, all assets are
 # downloaded into a temp staging dir, then sorted: the named top-level rasters
@@ -21,7 +22,7 @@ ensure_climate_data <- function(repo = "matthewkling/treeshift",
 
       # Top-level (non-scenario) rasters, by asset name. Anything else with a
       # .tif extension is assumed to be a future-scenario raster.
-      top_level_rasters <- c("clim_historical.tif", "ghm.tif")
+      top_level_rasters <- c("clim_historical.tif", "ghm.tif", "clim_deltas.tif")
 
       # Presence test: all named top-level rasters exist, and clim_future/
       # exists and is non-empty. (The scenario set is variable, so "non-empty

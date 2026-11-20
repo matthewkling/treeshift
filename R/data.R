@@ -7,11 +7,13 @@
 #' Load the model's input data
 #'
 #' @param dir Directory holding fia.csv, forest_type_codes.csv,
-#'   clim_historical.tif, conus.tif, clim_scales.rds and clim_future/.
+#'   clim_historical.tif, clim_deltas.tif, conus.tif, clim_scales.rds and
+#'   clim_future/.
 #' @return A `ts_data` list: `fia` (one row per plot and species, with
 #'   `forest_type` 0 for non-forest plots), `forest_types` (FORTYPCD lookup,
 #'   including the non-forest code 0), `scenarios` (one row per future climate
-#'   file), `clim_scales`, and the climate file paths.
+#'   file), `clim_scales`, and the climate file paths, including `clim_deltas`
+#'   (the coarse cube of climate changes, see data_prep/clim_prep.R).
 ts_data <- function(dir = "data") {
       # Absolute, so the climate paths held below still resolve from another
       # working directory
@@ -43,6 +45,7 @@ ts_data <- function(dir = "data") {
                      scenarios = scenarios,
                      clim_scales = readRDS(file.path(dir, "clim_scales.rds")),
                      clim_historical = file.path(dir, "clim_historical.tif"),
+                     clim_deltas = file.path(dir, "clim_deltas.tif"),
                      conus = file.path(dir, "conus.tif"),
                      clim_future_dir = file.path(dir, "clim_future")),
                 class = "ts_data")

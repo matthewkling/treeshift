@@ -6,18 +6,19 @@
 
 #' Run the model
 #'
-#' @param settings `ts_settings()`.
+#' @param settings `ts_settings()`. A climate storyline is resolved first
+#'   (`ts_resolve_scenario()`), so the result's `settings` name the model.
 #' @param data `ts_data()`.
 #' @return A `ts_result` list: `settings`, `multi` (whether it is a community
 #'   run), `climate` (native-resolution rasters), `grid` (the modeling grid),
 #'   `pool_bbox`, `plots`, `pool`, `responses` (the per-entity matrix, for a
 #'   community run) and `surfaces` (list(bsl, fut)).
 ts_model <- function(settings, data) {
-      s <- settings
+      s <- ts_resolve_scenario(settings, data)
       multi <- ts_multi(s)
 
       climate <- ts_climate(data, s$clim_vars, s$scenario_ssp, s$scenario_period,
-                            s$scenario_model)
+                            ts_scenario_model(s))
       grid <- ts_climate_grid(climate, s$bbox_x, s$bbox_y, s$clim_agg)
       pb <- ts_pool_bbox(s$bbox_x, s$bbox_y, s$theta_geog)
       plots <- ts_plots(data, pb, s$species)

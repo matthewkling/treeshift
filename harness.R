@@ -53,7 +53,7 @@ TS_PHASES <- c(
       clim_vars            = 6,
       scenario_ssp         = 6,
       scenario_period      = 6,
-      scenario_model       = 6,
+      scenario_choice      = 6,
       theta_geog           = 6,
       theta_clim           = 6,
       cs_reach             = 6,
@@ -170,7 +170,7 @@ ts_state <- function(app) {
       v[intersect(c("track", "species", "metric", "stage", "fia_var",
                     "stat", "time", "vector", "theta_clim", "theta_geog",
                     "bbox_x", "bbox_y", "clim_agg", "clim_vars",
-                    "scenario_ssp", "scenario_period", "scenario_model"),
+                    "scenario_ssp", "scenario_period", "scenario_choice"),
                   names(v))]
 }
 
@@ -296,7 +296,7 @@ ts_render <- function(app,
 
                       # climate
                       clim_vars = NULL, scenario_ssp = NULL,
-                      scenario_period = NULL, scenario_model = NULL,
+                      scenario_period = NULL, scenario_choice = NULL,
 
                       # analog settings
                       theta_geog = NULL, theta_clim = NULL,

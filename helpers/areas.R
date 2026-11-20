@@ -4,8 +4,7 @@
 # metrics are computed from. "Best bandwidth here" and "best bandwidth overall"
 # are different answers, and this is what lets the module give the first one.
 #
-# Deliberately not the same three scopes as model_delta_region: a focal site is
-# a point, and a point is not an evaluation set. The meaningful site-scoped
+# A focal site is a point, and a point is not an evaluation set. The meaningful site-scoped
 # quantity is the plots within the geographic cutoff of the click -- the same
 # neighborhood the model draws its analogs from.
 # The areas a module can summarize over, named once so a code means the same

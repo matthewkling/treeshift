@@ -11,8 +11,8 @@
 model_setting_ids <- c("track", "entity_scope", "species", "forest_type", "forest_group",
                        "stage", "metric", "fia_var",
                        "clim_agg", "bbox_x", "bbox_y",
-                       "clim_vars", "scenario_ssp", "scenario_period", "scenario_model",
-                       "theta_geog", "theta_clim", "cs_reach", "cs_landuse")
+                       "clim_vars", "scenario_ssp", "scenario_period", "scenario_storyline",
+                       "scenario_model", "theta_geog", "theta_clim", "cs_reach", "cs_landuse")
 
 # How each is named in the "what changed" line under the button
 model_setting_labels <- c(track = "entity", entity_scope = "entity", species = "species",
@@ -20,7 +20,8 @@ model_setting_labels <- c(track = "entity", entity_scope = "entity", species = "
                           stage = "life stage", metric = "variable", fia_var = "variable",
                           clim_agg = "grain size", bbox_x = "bounding box", bbox_y = "bounding box",
                           clim_vars = "climate variables", scenario_ssp = "emissions pathway",
-                          scenario_period = "time period", scenario_model = "climate model",
+                          scenario_period = "time period", scenario_storyline = "climate model",
+                          scenario_model = "climate model",
                           theta_geog = "geographic bandwidth", theta_clim = "climate bandwidth",
                           cs_reach = "dispersal reach", cs_landuse = "land use weight")
 
@@ -48,7 +49,10 @@ model_settings_in_use <- function(s) {
             forest_group = single && identical(s$track, "Forest group"),
             stage = url_has_stage(s), metric = TRUE, fia_var = TRUE,
             clim_agg = TRUE, bbox_x = TRUE, bbox_y = TRUE,
-            clim_vars = TRUE, scenario_ssp = TRUE, scenario_period = TRUE, scenario_model = TRUE,
+            clim_vars = TRUE, scenario_ssp = TRUE, scenario_period = TRUE,
+            # A storyline's model is resolved when the settings apply, so
+            # it's never pending by itself
+            scenario_storyline = TRUE, scenario_model = is.null(s$scenario_storyline),
             theta_geog = TRUE, theta_clim = TRUE,
             cs_reach = url_cs_available(s), cs_landuse = url_cs_available(s))[model_setting_ids]]
 }

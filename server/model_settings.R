@@ -10,7 +10,21 @@ model <- do.call(reactiveValues, link$state[model_setting_ids])
 
 model_menus <- model_setting_menus(url_ctx)
 
-controls_now <- reactive(lapply(setNames(nm = model_setting_ids), function(id) input[[id]]))
+# The controls' values, by setting. One menu (scenario_choice) sets two: a
+# storyline, whose model is resolved only when it applies, or a specific model.
+controls_now <- reactive({
+      v <- lapply(setNames(nm = model_setting_ids), function(id) input[[id]])
+      choice <- input$scenario_choice
+      if (is.null(choice)) {
+            v[c("scenario_storyline", "scenario_model")] <-
+                  isolate(list(model$scenario_storyline, model$scenario_model))
+      } else if (choice %in% storyline_choices) {
+            v[c("scenario_storyline", "scenario_model")] <- list(choice, isolate(model$scenario_model))
+      } else {
+            v[c("scenario_storyline", "scenario_model")] <- list(NULL, choice)
+      }
+      v
+})
 
 # Connectivity is solved only while it is on the map (server/connectivity.R),
 # so its settings cost nothing while it isn't: they wait for Run model only
@@ -23,15 +37,29 @@ pending <- reactive({
 })
 
 # Apply the given values (by default, the controls'). Unchanged settings are
-# left alone, so they don't invalidate anything.
+# left alone, so they don't invalidate anything. A storyline is resolved to
+# its model here, from the applied bounding box and scenario, so nothing
+# downstream sees a new bounding box with the old storyline's model.
 apply_model_settings <- function(values = isolate(controls_now())) {
       applied <- isolate(reactiveValuesToList(model))
       for (id in names(values)) {
             v <- values[[id]]
-            if (is.null(v) || same_setting(v, applied[[id]])) next
+            # A NULL storyline is a setting (a specific model); any other NULL
+            # is a control not yet built
+            if (is.null(v) && id != "scenario_storyline") next
+            if (same_setting(v, applied[[id]])) next
             if (id %in% names(model_menus)) v <- url_menu_order(v, model_menus[[id]])
             model[[id]] <- v
             history_step <<- TRUE   # the link this produces gets its own Back step
+      }
+      s <- isolate(reactiveValuesToList(model))
+      if (!is.null(s$scenario_storyline)) {
+            # NULL if the bounding box has no climate data; scenario_file()
+            # (server/climate.R) then says so
+            m <- tryCatch(ts_storyline_model(core_data, s$scenario_storyline, s$scenario_ssp,
+                                             s$scenario_period, s$bbox_x, s$bbox_y),
+                          error = function(e) NULL)
+            if (!same_setting(m, s$scenario_model)) model$scenario_model <- m
       }
 }
 

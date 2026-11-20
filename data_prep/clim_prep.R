@@ -120,6 +120,38 @@ for(era in c("2011_2040", "2041_2070", "2071_2100")){
 }
 
 
+# climate deltas --------------
+
+# data/clim_deltas.tif: future minus historical for every future file and
+# climate variable, in native units (the stored z-scores times each variable's
+# SD; ppt stays log10), masked to the contiguous US and aggregated 10x. One
+# layer per <ssp>_<period>_<model>_<var>. The climate storylines rank models
+# on it (ts_storyline_model()) and the Climate models panel plots it.
+# Self-contained: needs only data/, after data_prep/conus_prep.R.
+
+scales <- readRDS("data/clim_scales.rds")
+vars <- names(scales)
+future_files <- list.files("data/clim_future", pattern = "\\.tif$", full.names = TRUE)
+
+delta_files <- parallel::mclapply(future_files, function(f) {
+      # terra objects are opened per worker; they don't survive forking
+      conus <- rast("data/conus.tif")
+      hst <- rast("data/clim_historical.tif")[[vars]]
+      fut <- rast(f)[[vars]]
+      delta <- (fut - hst) * sapply(vars, function(v) scales[[v]]$sd)
+      delta <- aggregate(mask(delta, conus), fact = 10, fun = "mean", na.rm = TRUE)
+      names(delta) <- paste(tools::file_path_sans_ext(basename(f)), vars, sep = "_")
+      out <- tempfile(fileext = ".tif")
+      writeRaster(delta, out, datatype = "FLT4S")
+      out
+}, mc.cores = 8)
+
+writeRaster(rast(unlist(delta_files)), "data/clim_deltas.tif", datatype = "FLT4S",
+            gdal = c("COMPRESS=DEFLATE", "PREDICTOR=3", "INTERLEAVE=BAND"),
+            overwrite = TRUE)
+message("data/clim_deltas.tif: ", round(file.size("data/clim_deltas.tif") / 1024^2, 1), " MB")
+
+
 # wind -------
 
 wind <- rast("/Volumes/T7/CFSR/multidecadal_roses/wnd10m_annual_p1.tif") %>%

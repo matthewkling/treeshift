@@ -10,7 +10,7 @@ Map layers that show the evidence behind each value, and other ways to judge how
 
 ### Projections are not predictions
 
-Future maps show what today's forests suggest about a projected climate, for one emissions pathway, time period, and set of climate models. They leave out many things that will shape real outcomes, including disturbance, management, dispersal, competition, pests, and the direct effects of carbon dioxide. Different climate models can disagree; see [Uncertainty](#about-uncertainty).
+Future maps show what today's forests suggest about a projected climate, for one emissions pathway, time period, and climate model. They leave out many things that will shape real outcomes, including disturbance, management, dispersal, competition, pests, and the direct effects of carbon dioxide. Different climate models can disagree; see [Uncertainty](#about-uncertainty).
 
 ### Ratios near zero
 
