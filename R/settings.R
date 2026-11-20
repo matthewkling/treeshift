@@ -27,7 +27,6 @@ ts_default_settings <- function() {
 #'
 #' @param ... Settings to change from `ts_default_settings()`, by name.
 #'   `fia_var` is resolved from `track`, `metric` and `stage` unless given.
-#'   `scenario_model` may name several climate models, which are averaged.
 #' @return A `ts_settings` list.
 ts_settings <- function(...) {
       changes <- list(...)

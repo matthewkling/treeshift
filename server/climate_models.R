@@ -4,7 +4,7 @@
 # the model-chooser module. Independent of input$clim_vars, the scenario
 # selection, and the AIM pipeline: reads ALL climate variables straight
 # from the raw rasters for *every* future file on disk, so the chart
-# shows the full ensemble as time trajectories rather than a single
+# shows every model as time trajectories rather than a single
 # selection snapshot. Extracting every variable (rather than just the
 # current axis pair) lets the user re-pick chart axes with no recompute.
 #
@@ -16,8 +16,8 @@
 # (input$model_delta_region): the modeling-domain bbox, the focal site,
 # or the selected focal polygon.
 #
-# Cost: one raw future-raster read per future file -- the full ensemble,
-# so this is heavy. It is therefore gated behind the "Update chart"
+# Cost: one raw future-raster read per future file -- every model, so
+# this is heavy. It is therefore gated behind the "Update chart"
 # button via bindEvent(): nothing recomputes until the user asks, even
 # if the summary region changes in the meantime. Axis-variable changes
 # never recompute -- all variables are already extracted, so the plot
@@ -163,9 +163,8 @@ output$model_delta_plot <- renderPlot({
       # Axis labels use the shared unit_lab() helper; deltas are already
       # back-converted from z-scores in model_deltas.
 
-      # Selected models (current GCM ensemble) are drawn at full opacity;
-      # non-selected trajectories are faded to 0.5 so the active ensemble
-      # stands out without needing in-plot text labels.
+      # The selected model is drawn at full opacity; the others are faded to
+      # 0.5 so it stands out without needing in-plot text labels.
       d$selected <- d$model %in% model$scenario_model
 
       # Shape palette: one glyph per era, generated to fit however many

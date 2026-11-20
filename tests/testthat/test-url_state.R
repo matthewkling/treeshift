@@ -22,7 +22,7 @@ test_that("links round-trip without problems", {
                   species = "Pinus ponderosa", stage = "seedling", metric = "abundance",
                   fia_var = "number of seedlings", time = "delta", polygon_unit = "county:08069",
                   site = c(-105.5, 40.6), clim_vars = c("tmean", "ppt", "cwd"),
-                  scenario_model = unname(ctx$models[1:2]), theta_geog = 45, theta_clim = 0.25,
+                  scenario_model = unname(ctx$models[2]), theta_geog = 45, theta_clim = 0.25,
                   bbox_x = c(-110.5, -101))),
             community = modifyList(d, list(
                   entity_scope = "multi", comm_measure = "dominant entity", comm_top_n = 7,

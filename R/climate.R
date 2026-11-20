@@ -1,34 +1,28 @@
 # Climate ----------------------------------------------------------------------------
 
-#' Future climate file paths for a scenario, one per climate model
-ts_scenario_paths <- function(data, ssp, period, models) {
-      file.path(data$clim_future_dir, paste0(ssp, "_", period, "_", models, ".tif"))
+#' Future climate file path for a scenario and climate model
+ts_scenario_path <- function(data, ssp, period, model) {
+      file.path(data$clim_future_dir, paste0(ssp, "_", period, "_", model, ".tif"))
 }
 
 #' Historical and future climate, uncropped and at native resolution
 #'
 #' Restricted to `clim_vars`, with the contiguous US mask (data_prep/conus_prep.R)
-#' that `ts_climate_grid()` applies. With several climate models the future raster is
-#' their layer-wise mean (an ensemble). Plot climates are extracted from these
+#' that `ts_climate_grid()` applies. Plot climates are extracted from these
 #' rasters, so they reflect each plot's own location rather than a grid cell.
 #'
+#' @param model One climate model. Climates are never averaged across models:
+#'   a model's response to an averaged climate isn't the average of its
+#'   responses to each model's climate.
 #' @return list(hst, fut, conus) of SpatRasters.
-ts_climate <- function(data, clim_vars, ssp, period, models) {
-      paths <- ts_scenario_paths(data, ssp, period, models)
-      missing <- !file.exists(paths)
-      if (any(missing))
-            stop("No climate data for ", paste(basename(paths[missing]), collapse = ", "))
+ts_climate <- function(data, clim_vars, ssp, period, model) {
+      if (length(model) != 1) stop("`model` must be a single climate model")
+      path <- ts_scenario_path(data, ssp, period, model)
+      if (!file.exists(path)) stop("No climate data for ", basename(path))
 
-      r_hst <- terra::rast(data$clim_historical)[[clim_vars]]
-
-      # Subset before summing: raster addition is positional, so this keeps
-      # layers aligned by name across models. Reduce() makes the single-model
-      # case a no-op.
-      fut_list <- lapply(paths, function(p) terra::rast(p)[[clim_vars]])
-      r_fut <- Reduce(`+`, fut_list) / length(fut_list)
-      names(r_fut) <- clim_vars   # `+` can drop layer names
-
-      list(hst = r_hst, fut = r_fut, conus = terra::rast(data$conus))
+      list(hst = terra::rast(data$clim_historical)[[clim_vars]],
+           fut = terra::rast(path)[[clim_vars]],
+           conus = terra::rast(data$conus))
 }
 
 #' The modeling grid: climate cropped to the bounding box, masked to the

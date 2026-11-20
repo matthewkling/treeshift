@@ -7,32 +7,19 @@
 # and for plot-level climate extraction (in pool(), site_analogs(), and
 # eval_var_set()).
 
-# Active scenario filename(s), reconstructed from the three scenario
-# inputs. scenario_model may hold multiple GCMs; this returns one path
-# per selected model (the future raster is later averaged across them
-# to form a model ensemble). Strict: if ANY selected combination is
-# missing a file on disk, surfaces a user-visible message via validate()
-# naming the missing models, rather than silently averaging a subset.
-# Downstream outputs (the map, the focal-site plots, etc.) display the
-# message instead of erroring.
+# Active scenario filename, reconstructed from the three scenario inputs.
+# A missing file surfaces a user-visible message via validate(), so
+# downstream outputs (the map, the focal-site plots, etc.) display it
+# instead of erroring.
 scenario_file <- reactive({
       req(isTruthy(model$scenario_ssp),
           isTruthy(model$scenario_period),
           isTruthy(model$scenario_model))
-      paths <- ts_scenario_paths(core_data, model$scenario_ssp, model$scenario_period,
-                                 model$scenario_model)
-      exists <- file.exists(paths)
-
-      shiny::validate(need(
-            all(exists),
-            if (length(paths) == 1) {
-                  "Selected scenario combination is not available. Try a different emissions pathway, era, or climate model."
-            } else {
-                  paste0("No data for these model(s) at the selected pathway/era: ",
-                         paste(toupper(model$scenario_model[!exists]), collapse = ", "),
-                         ". Deselect them or choose a different pathway/era.")
-            }))
-      paths
+      path <- ts_scenario_path(core_data, model$scenario_ssp, model$scenario_period,
+                               model$scenario_model)
+      shiny::validate(need(file.exists(path),
+            "Selected scenario combination is not available. Try a different emissions pathway, era, or climate model."))
+      path
 })
 
 clim_pool <- reactive({
@@ -70,14 +57,8 @@ cr_grid <- reactive({
             return(list(hst = g, fut = g))
       }
 
-      # Averaged across the selected GCMs, matching clim_pool()'s ensemble.
-      sf <- scenario_file()
-      fut_list <- lapply(sf, function(pth) rast(pth)[[v]])
-      r_fut <- Reduce(`+`, fut_list) / length(fut_list)
-      names(r_fut) <- v
-
       list(hst = grid_of(rast("data/clim_historical.tif")[[v]]),
-           fut = grid_of(r_fut))
+           fut = grid_of(rast(scenario_file())[[v]]))
 })
 
 ## Same variable at the FIA plot coordinates, row-aligned with plot_occ().
@@ -89,9 +70,7 @@ cr_plot_values <- reactive({
       src <- if (!is.null(display_extra_vars[[v]])) {
             rast(display_extra_vars[[v]]$file)
       } else if (isTRUE(input$cr_clim == "future")) {
-            sf <- scenario_file()
-            fl <- lapply(sf, function(pth) rast(pth)[[v]])
-            Reduce(`+`, fl) / length(fl)
+            rast(scenario_file())[[v]]
       } else {
             rast("data/clim_historical.tif")[[v]]
       }

@@ -301,12 +301,10 @@ ui_panel_climate_data <- function(s) {
                         choices = period_choices,
                         selected = s$scenario_period) %>%
                   tooltip("Future time period."),
-            selectizeInput("scenario_model", "Climate model(s)",
-                           choices = model_choices,
-                           selected = s$scenario_model,
-                           multiple = TRUE,
-                           options = list(plugins = list("remove_button"))) %>%
-                  tooltip("Select one or more global climate models (GCMs). When multiple are selected, climate layers are averaged across the model ensemble.
+            selectInput("scenario_model", "Climate model",
+                        choices = model_choices,
+                        selected = s$scenario_model) %>%
+                  tooltip("Global climate model (GCM). Models differ in how much warming and drying they project for a given emissions pathway.
                                       See the 'Climate models' panel in the right sidebar for help comparing GCMs and choosing among them.")
       )
 }

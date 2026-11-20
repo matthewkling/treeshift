@@ -183,8 +183,7 @@ url_fields <- function(s, ctx) {
       if (length(s$clim_vars)) f["cv"] <- paste(url_menu_order(s$clim_vars, clim_vars()), collapse = ",")
       f["ssp"] <- s$scenario_ssp
       f["era"] <- s$scenario_period
-      if (length(s$scenario_model))
-            f["gcm"] <- paste(url_menu_order(s$scenario_model, ctx$models), collapse = ",")
+      f["gcm"] <- s$scenario_model
       f["tg"] <- url_num(s$theta_geog)
       f["tc"] <- url_num(s$theta_clim)
       if (url_cs_available(s)) {
@@ -344,7 +343,7 @@ url_decode <- function(search, ctx) {
       set("clim_vars", subset_of("cv", clim_vars(), "Climate variables"))
       set("scenario_ssp", one_of("ssp", ctx$ssps, "Emissions pathway"))
       set("scenario_period", one_of("era", ctx$periods, "Future time period"))
-      set("scenario_model", subset_of("gcm", ctx$models, "Climate models"))
+      set("scenario_model", one_of("gcm", ctx$models, "Climate model"))
       set("theta_geog", nums("tg", "Geographic bandwidth", url_bounds$theta_geog[1], url_bounds$theta_geog[2]))
       set("theta_clim", nums("tc", "Climate bandwidth", url_bounds$theta_clim[1], url_bounds$theta_clim[2]))
 

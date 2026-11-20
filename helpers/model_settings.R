@@ -20,13 +20,13 @@ model_setting_labels <- c(track = "entity", entity_scope = "entity", species = "
                           stage = "life stage", metric = "variable", fia_var = "variable",
                           clim_agg = "grain size", bbox_x = "bounding box", bbox_y = "bounding box",
                           clim_vars = "climate variables", scenario_ssp = "emissions pathway",
-                          scenario_period = "time period", scenario_model = "climate models",
+                          scenario_period = "time period", scenario_model = "climate model",
                           theta_geog = "geographic bandwidth", theta_clim = "climate bandwidth",
                           cs_reach = "dispersal reach", cs_landuse = "land use weight")
 
 # Multi-selects, kept in menu order so that reordering a selection isn't a
 # change
-model_setting_menus <- function(ctx) list(clim_vars = clim_vars(), scenario_model = ctx$models)
+model_setting_menus <- function(ctx) list(clim_vars = clim_vars())
 
 # Whether two values of a setting are the same. Numbers compare by value (a
 # slider's integer equals the link's double); multi-selects compare as sets.

@@ -94,7 +94,7 @@ provenance_text <- function(s, ctx, link, versions, created = Sys.time()) {
         line("Climate variables", paste(toupper(s$clim_vars), collapse = ", ")),
         line("Emissions pathway", label(ctx$ssps, s$scenario_ssp)),
         line("Future time period", label(ctx$periods, s$scenario_period)),
-        line("Climate models", paste(label(ctx$models, s$scenario_model), collapse = ", ")),
+        line("Climate model", label(ctx$models, s$scenario_model)),
         "",
         "Interpolation",
         line("Geographic bandwidth", paste(num(s$theta_geog), "km")),

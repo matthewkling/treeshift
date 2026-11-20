@@ -266,9 +266,8 @@ ui_panel_climate_models <- function() {
                                              For every available emissions scenario and GCM, it plots the projected climate change
                                              (future minus historical) as a trajectory across time periods, so
                                              you can see which models are hot/dry, warm/wet, and so on, and how
-                                             the spread fans out over eras and emissions scenarios. Models in your
-                                             current ensemble selection (set in the left sidebar) are drawn at full
-                                             opacity, others faded. The x and y variables can be changed
+                                             the spread fans out over eras and emissions scenarios. The model
+                                             selected in the left sidebar is drawn at full opacity, others faded. The x and y variables can be changed
                                              without re-clicking 'Update'."), hr(),
             layout_column_wrap(
                   width = 1/2,
@@ -283,7 +282,7 @@ ui_panel_climate_models <- function() {
                       actionButton("model_delta_update", "Update chart") %>%
                             tooltip("Recompute the chart for the current axis variables and
                                                             summary region. The chart does not update automatically,
-                                                            since computing deltas across the full model ensemble is
+                                                            since computing deltas for every available model is
                                                             slow."))
             ),
             plotOutput("model_delta_plot"),

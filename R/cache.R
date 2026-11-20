@@ -178,7 +178,7 @@ surfaces_packages <- c("analogs", "terra", "dplyr", "tidyr", "purrr", "readr", "
 ts_surfaces_key <- function(settings, data, community = FALSE) {
       inputs <- c(file.path(data$dir, c("fia.csv", "forest_type_codes.csv", "clim_scales.rds")),
                   data$clim_historical, data$conus,
-                  ts_scenario_paths(data, settings$scenario_ssp, settings$scenario_period,
+                  ts_scenario_path(data, settings$scenario_ssp, settings$scenario_period,
                                     settings$scenario_model))
       code <- if (community) community_code_files() else surfaces_code_files()
       parts <- list(spec = ts_surfaces_spec(settings, community),
