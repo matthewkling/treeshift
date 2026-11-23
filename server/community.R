@@ -205,12 +205,10 @@ comm_bands <- reactive({
 })
 
 ## Scope preconditions, stated rather than left as an empty panel.
+## (A single-entity run hides the whole panel instead; see
+## server/module_status.R.)
 comm_profile_ready <- reactive({
-      # Most fundamental precondition first: someone in single-entity mode
-      # with the scope on "focal polygon" should be told about the entity
-      # setting, not sent off to choose a polygon that would not help.
-      if (!multi_mode())
-            return("This panel doesn't work in single-entity mode. Under 'Entity' in the left sidebar, switch from a single species or type to 'community composition'.")
+      req(is.null(module_blockers$comm()))
       scope <- if (isTruthy(input$comm_scope)) input$comm_scope else "domain"
       if (scope %in% c("polygon", "buffered") && !isTruthy(polygon_active()))
             return("No focal polygon yet. Choose one under 'Focal polygon and site' in the left sidebar, or summarize over the whole bounding box instead.")
@@ -221,17 +219,23 @@ comm_profile_ready <- reactive({
       NULL
 })
 
-output$comm_scatter <- renderPlot({
+# Named entities are the same set the alluvial draws, in the same colors, so
+# the two plots can be read against each other. The gray points are
+# literally the alluvial's "other" band, unpooled.
+comm_scatter_points <- reactive({
       shiny::validate(need(is.null(comm_profile_ready()), comm_profile_ready()))
       d <- comm_profile()
       req(nrow(d) > 0)
-      cb <- comm_bands()
+      mutate(d, band = ifelse(entity %in% comm_bands()$named, entity, "other"))
+})
 
-      # Named entities are the same set the alluvial draws, in the same
-      # colors, so the two plots can be read against each other. The gray
-      # points are literally the alluvial's "other" band, unpooled.
-      d <- mutate(d, band = ifelse(entity %in% cb$named, entity, "other"))
-      lab <- filter(d, band != "other") %>% arrange(desc(abs(change)))
+output$comm_scatter <- renderPlot({
+      d <- comm_scatter_points()
+      cb <- comm_bands()
+      # Labels sit to the right of their points, except in the right part of
+      # the (square-root) axis, where they'd run off the panel
+      lab <- filter(d, band != "other") %>% arrange(desc(abs(change))) %>%
+            mutate(flip = sqrt(hst) > 0.6 * sqrt(max(d$hst, na.rm = TRUE)))
 
       ggplot(d, aes(hst, change)) +
             geom_hline(yintercept = 0, color = "gray70", linewidth = .3) +
@@ -241,18 +245,26 @@ output$comm_scatter <- renderPlot({
             # check_overlap rather than a repel dependency: rows are
             # pre-sorted by |change| so the most extreme entities win the
             # collisions.
-            geom_text(data = lab, aes(label = entity, color = entity),
-                      size = 3.1, hjust = -0.12, vjust = 0.5,
-                      check_overlap = TRUE) +
+            geom_text(data = lab, aes(label = entity, color = entity,
+                                      hjust = ifelse(flip, 1.12, -0.12)),
+                      size = 3.6, vjust = 0.5, check_overlap = TRUE) +
             scale_color_manual(values = cb$cols, guide = "none") +
             scale_x_sqrt() +
-            ggplot2::expand_limits(x = max(d$hst, na.rm = TRUE) * 1.35) +
-            theme_bw() +
-            labs(x = paste("historical", tolower(model$fia_var)),
-                 y = "change",
-                 subtitle = names(area_names)[match(
-                       if (isTruthy(input$comm_scope)) input$comm_scope else "domain",
-                       area_names)])
+            labs(x = var_label(model$fia_var, "historical"),
+                 y = "change")
+})
+
+# Hover readout: the entities under the cursor, with their values. The x
+# axis is square-root scaled, and the hover's coordinates are on that scale.
+output$comm_scatter_hover <- renderUI({
+      h <- input$comm_scatter_hover
+      req(h)
+      d <- mutate(comm_scatter_points(), hst = sqrt(hst))
+      near <- nearPoints(d, h, xvar = "hst", yvar = "change", threshold = 8, maxpoints = 5)
+      req(nrow(near) > 0)
+      fmt <- function(x) format(signif(x, 3), big.mark = ",", trim = TRUE)
+      lines <- sprintf("%s: %s \u2192 %s", near$entity, fmt(near$hst^2), fmt(near$fut))
+      plot_tooltip(h, paste("historical \u2192 future", tolower(model$fia_var)), lines)
 })
 
 output$comm_ranking <- renderPlot({
@@ -280,7 +292,6 @@ output$comm_ranking <- renderPlot({
             geom_vline(xintercept = 0, color = "gray30", linewidth = .3) +
             scale_fill_manual(values = c(`TRUE` = "dodgerblue4", `FALSE` = "darkred"),
                               guide = "none") +
-            theme_bw() +
             labs(y = NULL,
                  x = if (prop) "proportional change" else "change")
 })

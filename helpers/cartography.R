@@ -65,40 +65,72 @@ rast_palettes_continuous  <- c("default", "viridis", "magma", "plasma", "inferno
 rast_palettes_categorical <- c("default", "Polychrome", "Alphabet", "Tableau",
                                "Set 3", "Okabe-Ito")
 
-circleLegend <- function(title, labels, colors, radii = 6) {
-      # If only one radius is provided, repeat it for all labels
-      if(length(radii) == 1) radii <- rep(radii, length(labels))
+## The map's legend panel (server/map_layers.R): one box at top right, with a
+## section for the raster and one for the FIA plot markers. Each section is a
+## title over its key. Continuous scales run horizontally under the title, so
+## the title can use the panel's full width; categories and fixed classes are
+## listed down the panel. Styled in ui/head.R (.ts-legend).
 
-      items <- Map(function(lbl, col, rad) {
-            # Use the 'rad' variable to define SVG dimensions and circle size
-            sprintf(
-                  "<div style='display:flex; align-items:center; margin:4px 0;'>
-         <svg width='%d' height='%d' style='flex:0 0 auto;'>
-           <circle cx='%d' cy='%d' r='%d' fill='%s'></circle>
-         </svg>
-         <span style='margin-left:8px;'>%s</span>
-       </div>",
-                  12, 12, # Keep container size consistent for alignment
-                  6, 6,   # Center the circle in the 12x12 box
-                  rad, col, lbl
-            )
-      }, labels, colors, radii)
+# A number for a legend label, to 3 significant figures
+legend_num <- function(x) {
+      vapply(x, function(v) format(signif(v, 3), big.mark = ",", scientific = FALSE, trim = TRUE),
+             character(1))
+}
 
-      HTML(sprintf(
-            "<div class='leaflet-control'
-          style='background: rgba(255,255,255,0.75);
-                 padding: 10px 12px;
-                 margin: 2px;
-                 border-radius: 5px;
-                 box-shadow: 0 0 15px rgba(0,0,0,0.2);
-                 color: #444;
-                 line-height: 18px;'>
-       <div style='font-weight:600; font-size:14px; margin-bottom:8px;'>%s</div>
-       %s
-     </div>",
-            title,
-            paste(items, collapse = "")
-      ))
+# A title from its lines, the first `n_main` in bold and the rest muted
+legend_title <- function(lines, n_main) {
+      paste0("<div class='ts-legend-title'>",
+             paste0("<div", ifelse(seq_along(lines) > n_main, " class='ts-legend-muted'", ""), ">",
+                    htmltools::htmlEscape(lines), "</div>", collapse = ""),
+             "</div>")
+}
+
+legend_section <- function(title, key) {
+      paste0("<div class='ts-legend-section'>", title, key, "</div>")
+}
+
+# Tick positions on a log10 scale: whole decades, at most five, counted down
+# from the highest so the top of the range is always labeled. NULL when the
+# range doesn't span a decade.
+log_ticks <- function(dom) {
+      lo <- ceiling(min(dom))
+      hi <- floor(max(dom))
+      if (hi - lo < 1) return(NULL)
+      ints <- lo:hi
+      rev(seq(max(ints), min(ints), by = -ceiling((length(ints) - 1) / 4)))
+}
+
+# A horizontal color bar for a continuous palette over `dom`, labeled in the
+# variable's units (`untransform` maps a transformed value back to them), at
+# `cuts` on the drawn scale, or at round numbers if NULL
+legend_bar <- function(pal, dom, untransform = NULL, opacity = 1, cuts = NULL) {
+      stops <- seq(dom[1], dom[2], length.out = 21)
+      if (is.null(cuts)) cuts <- pretty(dom, n = 4)
+      cuts <- cuts[cuts >= min(dom) & cuts <= max(dom)]
+      pos <- if (diff(range(dom)) > 0) (cuts - dom[1]) / diff(dom) * 100 else rep(0, length(cuts))
+      labels <- legend_num(if (is.null(untransform)) cuts else untransform(cuts))
+      paste0("<div class='ts-legend-bar' style='opacity:", opacity,
+             "; background:linear-gradient(to right, ", paste(pal(stops), collapse = ", "), ");'></div>",
+             "<div class='ts-legend-ticks'>",
+             paste0("<span style='left:", round(pos, 1), "%;'>", labels, "</span>", collapse = ""),
+             "</div>")
+}
+
+# Color swatches down the panel, one row per category or class
+legend_swatches <- function(colors, labels, opacity = 1) {
+      paste0("<div class='ts-legend-row'><i style='background:", colors, "; opacity:", opacity, ";'></i>",
+             htmltools::htmlEscape(labels), "</div>", collapse = "")
+}
+
+# The FIA plot markers' key: outlined circles in a row, values beneath, and
+# the non-sampled plots' small dots on a line of their own
+legend_circles <- function(colors, labels) {
+      paste0("<div class='ts-legend-circles'>",
+             paste0("<div><svg width='12' height='12'><circle cx='6' cy='6' r='5' fill='", colors,
+                    "' stroke='black' stroke-width='1'></circle></svg><span>", labels, "</span></div>",
+                    collapse = ""),
+             "</div>",
+             "<div class='ts-legend-row'><svg width='12' height='12'><circle cx='6' cy='6' r='2.5' fill='gray'></circle></svg>Non-sampled plot</div>")
 }
 
 geo_circle <- function(pts, radius, thresh = .1) {

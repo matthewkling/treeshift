@@ -15,17 +15,6 @@ clim_units <- c(tmean  = "\u00b0C",
                 cwd    = "mm",
                 ppt    = "log10 mm")
 
-# Units label for an FIA variable measured per area, or NULL for the
-# dimensionless ones (probabilities, fractions, counts of entities)
-fia_var_units <- function(fia_var) {
-      switch(fia_var,
-             "total basal area"    = "(ft2 BA / acre)",
-             "number of trees"     = "(trees / acre)",
-             "number of saplings"  = "(saplings / acre)",
-             "number of seedlings" = "(seedlings / acre)",
-             NULL)
-}
-
 # Variables the climate-relationships plot can put on its x axis. Deliberately
 # wider than the set the model is fitted on: a relationship against a variable
 # the model did not use is still a real property of the landscape, and often the

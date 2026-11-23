@@ -15,7 +15,6 @@ output$climate_response <- renderPlot({
       if (cr_scope %in% c("polygon", "buffered")) {
             shiny::validate(need(polygon_in_domain(cr_scope), polygon_outside_msg))
       }
-      scope_label <- names(eval_scope_names)[eval_scope_names == cr_scope]
 
       # Climate for the x-axis. Historical by default; 'future' lets you
       # pair a future prediction with the future climate that produced it,
@@ -65,6 +64,10 @@ output$climate_response <- renderPlot({
       }
       d$clim1 <- back_transform(d$clim1, v1)
 
+      not_fitted_caption <- wrap_to_plot(
+            paste0(v1, " is not one of the variables the model was fitted on; this relationship comes from its correlation with those that were."),
+            session, "climate_response", share = 0.95, element = "plot.caption")
+
       # A categorical layer inverts the plot rather than adapting it. There
       # is no curve to fit through entity identities, but the question
       # transposes cleanly: instead of "how does the value change along this
@@ -107,12 +110,11 @@ output$climate_response <- renderPlot({
                   # so an entity is recognizable across all of them.
                   scale_fill_manual(values = stats::setNames(cc$colors, cc$labels),
                                     guide = "none") +
-                  theme_bw() +
+                  theme(plot.caption = element_text(hjust = 0),
+                        plot.caption.position = "plot") +
                   labs(x = paste0(input$cr_clim, " ", v1, " (", unit_lab(v1), ")"),
                        y = NULL,
-                       subtitle = scope_label,
-                       caption = if (!cr_var_in_model())
-                             paste0(v1, " is not one of the variables the model was fitted on; this relationship comes from its correlation with those that were."))
+                       caption = if (!cr_var_in_model()) not_fitted_caption)
 
             p_dens <- ggplot(d, aes(clim1)) +
                   geom_density(fill = "#2b6a4d", color = NA, alpha = .35) +
@@ -175,17 +177,18 @@ output$climate_response <- renderPlot({
                         method.args = list(family = fam),
                         color = "#2b6a4d", fill = "#2b6a4d") +
             coord_cartesian(ylim = ylim) +
+            theme(plot.caption = element_text(hjust = 0),
+                  plot.caption.position = "plot") +
             # Label the climate axes with their timeframe (so historical vs
             # future is never ambiguous) and their native units.
             labs(x = paste0(input$cr_clim, " ", v1, " (", unit_lab(v1), ")"),
-                 subtitle = scope_label,
                  # FIA-plots data is raw historical observation, so label it
                  # by the variable rather than the (stat/time-aware) raster title.
                  y = if (input$cr_data == "FIA plots")
-                       paste("observed", if (multi_mode()) comm_label() else model$fia_var)
+                       paste("observed", response_noun())
                  else raster_title_text(),
                  caption = if (!cr_var_in_model() && input$cr_data != "FIA plots")
-                       paste0(v1, " is not one of the variables the model was fitted on; this relationship comes from its correlation with those that were."))
+                       not_fitted_caption)
 
       # Marginal density along the x variable: shows where the data
       # actually is, which is what explains any wandering at the ends of the

@@ -101,20 +101,6 @@ ui_head <- function() {
   })();
 ")),
 
-            ## Gradient legend labels sit beside their ticks. addLegend() draws
-            ## them as SVG text anchored at the far end of the label column, so
-            ## short labels float away from the bar; SVG text's anchor and
-            ## offset are attributes, out of reach of CSS. Each legend is
-            ## re-anchored as it is added.
-            tags$script(HTML("
-  new MutationObserver(function() {
-    document.querySelectorAll('.info.legend svg text[text-anchor=\"end\"]').forEach(function(t) {
-      t.setAttribute('text-anchor', 'start');
-      t.setAttribute('dx', '8');
-    });
-  }).observe(document.documentElement, {childList: true, subtree: true});
-")),
-
             ## A link to an About section (about_link(), ui/about.R) opens the
             ## About tab and scrolls to the section once the tab is shown.
             tags$script(HTML("
@@ -147,10 +133,10 @@ ui_head <- function() {
   });
 ")),
 
-            ## The Model sensitivity panel's hover readout (server/sensitivity.R)
+            ## Plot hover readouts (plot_tooltip(), app.R)
             tags$style(HTML("
   .ts-plot-tooltip {
-    position: absolute; z-index: 10; pointer-events: none; max-width: 320px;
+    position: absolute; z-index: 10; pointer-events: none; width: max-content; max-width: 320px;
     background: rgba(255, 255, 255, 0.95); border: 1px solid #bbb; border-radius: 4px;
     padding: 4px 8px; font-size: 12px; line-height: 1.35;
   }
@@ -165,18 +151,10 @@ ui_head <- function() {
 ")),
 
             tags$style(HTML("
-  /* Notices come from two mechanisms that cannot share markup: inline divs in
-     the sidebar, and validate() messages, which Shiny renders as plain text in
-     place of an output. Styling them together is what makes them read as one
-     kind of thing.
-
-     Pitched between the two extremes it replaced: colored enough to register as
-     something to read rather than blending into body text, but without the
-     solid fill of an alert box. Most of these report an unmet precondition -- no polygon
-     selected, no focal site set -- which is a normal state on the way to using
-     the tool, and a full-width warning flag overstates it. */
-  .ts-notice,
-  .shiny-output-error-validation {
+  /* Warnings: stale results, settings too large to run, layers withdrawn.
+     Colored enough to register as something to read, without the solid fill
+     of an alert box. */
+  .ts-notice {
     display: block;
     color: #9a3412;
     background-color: transparent;
@@ -190,33 +168,67 @@ ui_head <- function() {
     font-style: normal;
     text-align: left;
   }
+
+  /* Unmet preconditions -- no focal site, no polygon, no plots in range --
+     are a normal state on the way to using the tool, so they're muted rather
+     than flagged: a module's own notice (server/module_status.R) and the
+     validate() messages Shiny shows in place of an output. */
+  .ts-module-notice,
+  .shiny-output-error-validation {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    color: #495057;
+    background-color: #f1f3f5;
+    border: none;
+    border-radius: 4px;
+    padding: 0.5rem 0.75rem;
+    margin: 0.5rem 0;
+    font-size: 0.85rem;
+    line-height: 1.4;
+    font-style: normal;
+    text-align: left;
+  }
+  /* A validate() message takes over its output's own element, so it would
+     otherwise keep a plot's full height */
+  .shiny-output-error-validation { height: auto !important; }
+  .ts-module-notice > i { color: #868e96; }
 ")),
 
             tags$style(HTML("
-  /* Raster legend: title beside the color bar rather than stacked above it.
-     A multi-line title over a narrow gradient leaves a lot of dead width, and
-     the title is the part that wraps. Targets .info.legend, which addLegend()
-     produces; circleLegend() builds its own .leaflet-control container and is
-     unaffected. */
-  /* Gradient legends only: a discrete legend's swatch rows are themselves the
-     container's children, so laying them out in a row strings every category
-     across the screen. Those opt out via .legend-discrete. */
-  #map .info.legend:not(.legend-discrete) {
-    display: flex;
-    flex-direction: row;
-    align-items: flex-start;
-    gap: 10px;
+  /* The map's legend panel (helpers/cartography.R) and value readout
+     (server/map_readout.R), in one style */
+  .ts-legend, .ts-map-readout {
+    padding: 8px 10px; border-radius: 5px;
+    background: rgba(255, 255, 255, 0.9); box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+    font: 12px/1.35 'Helvetica Neue', Arial, Helvetica, sans-serif; color: #333;
   }
-  /* Room for the labels' offset from their ticks (see the legend script) */
-  #map .info.legend svg {
-    overflow: visible;
-    margin-right: 8px;
+  .ts-legend { width: 220px; }
+  .ts-legend-section + .ts-legend-section {
+    border-top: 1px solid #dee2e6; margin-top: 8px; padding-top: 8px;
   }
-  #map .info.legend > div:first-child {
-    max-width: 11em;
-    min-width: 6em;
-    line-height: 1.2;
-    text-align: left;
+  .ts-legend-title { font-weight: 700; margin-bottom: 6px; }
+  .ts-legend-muted { font-weight: 400; color: #6c757d; }
+  /* Inset so the end labels, centered on their ticks, stay in the box */
+  .ts-legend-bar { height: 10px; margin: 0 12px; border-radius: 2px; }
+  .ts-legend-ticks { position: relative; height: 18px; margin: 0 12px; }
+  .ts-legend-ticks span {
+    position: absolute; top: 5px; transform: translateX(-50%);
+    white-space: nowrap; font-size: 11px;
+  }
+  .ts-legend-ticks span::before {
+    content: ''; position: absolute; left: 50%; top: -5px; height: 4px;
+    border-left: 1px solid #666;
+  }
+  .ts-legend-row { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+  /* Outlined, so a pale swatch (the gray 'other') shows against the panel */
+  .ts-legend-row i {
+    flex: 0 0 auto; width: 14px; height: 12px;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15);
+  }
+  .ts-legend-circles { display: flex; justify-content: space-between; margin-bottom: 4px; }
+  .ts-legend-circles > div {
+    display: flex; flex-direction: column; align-items: center; gap: 1px; font-size: 11px;
   }
 ")),
 
@@ -333,6 +345,15 @@ ui_head <- function() {
   }
   /* The copy that outlasts it (see the script above) isn't stacked on it */
   .ts-map-area:has(#map_pending .ts-map-stale) > .ts-map-stale { display: none; }
+
+  /* The value under the cursor (server/map_readout.R), above the scale bar
+     and styled like the legend (above). Below the stale wash, so it fades with
+     the map it reads. */
+  .ts-map-readout {
+    position: absolute; left: 10px; bottom: 36px; z-index: 1000;
+    max-width: 260px; pointer-events: none;
+  }
+  .ts-map-readout-where { font-weight: 700; }
 
   /* Module tabs down the map's right edge (ui/right_sidebar.R), in place of
      the sidebar's own toggle while the sidebar is collapsed. The toggle is

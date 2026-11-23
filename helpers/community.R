@@ -159,6 +159,6 @@ comm_measure_choices <- function(track, fia_var, time = "historical") {
       # of two entity identities is not an entity identity. Their change
       # counterparts are separate measures (biggest winner, biggest loser).
       chg <- setdiff(static, categorical_measures)
-      c(stats::setNames(chg, paste("change in", chg)),
+      c(stats::setNames(chg, sprintf("change in %s", chg)),
         stats::setNames(paired_measures, paired_measures))
 }

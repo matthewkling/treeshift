@@ -93,7 +93,7 @@ test_that("the evidence layers draw in their valid ranges for a continuous varia
       set_in_order(app, stat = "evidence", evidence_stat = "support")
       support <- raster_values(app)
       # drawn in fixed classes, labelled in plain units
-      legend <- app$get_js("document.querySelector('#map .info.legend').innerText")
+      legend <- app$get_js("document.querySelector('#map .ts-legend-section').innerText")
       expect_match(legend, "under 1", fixed = TRUE)
       expect_match(legend, "100 or more", fixed = TRUE)
       # support = effective number of plots x closeness, and that number is at least 1
@@ -113,13 +113,13 @@ test_that("transformed legends are labelled in the variable's units", {
       raw <- raster_values(app)          # downloads are untransformed
       top <- max(raw, na.rm = TRUE)
       legend_numbers <- function() {
-            txt <- app$get_js("document.querySelector('#map .info.legend').innerText")
+            # The raster's color bar labels, the panel's first
+            txt <- app$get_js("document.querySelector('#map .ts-legend-ticks').innerText")
             as.numeric(gsub(",", "", regmatches(txt, gregexpr("-?[0-9][0-9,]*\\.?[0-9]*", txt))[[1]]))
       }
       for (tr in c("log10", "sqrt", "uniform")) {
             set_in_order(app, rast_transform = tr)
             n <- legend_numbers()
-            n <- n[n != 2]                 # "ft2" in the units line
             expect_true(all(n >= 0 & n <= top * 1.01), info = tr)
             # Transformed units would top out near log10(top) or sqrt(top)
             expect_gt(max(n), sqrt(top) + 1)

@@ -23,7 +23,30 @@ output$map <- renderLeaflet({
                         imperial = FALSE, # Hide miles/feet
                         updateWhenIdle = TRUE # Update only after the user stops zooming/panning
                   )
-            )
+            ) %>%
+
+            # The cursor's position, for the value readout
+            # (server/map_readout.R): at most every 120 ms while it moves,
+            # always ending with where it stopped, and NULL when it leaves
+            # the map
+            htmlwidgets::onRender("
+function(el, x) {
+  var map = this, last = 0, timer = null, pending = null;
+  function send() {
+    last = Date.now();
+    Shiny.setInputValue('map_hover', pending);
+  }
+  map.on('mousemove', function(e) {
+    pending = {lat: e.latlng.lat, lng: e.latlng.lng};
+    var wait = 120 - (Date.now() - last);
+    if (wait <= 0) send();
+    else if (!timer) timer = setTimeout(function() { timer = null; send(); }, wait);
+  });
+  map.on('mouseout', function() {
+    clearTimeout(timer); timer = null; pending = null;
+    Shiny.setInputValue('map_hover', null);
+  });
+}")
 })
 
 
@@ -103,43 +126,18 @@ site_diff <- reactive({
 analog_vector_note <- reactive({
       if (!isTruthy(input$vector) || input$vector != "focal site analogs") return(NULL)
       if (!isTruthy(input$analog_direction)) return(NULL)
-      paste0("(", tolower(input$analog_direction), " of focal site)")
+      paste(tolower(input$analog_direction), "of focal site")
 })
 
-## Plain-text form of the legend title, for ggplot axis labels.
-##
-## raster_title() emits HTML because the leaflet legend renders it. Callers
-## used to strip the "<br/>" it once contained; when that was rewritten to
-## <div> blocks the strippers silently stopped matching and started printing
-## raw markup as an axis label. Stripping tags generically means the two
-## cannot drift apart again.
-raster_title_text <- reactive({
-      trimws(gsub("\\s+", " ", gsub("<[^>]*>", " ", raster_title())))
-})
+## The legend title as one line, for plot axes
+raster_title_text <- reactive(title_phrase(raster_title_parts()))
 
-## "delta" is the internal value; the control and the legend both say
-## "change", which also covers the paired measures -- they are change
-## quantities without being deltas of anything.
-time_label <- reactive({
-      if (identical(input$time, "delta")) "change" else input$time
-})
-
-## What the evaluation is scoring, for axis and legend labels: the
-## community measure in community mode, the variable otherwise.
-eval_response_label <- reactive({
-      if (multi_mode() && isTruthy(input$comm_measure)) comm_label()
-      else tolower(model$fia_var)
-})
-
-## Display name for the community measure, with the life stage folded in
-## rather than repeated as a separate variable line. "sapling richness"
-## says everything "richness (sapling presence)" said, on one line.
-comm_label <- reactive({
-      req(isTruthy(input$comm_measure))
-      stage <- switch(model$fia_var,
-                      "seedling presence" = "seedling ",
-                      "sapling presence"  = "sapling ",
-                      "tree presence"     = "adult ",
-                      "")
-      paste0(stage, input$comm_measure)
+## What the FIA plot values and the evaluation describe, as a noun phrase:
+## the community measure in community mode ("sapling richness"), the variable
+## otherwise ("basal area")
+response_noun <- reactive({
+      if (multi_mode()) {
+            req(isTruthy(input$comm_measure))
+            comm_noun(input$comm_measure, model$fia_var, model$track)$noun
+      } else var_noun(model$fia_var)
 })

@@ -6,10 +6,7 @@
 
 site_sensitivity <- reactive({
       req(identical(input$modules_acc, "Model sensitivity"))
-      shiny::validate(need(isTruthy(site$x) && isTruthy(site$y),
-                           "Click the map to choose a focal site."))
-      shiny::validate(need(!multi_mode(),
-                           "Model sensitivity is available for single species, forest types and forest groups."))
+      req(is.null(module_blockers$sensitivity()))
       req(isTruthy(model$fia_var))
       scenario_file()   # a missing scenario shows its message
       settings <- lapply(setNames(nm = surfaces_setting_ids), function(id) model[[id]])
@@ -98,12 +95,11 @@ sensitivity_points <- reactive({
 # narrow, where the plot grows to make room
 sensitivity_wide <- function() plot_is_wide(session, "sensitivity_plot")
 
-# "change in Pinus edulis presence probability", "Pinus edulis historical
-# presence probability"
+# "Pinus edulis: change in presence probability (per ~0.07 ha plot)", as the
+# map's legend would title the variable
 sensitivity_title <- function() {
-      what <- paste(tolower(model$fia_var), fia_var_units(model$fia_var))
-      if (input$time == "delta") paste("change in", focal_label(), what)
-      else paste(focal_label(), input$time, what)
+      title_phrase(layer_title("FIA variable", input$time, model$track,
+                               focal_label(), model$fia_var))
 }
 
 output$sensitivity_plot <- renderPlot(height = function() if (sensitivity_wide()) 380 else 460, {
@@ -170,8 +166,8 @@ output$sensitivity_plot <- renderPlot(height = function() if (sensitivity_wide()
 })
 
 # Hover readout: every point under the cursor, with its setting and value
-output$sensitivity_hover <- renderUI({
-      h <- input$sensitivity_hover
+output$sensitivity_plot_hover <- renderUI({
+      h <- input$sensitivity_plot_hover
       req(h)
       d <- sensitivity_points()
       near <- nearPoints(d[!is.na(d$value), ], h, xvar = "value", yvar = "row",
@@ -182,10 +178,7 @@ output$sensitivity_hover <- renderUI({
                        ifelse(is.na(near$lower), "",
                               sprintf(", 5–95%% range %s to %s", fmt(near$lower), fmt(near$upper))),
                        fmt(near$support))
-      div(class = "ts-plot-tooltip",
-          style = sprintf("left:%.0fpx; top:%.0fpx;", h$coords_css$x + 12, h$coords_css$y + 12),
-          tags$strong(as.character(near$row[1])), br(),
-          HTML(paste(htmltools::htmlEscape(lines), collapse = "<br>")))
+      plot_tooltip(h, as.character(near$row[1]), lines)
 })
 
 # The evidence behind the current estimate, as the map's evidence layers

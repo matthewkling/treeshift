@@ -160,22 +160,36 @@ plot_is_wide <- function(session, output_id) {
       isTRUE(session$clientData[[paste0("output_", output_id, "_width")]] >= 520)
 }
 
-# Wraps a module plot's axis title to the plot's width, in lines of even
-# length. ggplot doesn't wrap titles, so this estimates how many characters
+# Wraps a module plot's title or caption to the plot's width, in lines of
+# even length; `element` is the theme element it's drawn with. ggplot doesn't wrap titles, so this estimates how many characters
 # fit: the plot's width as the browser reports it, times `share` (what's left
 # once the plot's other parts, like row titles or a legend beside it, take
 # theirs), at about half an em per character -- a little more than a typical
 # title averages at the theme's size. It then wraps to the narrowest width
 # that still needs no more lines, so a title doesn't end in a lone word.
-wrap_to_plot <- function(text, session, output_id, share = 0.8) {
+wrap_to_plot <- function(text, session, output_id, share = 0.8, element = "axis.title.x") {
       width <- session$clientData[[paste0("output_", output_id, "_width")]]
       if (is.null(width)) return(text)
-      em <- calc_element("axis.title.x", theme_get())$size   # pt, = px at Shiny's 72 dpi
+      em <- calc_element(element, theme_get())$size   # pt, = px at Shiny's 72 dpi
       fits <- max(15, floor(width * share / (em / 2)))
       n_lines <- function(w) stringr::str_count(stringr::str_wrap(text, w), "\n") + 1
       lines <- n_lines(fits)
       widths <- seq(min(ceiling(nchar(text) / lines), fits), fits)
       stringr::str_wrap(text, widths[which(vapply(widths, n_lines, 1) <= lines)[1]])
+}
+
+# A hover readout beside the cursor for a hover_plot() (ui/right_sidebar.R):
+# a bold title over lines of plain text. It sits to the left of the cursor
+# on the right half of the plot, so it doesn't run off the sidebar.
+plot_tooltip <- function(hover, title, lines) {
+      x <- hover$coords_css$x
+      flip <- x > hover$range$right / hover$img_css_ratio$x / 2
+      div(class = "ts-plot-tooltip",
+          style = sprintf("left:%.0fpx; top:%.0fpx;%s", if (flip) x - 12 else x + 12,
+                          hover$coords_css$y + 12,
+                          if (flip) " transform: translateX(-100%);" else ""),
+          tags$strong(title), br(),
+          HTML(paste(htmltools::htmlEscape(lines), collapse = "<br>")))
 }
 
 
@@ -242,7 +256,8 @@ ui <- function(request) {
                                     div(class = "h-100 d-flex",
                                         div(class = "h-100 position-relative flex-grow-1 ts-map-area",
                                             leafletOutput("map", height = "100%"),
-                                            uiOutput("map_pending")),
+                                            uiOutput("map_pending"),
+                                            uiOutput("map_readout")),
                                         ui_module_tabs())
                               )
                         )
@@ -263,7 +278,8 @@ ui <- function(request) {
 # the order they are created, and some files use objects defined in earlier ones.
 server_files <- c("usage_log", "shared", "url_state", "model_settings", "data", "controls", "climate", "climate_models",
                   "aim", "connectivity", "map_base", "community", "map_layers",
-                  "site_plots", "sensitivity", "polygon_values", "evaluation", "climate_response", "downloads")
+                  "site_plots", "sensitivity", "polygon_values", "evaluation", "climate_response", "module_status", "map_readout",
+                  "downloads")
 
 server <- function(input, output, session) {
       for (.src in file.path("server", paste0(server_files, ".R"))) {

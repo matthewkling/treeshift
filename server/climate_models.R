@@ -38,14 +38,21 @@ model_deltas <- reactive({
             mutate(era = factor(era, levels = c(.hist_era_label, sort(unique(futures$era)))))
 })
 
-output$model_delta_plot <- renderPlot({
+# The plotted points: the chosen variables as dx and dy, for the applied
+# pathway or all of them
+model_delta_points <- reactive({
       d <- model_deltas()
+      req(input$model_delta_x %in% names(d), input$model_delta_y %in% names(d))
+      d$dx <- d[[input$model_delta_x]]
+      d$dy <- d[[input$model_delta_y]]
+      if (!isTRUE(input$model_delta_all_ssp)) d <- d[d$scenario == model$scenario_ssp, ]
+      d
+})
+
+output$model_delta_plot <- renderPlot({
+      d <- model_delta_points()
       vx <- input$model_delta_x
       vy <- input$model_delta_y
-      req(vx %in% names(d), vy %in% names(d))
-      d$dx <- d[[vx]]
-      d$dy <- d[[vy]]
-      if (!isTRUE(input$model_delta_all_ssp)) d <- d[d$scenario == model$scenario_ssp, ]
 
       # One glyph per era, cycling if there are more than four
       eras <- levels(d$era)
@@ -95,6 +102,23 @@ output$model_delta_plot <- renderPlot({
             labs(x = paste0("\u0394 ", vx, " (", unit_lab(vx), ")"),
                  y = paste0("\u0394 ", vy, " (", unit_lab(vy), ")"),
                  color = "Climate model", shape = "Era", size = "Era")
+})
+
+# Hover readout: the models under the cursor, with their projected change.
+# The historical anchors all sit at the origin and say nothing, so they're
+# left out.
+output$model_delta_plot_hover <- renderUI({
+      h <- input$model_delta_plot_hover
+      req(h)
+      d <- filter(model_delta_points(), era != .hist_era_label)
+      near <- nearPoints(d, h, xvar = "dx", yvar = "dy", threshold = 8, maxpoints = 5)
+      req(nrow(near) > 0)
+      vx <- input$model_delta_x
+      vy <- input$model_delta_y
+      fmt <- function(x, v) paste0(ifelse(x > 0, "+", ""), format(signif(x, 3), trim = TRUE), " ", unit_lab(v))
+      lines <- sprintf("%s, %s: %s %s, %s %s", near$model_label, near$era,
+                       vx, fmt(near$dx, vx), vy, fmt(near$dy, vy))
+      plot_tooltip(h, as.character(near$scenario_label[1]), lines)
 })
 
 

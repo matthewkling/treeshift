@@ -22,14 +22,6 @@ eval_response <- reactive({
       comm_reduce_rows(multi_values(), "richness")
 })
 
-## Measures the evaluation cannot score, and why. Returned as a message so
-## the panel explains itself rather than rendering empty.
-eval_unsupported <- reactive({
-      if (!multi_mode()) return(NULL)
-      if (identical(input$comm_measure, "richness")) return(NULL)
-      "Accuracy can only be measured for richness. Switch the community measure to richness, or switch back to a single species."
-})
-
 model_eval <- reactiveValues(comparison = NULL,
                              scatter = NULL,
                              stamp = NULL,
@@ -283,12 +275,7 @@ eval_var_set <- function(clim_vars, vary_bandwidths = TRUE){
 }
 
 observeEvent(input$run_eval, {
-      # Refuse rather than sweeping bandwidths against a response the
-      # module cannot score.
-      if (!is.null(eval_unsupported())) {
-            showNotification(eval_unsupported(), type = "warning", duration = 10)
-            return()
-      }
+      req(is.null(module_blockers$eval()))
 
       if("vars" %in% input$eval_params){
             cv <- model$clim_vars
@@ -381,7 +368,7 @@ observeEvent(input$optimal_params, {
 })
 
 output$eval_heatmap <- renderPlot({
-      shiny::validate(need(is.null(eval_unsupported()), eval_unsupported()))
+      req(is.null(module_blockers$eval()))
       req(model_eval$comparison)
 
       metric <- switch(input$eval_stat,
@@ -439,7 +426,7 @@ output$eval_heatmap <- renderPlot({
                            sprintf("'%s' cannot be calculated for this variable within '%s'.",
                                    input$eval_stat, scope_label)))
 
-      subtitle <- paste0(scope_label, " \u2014 ", n_text,
+      subtitle <- paste0(n_text,
                          if (length(n_vals) && min(n_vals) < 50)
                                "  (small samples; treat these numbers as indicative)" else "")
 
@@ -456,7 +443,7 @@ output$eval_heatmap <- renderPlot({
             labs(y = "climate bandwidth (z)",
                  x = "geographic bandwidth (km)",
                  subtitle = subtitle,
-                 fill = paste0(input$eval_stat, " (", eval_response_label(), ")"))
+                 fill = paste0(input$eval_stat, " (", response_noun(), ")"))
 
       # `%>%` binds tighter than `+`, so this cannot be chained onto the
       # ggplot expression above -- it would pipe only the labs() object.
@@ -492,7 +479,7 @@ eval_scatter_scope <- reactive({
 })
 
 output$eval_scatter <- renderPlot({
-      shiny::validate(need(is.null(eval_unsupported()), eval_unsupported()))
+      req(is.null(module_blockers$eval()))
       e <- eval_scatter_data()
       s <- eval_scatter_scope()
       req(e, s)
@@ -629,13 +616,10 @@ output$eval_scatter <- renderPlot({
 
       p +
             coord_fixed() +
-            theme_bw() +
-            labs(x = paste0("predicted ", eval_response_label()),
+            labs(x = paste0("predicted ", response_noun()),
                  y = if (binary_obs) "observed frequency"
-                 else paste0("observed ", eval_response_label()),
-                 title = paste0(
-                       "Model calibration curve\n(", s$label, "; ",
-                       n_per_bin, " per point)"))
+                 else paste0("observed ", response_noun()),
+                 subtitle = paste(n_per_bin, "per point"))
 })
 
 # Held-out accuracy for the current settings, over the selected scope.
@@ -646,7 +630,7 @@ output$eval_scatter <- renderPlot({
 # section is computed from current settings, so unlike the heatmap it is
 # never stale, and that contrast is the point.
 output$eval_scatter_stats <- renderUI({
-      req(is.null(eval_unsupported()))
+      req(is.null(module_blockers$eval()))
       e <- eval_scatter_data()
       s <- eval_scatter_scope()
       req(e, s)

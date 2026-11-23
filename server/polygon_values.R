@@ -114,7 +114,6 @@ output$polygon_density <- renderPlot({
                         scale_fill_manual(values = stats::setNames(cc$colors, cc$labels),
                                           breaks = cc$labels, name = NULL) +
                         scale_y_continuous(labels = scales::percent, expand = expansion(0, 0)) +
-                        theme_bw() +
                         theme(axis.text.x = element_text(angle = 20, hjust = 1),
                               plot.caption = element_text(hjust = 0),
                               plot.caption.position = "plot") +

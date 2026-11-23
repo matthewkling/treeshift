@@ -86,8 +86,8 @@ output$clim_plot <- renderPlot({
             facet_wrap(~ panel) +
             theme(legend.position = "top") +
             strip_style +
-            labs(y = v1,
-                 x = v2,
+            labs(x = paste0(v1, " (", unit_lab(v1), ")"),
+                 y = paste0(v2, " (", unit_lab(v2), ")"),
                  shape = NULL)
 
       if(input$analog_direction != "Contemporary analogs"){
@@ -250,14 +250,24 @@ output$comm_composition <- renderPlot({
                                      (fut_bot + fut_top) / 2,
                                      (hst_bot + hst_top) / 2))
 
+      # Label size in mm, and its line height and average character width
+      # in px, by the same half-an-em estimate wrap_to_plot() uses. The panel
+      # is the 400px plot less its x axis, and the plot's width less its y
+      # axis, roughly.
+      lab_size <- 3.6
+      line_px <- lab_size * .pt * 1.2
+      char_px <- lab_size * .pt / 2
+      panel_h <- 350
+      panel_w <- max(150, (session$clientData$output_comm_composition_width %||% 400) - 70)
+
       # Every entity gets a label, so they have to be pushed apart rather
       # than dropped. One pass per side: sort by anchor, then walk upward
-      # enforcing a minimum gap. The gap is sized so the labels always fit
-      # in the panel, and a leader line ties each back to its band.
+      # enforcing a gap of one line of text, or less if that many lines
+      # wouldn't fit in the panel. A leader line ties each back to its band.
       y_max <- max(bands$hst_top, bands$fut_top, 0, na.rm = TRUE)
       spread <- function(y) {
             if (!length(y)) return(y)
-            gap <- y_max / max(26, length(y) + 1)
+            gap <- min(y_max * 1.1 * line_px / panel_h, y_max / (length(y) + 1))
             o <- order(y)
             ys <- y[o]
             for (i in seq_along(ys)[-1]) ys[i] <- max(ys[i], ys[i - 1] + gap)
@@ -277,6 +287,18 @@ output$comm_composition <- renderPlot({
                    x_label  = ifelse(side == "right", 1.03, -0.03),
                    hjust    = ifelse(side == "right", 0, 1))
 
+      # Room beside the columns for the longest label on each side. With
+      # margins of a and b (as multiples of the 0-1 span) in a panel w px
+      # wide, a side gets a * w / (1 + a + b) px; setting that to its label
+      # width L (and R) gives a = L / (w - L - R).
+      label_px <- function(sd) {
+            n <- nchar(lab$entity[lab$side == sd])
+            if (length(n)) max(n) * char_px + 12 else 12
+      }
+      L <- label_px("left")
+      R <- label_px("right")
+      middle <- max(panel_w - L - R, 0.3 * panel_w)
+
       ggplot(rib, aes(t, ymin = ymin, ymax = ymax, fill = entity, group = entity)) +
             geom_ribbon(color = "white", linewidth = .2) +
             # Leader lines, in the band's own color, so a displaced label
@@ -288,14 +310,13 @@ output$comm_composition <- renderPlot({
             geom_text(data = lab, inherit.aes = FALSE,
                       aes(x = x_label, y = y_label, label = entity,
                           hjust = hjust, color = entity),
-                      size = 3.1) +
+                      size = lab_size) +
             scale_fill_manual(values = cols, guide = "none") +
             scale_color_manual(values = cols, guide = "none") +
             scale_x_continuous(breaks = c(0, 1),
                                labels = c("historical", "future"),
-                               expand = ggplot2::expansion(mult = c(0.42, 0.42))) +
-            theme_bw() +
+                               expand = ggplot2::expansion(mult = c(L, R) / middle)) +
             theme(panel.grid.major.x = element_blank(),
                   panel.grid.minor = element_blank()) +
-            labs(x = NULL, y = tolower(model$fia_var))
+            labs(x = NULL, y = var_label(model$fia_var))
 })

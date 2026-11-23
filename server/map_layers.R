@@ -133,110 +133,27 @@ display_layer <- reactive({
       r
 })
 
+## The displayed layer's title parts (helpers/titles.R)
+raster_title_parts <- reactive({
+      layer_title(stat = rast_stat(), time = input$time, track = model$track,
+                  focal = focal_label(), fia_var = model$fia_var,
+                  comm_measure = input$comm_measure, multi = multi_mode(),
+                  direction = input$analog_direction)
+})
+
+## The raster's legend title: subject and quantity, then muted details
 raster_title <- reactive({
-      ## Legend title. Each semantic unit is its own block, so it starts on
-      ## a new line but WRAPS internally rather than being split at a
-      ## hard-coded point. The old version broke "presence probability"
-      ## after the first word regardless of available width; now that the
-      ## title sits in a flexible column beside the color bar, forced
-      ## breaks fight the layout instead of helping it.
-      lines <- character()
-      muted <- logical()
-      add <- function(txt, dim = FALSE){
-            if (!length(txt) || is.na(txt) || !nzchar(txt)) return(invisible(NULL))
-            lines <<- c(lines, txt)
-            muted <<- c(muted, dim)
-      }
-
-      if(rast_stat() %in% c("support", "closeness")){
-            add(names(evidence_choices)[evidence_choices == rast_stat()])
-            add(time_label())
-            add(if (rast_stat() == "support") "(equivalent number of exactly matching plots)"
-                else "(1 = exact match)", dim = TRUE)
-
-      }else if(rast_stat() == "focal site similarity"){
-            add(gsub(" analogs", "", input$analog_direction))
-            add("climate distance from focal site")
-
-      }else if(rast_stat() == "connectivity"){
-            add(focal_label())
-            add(switch(input$time, historical = "connectivity within historical habitat",
-                       future = "connectivity within future habitat",
-                       delta = "range shift connectivity, historical to future habitat"))
-            add(paste("dispersal reach:", names(cs_reach_choices)[cs_reach_choices == model$cs_reach]))
-            add("(movement compared with an even landscape)", dim = TRUE)
-
-      }else if(multi_mode() && rast_stat() == "FIA variable"){
-            add(focal_label())
-            add(time_label())
-            add(comm_label())
-
-            # Which per-entity variable the measure was computed FROM.
-            # Only richness implies it -- richness is defined over
-            # occurrence and nothing else, and comm_label() already folds
-            # the life stage into its name. Every other measure can be
-            # built from any variable, so "diversity" alone names two
-            # different maps: the diversity of occurrence probabilities and
-            # the diversity of basal area.
-            if (!identical(input$comm_measure, "richness"))
-                  add(paste0("of ", tolower(model$fia_var)), dim = TRUE)
-
-            # The measures that keep the variable's units. Most reduce to a
-            # dimensionless quantity -- diversity and richness are effective
-            # entity counts, and evenness, dominance, turnover and the two
-            # change fractions are ratios in which the units cancel. The
-            # expected gains and losses are sums of per-entity change, so
-            # they are still in whatever the variable measures.
-            if (input$comm_measure %in% c("expected gains", "expected losses"))
-                  add(switch(model$fia_var,
-                             "total basal area"    = "(ft2 BA / acre)",
-                             "number of trees"     = "(trees / acre)",
-                             "number of saplings"  = "(saplings / acre)",
-                             "number of seedlings" = "(seedlings / acre)",
-                             # Summed change in occurrence probability is a
-                             # count of entities, like richness.
-                             if (identical(model$track, "Species")) "(species)"
-                             else "(classes)"),
-                      dim = TRUE)
-
-      }else{
-            if(rast_stat() == "spread") add("analog spread")
-            add(focal_label())
-            add(time_label())
-            add(tolower(model$fia_var))
-            add(fia_var_units(model$fia_var), dim = TRUE)
-      }
+      parts <- raster_title_parts()
+      lines <- c(parts$subject, parts$quantity, parts$notes)
 
       # When the layer is categorical the marker legend is suppressed --
       # the points reuse these same entity colors, so a second copy would
       # repeat it verbatim. That leaves this legend serving both layers,
       # which means it also has to say what the points are.
-      if (categorical_layer() && !is.null(analog_vector_note())) {
-            add(paste("points:", analog_vector_note()), dim = TRUE)
-      }
+      if (categorical_layer() && !is.null(analog_vector_note()))
+            lines <- c(lines, paste("points:", analog_vector_note()))
 
-      # Support qualifier. Stated in the legend rather than only in a
-      # tooltip because the legend is what ends up in a screenshot in
-      # someone's planning document -- and "expected richness 8" over a
-      # 10 km cell will otherwise be read as eight species in 100 km2,
-      # which is wrong by a large factor rather than a subtlety.
-      #
-      # Applied to spread too: it is the variation among plot values. Not
-      # applied to the other model diagnostics: support and closeness
-      # describe the weights, focal site similarity is a climate distance,
-      # connectivity is a circuit quantity.
-      # In All mode this applies whatever the underlying variable: every
-      # community reduction describes the composition of a plot-sized
-      # footprint, and diversity in particular rises with area regardless
-      # of whether it was built from occurrence or basal area.
-      if (rast_stat() %in% c("FIA variable", "spread") &&
-          (multi_mode() ||
-           (isTruthy(model$fia_var) && model$fia_var %in% support_dependent_vars))) {
-            add("(per ~0.07 ha plot)", dim = TRUE)
-      }
-
-      paste0("<div", ifelse(muted, " style='font-weight:400; opacity:.75;'", ""),
-             ">", lines, "</div>", collapse = "")
+      legend_title(lines, n_main = length(parts$subject) + 1)
 })
 
 ## How a raster layer is drawn: the values drawn (transformed, if a scale
@@ -407,83 +324,110 @@ variable_scale <- reactive({
 
 observe({
       sc <- raster_scale()
-      r <- sc$r
-      rast_pal <- sc$pal
-      dom <- sc$dom
-      bins <- sc$bins
-      binned <- sc$binned
-      untransform <- sc$untransform
-      proj_method <- sc$proj_method
-
-      proxy <- leafletProxy("map") %>%
+      leafletProxy("map") %>%
             clearImages() %>%
-            removeControl("raster_legend")
-
-      proxy <- proxy %>%
             addRasterImage(
-                  r,
-                  colors  = rast_pal,
+                  sc$r,
+                  colors  = sc$pal,
                   opacity = input$rast_opacity,
-                  method = proj_method,
+                  method = sc$proj_method,
                   group = "AIM results",
                   maxBytes = 10 * 1024 * 1024 # increase limit to 10 MB
             )
+})
 
-      if(input$rast_opacity > 0){
-            # addLegend() derives its labels from `values` whenever `pal`
-            # is supplied, and silently ignores a `labels` argument -- which
-            # is why the categorical legend has to use the manual
-            # colors/labels form instead. Entity names, not code numbers.
-            proxy <- if (categorical_layer()) {
-                  cc <- comm_categories()
-                  proxy %>%
-                        addLegend(
-                              position = "topright",
-                              colors   = cc$colors,
-                              labels   = cc$labels,
-                              title    = HTML(raster_title()),
-                              layerId  = "raster_legend",
-                              opacity  = input$rast_opacity,
-                              className = "info legend legend-discrete"
-                        )
-            } else if (binned) {
-                  # Manual form, for plain labels ("100 or more", not
-                  # "100 - Inf"); colors read from the palette at a value
-                  # inside each class
-                  b <- head(bins$breaks, -1)
-                  inside <- b + c(diff(b) / 2, 1)
-                  proxy %>%
-                        addLegend(
-                              position = "topright",
-                              colors   = rast_pal(inside),
-                              labels   = bins$labels,
-                              title    = HTML(raster_title()),
-                              layerId  = "raster_legend",
-                              opacity  = input$rast_opacity,
-                              className = "info legend legend-discrete"
-                        )
-            } else {
-                  # Labels in the variable's units under a transform, each
-                  # to 3 significant figures (leaflet's labelFormat() gives
-                  # every label the same number of decimals: "1.000", "31.623")
-                  lab_format <- if (is.null(untransform)) labelFormat() else
-                        function(type, cuts, ...) {
-                              format_one <- function(v) format(signif(v, 3), big.mark = ",",
-                                                               scientific = FALSE, trim = TRUE)
-                              vapply(untransform(cuts), format_one, character(1))
-                        }
-                  proxy %>%
-                        addLegend(
-                              position = "topright",
-                              pal      = rast_pal,
-                              values   = dom,
-                              labFormat = lab_format,
-                              title    = HTML(raster_title()),
-                              layerId  = "raster_legend",
-                              opacity  = input$rast_opacity
-                        )
-            }
+
+## The FIA plot markers' values and colors, shared by the markers and their
+## legend
+point_vectors <- c("all FIA plots", "occupied FIA plots", "focal site analogs")
+point_scale <- reactive({
+      pd <- vector_points()
+
+      # Regeneration fractions get the variable's full [0, 1] range so
+      # 0.5 stays on the diverging palette's midpoint. Not in All
+      # mode, where the fractions have no per-entity form and the
+      # displayed value is a count.
+      cat_layer <- categorical_layer()
+      cc <- if (cat_layer) comm_categories() else NULL
+
+      dom <- if(cat_layer) cc$codes
+      else if(response_is_binary()) 0:1
+      else if(bounded_ratio_layer()) c(0, 1)
+      else seq_domain(pd$display)
+
+      # Markers follow the raster palette only when the raster is
+      # itself showing FIA response on a sequential scale (see
+      # marker_follows_raster_palette); otherwise the canonical
+      # gray90 -> green ramp, except for the regeneration fractions,
+      # which default to the same diverging RdBu as their raster (on
+      # the sequential ramp their 0 = relict end renders near-white).
+      # colorNumeric accepts either a color vector or a palette name.
+      marker_palette <- if(input$rast_palette != "default" &&
+                           marker_follows_raster_palette()){
+            input$rast_palette
+      } else if(bounded_ratio_layer()){
+            "RdBu"
+      } else {
+            c("gray90", green)
       }
+      # Categorical layers key on entity codes, so the markers need
+      # the raster's own colorFactor rather than a numeric ramp --
+      # and its breaks are the categories themselves.
+      plot_pal <- if(cat_layer){
+            # levels, not domain -- see the raster palette above.
+            colorFactor(palette = cc$colors, levels = cc$codes)
+      } else {
+            colorNumeric(palette = marker_palette, domain = dom)
+      }
+      list(pd = pd, pal = plot_pal, dom = dom, categorical = cat_layer)
+})
+
+
+### Legend ----------------------------
+## One panel for the raster and the FIA plot markers (helpers/cartography.R).
+## NULL for a section with nothing to key.
+
+raster_legend <- reactive({
+      if (!isTRUE(input$rast_opacity > 0)) return(NULL)
+      sc <- raster_scale()
+      op <- input$rast_opacity
+      key <- if (categorical_layer()) {
+            cc <- comm_categories()
+            legend_swatches(cc$colors, cc$labels, op)
+      } else if (sc$binned) {
+            # Plain class labels ("100 or more", not "100 - Inf"), colored
+            # from a value inside each class
+            b <- head(sc$bins$breaks, -1)
+            legend_swatches(sc$pal(b + c(diff(b) / 2, 1)), sc$bins$labels, op)
+      } else legend_bar(sc$pal, sc$dom, sc$untransform, op,
+                        cuts = if (!is.null(sc$untransform) && input$rast_transform == "log10")
+                              log_ticks(sc$dom))
+      legend_section(raster_title(), key)
+})
+
+point_legend <- reactive({
+      if (!isTruthy(input$vector) || !input$vector %in% point_vectors) return(NULL)
+      ps <- point_scale()
+      # A categorical layer's markers take the raster's entity colors, which
+      # its legend already keys
+      if (ps$categorical) return(NULL)
+      breaks <- pretty(seq(ps$dom[1], ps$dom[2], length.out = 100), n = 5)
+      title <- legend_title(c("FIA plots", paste("observed historical", response_noun()),
+                              analog_vector_note()),
+                            n_main = 2)
+      legend_section(title, legend_circles(ps$pal(breaks), legend_num(breaks)))
+})
+
+observe({
+      # A section that can't be drawn right now (its layer is waiting on a
+      # req(), say) is left out rather than holding up the other
+      part <- function(f) tryCatch(f(), shiny.silent.error = function(e) NULL,
+                                   validation = function(e) NULL)
+      html <- c(part(raster_legend), part(point_legend))
+      proxy <- leafletProxy("map") %>% removeControl("map_legend")
+      if (length(html)) proxy %>%
+            addControl(HTML(paste(html, collapse = "")), position = "topright",
+                       layerId = "map_legend", className = "ts-legend leaflet-control")
 })
 
 
@@ -498,53 +442,13 @@ observe({
             # clearMarkers() %>%
             clearGroup("FIA plots") %>%
             clearGroup("current_flow") %>%
-            clearGroup("current_field") %>%
-            removeControl("point_legend")
+            clearGroup("current_field")
 
-      if(input$vector %in% c("all FIA plots", "occupied FIA plots", "focal site analogs")){
+      if(input$vector %in% point_vectors){
 
-            pd <- vector_points()
-
-            # Regeneration fractions get the variable's full [0, 1] range so
-            # 0.5 stays on the diverging palette's midpoint. Not in All
-            # mode, where the fractions have no per-entity form and the
-            # displayed value is a count.
-            cat_layer <- categorical_layer()
-            cc <- if (cat_layer) comm_categories() else NULL
-
-            dom <- if(cat_layer) cc$codes
-            else if(response_is_binary()) 0:1
-            else if(bounded_ratio_layer()) c(0, 1)
-            else seq_domain(pd$display)
-
-            # Markers follow the raster palette only when the raster is
-            # itself showing FIA response on a sequential scale (see
-            # marker_follows_raster_palette); otherwise the canonical
-            # gray90 -> green ramp, except for the regeneration fractions,
-            # which default to the same diverging RdBu as their raster (on
-            # the sequential ramp their 0 = relict end renders near-white).
-            # colorNumeric accepts either a color vector or a palette name.
-            marker_palette <- if(input$rast_palette != "default" &&
-                                 marker_follows_raster_palette()){
-                  input$rast_palette
-            } else if(bounded_ratio_layer()){
-                  "RdBu"
-            } else {
-                  c("gray90", green)
-            }
-            # Categorical layers key on entity codes, so the markers need
-            # the raster's own colorFactor rather than a numeric ramp --
-            # and its breaks are the categories themselves.
-            plot_pal <- if(cat_layer){
-                  # levels, not domain -- see the raster palette above.
-                  colorFactor(palette = cc$colors, levels = cc$codes)
-            } else {
-                  colorNumeric(palette = marker_palette, domain = dom)
-            }
-            # Only feeds the marker legend, which categorical layers do
-            # not draw -- guarded so pretty() is not handed a code vector.
-            breaks <- if(cat_layer) numeric(0)
-            else pretty(seq(dom[1], dom[2], length.out = 100), n = 5)
+            ps <- point_scale()
+            pd <- ps$pd
+            plot_pal <- ps$pal
 
             proxy <- proxy %>%
                   addCircles(
@@ -571,33 +475,6 @@ observe({
                         fillOpacity = 1,
                         stroke = TRUE, color = "black", weight = 1,
                         group = "FIA plots"
-                  )
-
-            # legend
-            breaks <- pretty(seq(dom[1], dom[2], length.out = 100), n = 5)
-            legend_labels <- c(breaks, "Non-sampled plot")
-            legend_colors <- c(plot_pal(breaks), "gray") # gray, to match the semi-transparent black markers
-            legend_radii <- c(rep(6, length(breaks)), 3)
-            # Categorical layers: markers use the raster's own colors and
-            # categories, so a second legend would repeat it verbatim. The
-            # raster legend serves both.
-            if (!cat_layer) proxy <- proxy %>%
-                  addControl(
-                        circleLegend(
-                              # In All mode the markers show observed
-                              # richness, not the per-entity variable.
-                              title  = HTML(paste(c("FIA plots: historical",
-                                                    if (multi_mode()) paste("observed", comm_label())
-                                                    else model$fia_var,
-                                                    analog_vector_note()),
-                                                  collapse = "<br/>")),
-                              labels = legend_labels,
-                              colors = legend_colors,
-                              radii = legend_radii
-                        ),
-                        position = "topright",
-                        layerId  = "point_legend",
-                        className = "circle-legend leaflet-control"
                   )
       }
 
