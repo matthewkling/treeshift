@@ -28,10 +28,17 @@ output$map <- renderLeaflet({
             # The cursor's position, for the value readout
             # (server/map_readout.R): at most every 120 ms while it moves,
             # always ending with where it stopped, and NULL when it leaves
-            # the map
+            # the map. Also returns to the view saved before Back, Forward or
+            # a shortcut reloaded the page (ui/head.R), once, in place of the
+            # FIA extent.
             htmlwidgets::onRender("
 function(el, x) {
   var map = this, last = 0, timer = null, pending = null;
+  try {
+    var view = JSON.parse(sessionStorage.getItem('ts-map-view'));
+    sessionStorage.removeItem('ts-map-view');
+    if (view) map.setView([view.lat, view.lng], view.zoom, {animate: false});
+  } catch (e) {}
   function send() {
     last = Date.now();
     Shiny.setInputValue('map_hover', pending);

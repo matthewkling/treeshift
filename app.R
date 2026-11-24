@@ -278,7 +278,7 @@ ui <- function(request) {
 # the order they are created, and some files use objects defined in earlier ones.
 server_files <- c("usage_log", "shared", "url_state", "model_settings", "data", "controls", "climate", "climate_models",
                   "aim", "connectivity", "map_base", "community", "map_layers",
-                  "site_plots", "sensitivity", "polygon_values", "evaluation", "climate_response", "module_status", "map_readout",
+                  "site_plots", "sensitivity", "polygon_values", "evaluation", "climate_response", "module_status", "map_readout", "shortcuts",
                   "downloads")
 
 server <- function(input, output, session) {

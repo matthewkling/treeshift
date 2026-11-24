@@ -411,11 +411,22 @@ point_legend <- reactive({
       # A categorical layer's markers take the raster's entity colors, which
       # its legend already keys
       if (ps$categorical) return(NULL)
-      breaks <- pretty(seq(ps$dom[1], ps$dom[2], length.out = 100), n = 5)
-      title <- legend_title(c("FIA plots", paste("observed historical", response_noun()),
+      # Key only values a single plot can have: a presence variable is
+      # absent or present, and a count of entities (richness) is whole
+      if (response_is_binary()) {
+            breaks <- 0:1
+            labels <- c("absent", "present")
+      } else {
+            breaks <- pretty(seq(ps$dom[1], ps$dom[2], length.out = 100), n = 5)
+            obs <- ps$pd$display[is.finite(ps$pd$display)]
+            if (length(obs) && all(obs == round(obs))) breaks <- unique(round(breaks))
+            labels <- legend_num(breaks)
+      }
+      observed <- if (response_is_binary()) sub(" probability$", "", response_noun()) else response_noun()
+      title <- legend_title(c("FIA plots", paste("observed historical", observed),
                               analog_vector_note()),
                             n_main = 2)
-      legend_section(title, legend_circles(ps$pal(breaks), legend_num(breaks)))
+      legend_section(title, legend_circles(ps$pal(breaks), labels))
 })
 
 observe({

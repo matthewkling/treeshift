@@ -16,6 +16,23 @@ ui_left_sidebar <- function(s) {
             open = "always",
             width = 320,
 
+            ## Common questions, each setting up the map to answer it
+            ## (server/shortcuts.R)
+            accordion(
+                  id = "shortcut_acc",
+                  open = FALSE,
+                  accordion_panel(
+                        "Shortcuts",
+                        helpText("These quick links configure the model settings to answer common questions.
+                                 They don't change your entity, area, or focal site.
+                                 You can adjust the details below, or use your browser's Back button to undo."),
+                        # Drawn from the link with the page, so the
+                        # buttons are there straight away after a shortcut
+                        # reloads it; the server keeps them current
+                        div(id = "shortcuts", class = "shiny-html-output",
+                            shortcut_list(s)))
+            ),
+
             ui_sidebar_group("Model settings", "sliders"),
 
             ## Applies the model settings (server/model_settings.R). Starts
@@ -48,7 +65,47 @@ ui_left_sidebar <- function(s) {
                   ui_panel_focal_places(s),
                   ui_panel_cartography(),
                   ui_panel_export()
-            )
+            ),
+
+            # Returns to what a reload saved (ui/head.R): reopens the panels
+            # that were open and sets the carried controls. Runs as the page
+            # is drawn, before it is first shown and before Shiny reads the
+            # controls, so nothing shows the defaults first, animates open or
+            # is computed twice. A saved choice the menu no longer offers is
+            # left at its default, unless the menu takes typed values.
+            tags$script(HTML("
+  try {
+    var open = JSON.parse(sessionStorage.getItem('ts-open-panels'));
+    sessionStorage.removeItem('ts-open-panels');
+    Object.keys(open || {}).forEach(function(id) {
+      document.querySelectorAll('#' + id + ' > .accordion-item').forEach(function(item) {
+        var show = open[id].indexOf(item.dataset.value) >= 0;
+        var button = item.querySelector('.accordion-button');
+        button.classList.toggle('collapsed', !show);
+        button.setAttribute('aria-expanded', show ? 'true' : 'false');
+        item.querySelector('.accordion-collapse').classList.toggle('show', show);
+      });
+    });
+  } catch (e) {}
+  try {
+    var carry = JSON.parse(sessionStorage.getItem('ts-carry'));
+    sessionStorage.removeItem('ts-carry');
+    Object.keys(carry || {}).forEach(function(id) {
+      var el = document.getElementById(id), v = carry[id];
+      if (!el) return;
+      if (el.type === 'checkbox') el.checked = v;
+      else if (el.tagName === 'SELECT') {
+        var options = Array.prototype.slice.call(el.options);
+        if (!options.some(function(o) { return o.value === v; })) {
+          var config = document.querySelector('script[data-for=\"' + id + '\"]');
+          if (!config || !JSON.parse(config.textContent).create) return;
+          options.push(el.appendChild(new Option(v, v)));
+        }
+        options.forEach(function(o) { o.selected = o.value === v; });
+      } else if (el.classList.contains('js-range-slider')) el.setAttribute('data-from', v);
+    });
+  } catch (e) {}
+"))
       )
 }
 
@@ -483,6 +540,12 @@ ui_panel_map_layers <- function(s) {
       )
 }
 
+# What a reload keeps that the link doesn't hold (ui/head.R): these settings,
+# and which panels of these accordions are open
+reload_accordion_ids <- c("shortcut_acc", "model_acc", "display_acc")
+reload_carry_ids <- c("vector_scale", "rast_opacity", "rast_transform", "rast_palette",
+                      "show_site", "site_color", "show_polygon", "polygon_color")
+
 ui_panel_cartography <- function() {
       accordion_panel(
             "Cartography",
@@ -501,13 +564,15 @@ ui_panel_cartography <- function() {
                         choices = rast_palettes_continuous,
                         selected = "default") %>%
                   tooltip("Override the default palette for the current raster variable. When the raster shows the historical or future FIA variable, the FIA plot markers and focal-site scatterplots adopt the same palette. For layers showing entity identities the options become qualitative palettes."),
+            ## The color controls are hidden until there's a site or polygon
+            ## to color -- a color for nothing is just clutter -- but are
+            ## part of the page, so a reload keeps them (reload_carry_ids)
             input_switch("show_site", "Show focal site", TRUE),
-            uiOutput("site_color_ui"),
+            conditionalPanel("output.site_set",
+                             overlay_color_input("site_color", "Focal site color", "#4c32a8")),
             input_switch("show_polygon", "Show focal polygon", TRUE),
-
-            ## Hidden until a polygon is selected -- an outline color
-            ## for nothing is just clutter.
-            uiOutput("polygon_color_ui")
+            conditionalPanel("input.polygon_unit",
+                             overlay_color_input("polygon_color", "Focal polygon color", "darkred"))
       )
 }
 

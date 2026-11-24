@@ -133,6 +133,62 @@ ui_head <- function() {
   });
 ")),
 
+            ## Back, Forward and shortcuts reload the page at the new link
+            ## (server/url_state.R, server/shortcuts.R). What the link doesn't
+            ## hold is saved first, for the reloaded page to return to, so
+            ## only the link's settings change: the map's view (output$map's
+            ## onRender, server/map_base.R), the settings in
+            ## reload_carry_ids, and which panels of the accordions in
+            ## reload_accordion_ids are open (both ui/left_sidebar.R).
+            tags$script(HTML(sprintf("
+  document.addEventListener('DOMContentLoaded', function() {
+    Shiny.addCustomMessageHandler('ts_reload', function(msg) {
+      try {
+        var map = HTMLWidgets.find('#map').getMap();
+        var c = map.getCenter();
+        sessionStorage.setItem('ts-map-view', JSON.stringify({lat: c.lat, lng: c.lng, zoom: map.getZoom()}));
+      } catch (e) {}
+      try {
+        var carry = {};
+        %s.forEach(function(id) {
+          var el = document.getElementById(id);
+          if (el) carry[id] = el.type === 'checkbox' ? el.checked : el.value;
+        });
+        sessionStorage.setItem('ts-carry', JSON.stringify(carry));
+        var open = {};
+        %s.forEach(function(id) {
+          open[id] = Array.prototype.map.call(
+            document.querySelectorAll('#' + id + ' > .accordion-item'),
+            function(item) { return item.querySelector('.accordion-collapse.show') ? item.dataset.value : null; }
+          ).filter(function(v) { return v !== null; });
+        });
+        sessionStorage.setItem('ts-open-panels', JSON.stringify(open));
+      } catch (e) {}
+      location.reload();
+    });
+  });
+", jsonlite::toJSON(reload_carry_ids), jsonlite::toJSON(reload_accordion_ids)))),
+
+            ## Module panel headers: the title over the question the module
+            ## answers (module_panel(), ui/right_sidebar.R)
+            tags$style(HTML("
+  .ts-module-title, .ts-module-question { display: block; }
+  .ts-module-question { font-size: 0.85em; font-weight: 400; color: #6c757d; margin-top: 2px; }
+")),
+
+            ## Shortcut questions (server/shortcuts.R)
+            tags$style(HTML("
+  .ts-shortcuts { list-style: none; padding: 0; margin: 0; }
+  .ts-shortcuts li + li { margin-top: 4px; }
+  .ts-shortcut {
+    display: block; width: 100%; text-align: left; padding: 6px 8px;
+    border: 1px solid #dee2e6; border-radius: 4px; background: #fff; color: #212529;
+  }
+  .ts-shortcut:hover:not(:disabled) { background: #f1f3f5; }
+  .ts-shortcut:disabled { color: #adb5bd; }
+  .ts-shortcut-note { font-size: 0.85em; color: #6c757d; margin: 2px 0 0 8px; }
+")),
+
             ## Plot hover readouts (plot_tooltip(), app.R)
             tags$style(HTML("
   .ts-plot-tooltip {

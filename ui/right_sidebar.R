@@ -27,25 +27,40 @@ ui_right_sidebar <- function() {
       )
 }
 
-# The modules as tabs on the map's right edge, shown while the sidebar is
-# collapsed so the modules stay visible; a tab opens the sidebar on its module.
-# Titles match the accordion panels' titles (their values); labels are short
-# enough to stack down the edge. In the accordion's order.
+# The modules, in the accordion's order. Each is a panel in the sidebar,
+# headed by its title and the question it answers, and a tab on the map's
+# right edge, shown while the sidebar is collapsed so the modules stay visible;
+# a tab opens the sidebar on its module. Labels are short enough to stack down
+# the edge.
 module_tabs <- list(
-      list(title = "Value distributions",   label = "Distributions",     icon = "chart-column"),
-      list(title = "Community composition", label = "Community",         icon = "layer-group"),
-      list(title = "Climate relationships", label = "Relationships",     icon = "chart-line"),
-      list(title = "Climate futures",       label = "Climate futures",   icon = "earth-americas"),
-      list(title = "Model sensitivity",     label = "Model sensitivity", icon = "scale-balanced"),
-      list(title = "Model evaluation",      label = "Evaluation",        icon = "bullseye"),
-      list(title = "Focal site analogs",    label = "Site analogs",      icon = "location-dot")
+      list(title = "Value distributions",   label = "Distributions",     icon = "chart-column",
+           question = "What range of values does my study area have?"),
+      list(title = "Community composition", label = "Community",         icon = "layer-group",
+           question = "Which species occur here, now and in the future?"),
+      list(title = "Climate relationships", label = "Relationships",     icon = "chart-line",
+           question = "How do values change along climate gradients?"),
+      list(title = "Climate futures",       label = "Climate futures",   icon = "earth-americas",
+           question = "Do climate models agree about this area's future?"),
+      list(title = "Model sensitivity",     label = "Model sensitivity", icon = "scale-balanced",
+           question = "How would different settings change predictions?"),
+      list(title = "Model evaluation",      label = "Evaluation",        icon = "bullseye",
+           question = "How well do predictions match FIA observations?"),
+      list(title = "Focal site analogs",    label = "Site analogs",      icon = "location-dot",
+           question = "Which plots have a climate like this cell's?")
 )
 
-# A module's icon, shared by its tab and its panel header
-module_icon <- function(title) {
+# A module's accordion panel. Its value is the plain title, which the server
+# (input$modules_acc) and the tabs' script (ui/head.R) look panels up by.
+module_panel <- function(title, ...) {
       m <- Filter(function(m) m$title == title, module_tabs)
-      if (length(m) != 1) stop("No module tab titled '", title, "'")
-      icon(m[[1]]$icon, class = "fa-fw")   # fixed width, so header titles align
+      if (length(m) != 1) stop("No module titled '", title, "'")
+      m <- m[[1]]
+      accordion_panel(
+            title = tagList(span(class = "ts-module-title", title),
+                            span(class = "ts-module-question", m$question)),
+            value = title,
+            icon = icon(m$icon, class = "fa-fw"),   # fixed width, so header titles align
+            ...)
 }
 
 ui_module_tabs <- function() {
@@ -81,9 +96,8 @@ hover_plot <- function(id, ...) {
       ## view in the app where entity identity survives
       ## the reduction.
 ui_panel_community_composition <- function() {
-      accordion_panel(
+      module_panel(
             "Community composition",
-            icon = module_icon("Community composition"),
             helpText("When you select the 'community composition' FIA variable at left,
                                              the map summarizes across species or forest types into one summary number per cell.
                                              This module lets you unpack the individual species behind those summaries. The two settings
@@ -160,9 +174,8 @@ ui_panel_community_composition <- function() {
       ## rule that right-sidebar panels are local to one
       ## output.
 ui_panel_value_distributions <- function() {
-      accordion_panel(
+      module_panel(
             "Value distributions",
-            icon = module_icon("Value distributions"),
             helpText("This module summarizes how the predicted values on the map differ across geographic areas.
                                              It shows one curve (or bar stack, for categorical variables) for the whole bounding box,
                                              and one for each area you have set: your focal polygon, that polygon
@@ -177,9 +190,8 @@ ui_panel_value_distributions <- function() {
 }
 
 ui_panel_climate_relationships <- function() {
-      accordion_panel(
+      module_panel(
             "Climate relationships",
-            icon = module_icon("Climate relationships"),
             helpText("This plot shows how the mapped variable changes along a climate gradient. The curve is a smoothed
                                              relationship fitted to either the FIA plot observations or the modeled grid cells; the
                                              density histogram above it shows how much data sits at each point along the gradient.
@@ -211,9 +223,8 @@ ui_panel_climate_relationships <- function() {
 }
 
 ui_panel_model_evaluation <- function() {
-      accordion_panel(
+      module_panel(
             "Model evaluation",
-            icon = module_icon("Model evaluation"),
             helpText("This module uses 'leave-one-out cross validation' to quantify the accuracy of the model's present-day predictions.
                                              Each FIA plot is held out in turn, predicted from the others, and compared against what was actually measured there.
                                              The first plot below shows accuracy for the currently-displayed results, while the second section shows how accuracy
@@ -283,9 +294,8 @@ ui_panel_model_evaluation <- function() {
 }
 
 ui_panel_climate_models <- function() {
-      accordion_panel(
+      module_panel(
             "Climate futures",
-            icon = module_icon("Climate futures"),
             helpText("This module compares future climate trends across global circulation models (GCMs;
                       to compare TreeShift projections across GCMs, see the `Model sensitivity` module).
                       For each emissions pathway and model, it plots the
@@ -312,9 +322,8 @@ ui_panel_climate_models <- function() {
       ## checked one site at a time: the user clicks sites on the map with
       ## the panel open.
 ui_panel_sensitivity <- function() {
-      accordion_panel(
+      module_panel(
             "Model sensitivity",
-            icon = module_icon("Model sensitivity"),
             helpText("This module shows how different `model settings` would change the model estimate at your selected focal site.
                       Each row varies one choice with the others held fixed at your current settings.
                       The bold vertical line is the estimate at your current settings (outlined points),
@@ -358,9 +367,8 @@ ui_panel_sensitivity <- function() {
       ## point coloring is entity-specific, and it follows
       ## display_values() like the map markers do.
 ui_panel_focal_site_analogs <- function() {
-      accordion_panel(
+      module_panel(
             "Focal site analogs",
-            icon = module_icon("Focal site analogs"),
             helpText(
                   "This module helps you explore where a model prediction at a given location actually comes from:
                                           the 'analog' FIA plots that are geographically close and climatically similar.

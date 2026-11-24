@@ -77,28 +77,10 @@ cr_plot_values <- reactive({
       as.numeric(terra::extract(src, xy, ID = FALSE, method = "bilinear")[, 1])
 })
 
-## Outline color for the focal polygon. selectizeInput with a swatch
-## renderer rather than a text box: the swatches make the choice visual
-## without adding a color-picker dependency, and `create = TRUE` still
-## accepts any R color name or hex typed straight in.
-output$polygon_color_ui <- renderUI({
-      req(isTruthy(polygon_active()))
-      # isolate: this renderUI CREATES polygon_color, so reading it
-      # reactively would rebuild the widget on every change -- resetting
-      # the dropdown and stealing focus mid-selection. The read is only to
-      # carry the selection across a polygon swap.
-      overlay_color_input("polygon_color", "Focal polygon color",
-                          isolate(if (isTruthy(input$polygon_color)) input$polygon_color
-                                  else "darkred"))
-})
-
-## Matching control for the focal site, shown only once one is set.
-output$site_color_ui <- renderUI({
-      req(!is.null(site$x), !is.null(site$y))
-      overlay_color_input("site_color", "Focal site color",
-                          isolate(if (isTruthy(input$site_color)) input$site_color
-                                  else "#4c32a8"))
-})
+## Whether a focal site is set, for the site color control's
+## conditionalPanel (ui/left_sidebar.R), so it must update while hidden
+output$site_set <- reactive(!is.null(site$x))
+outputOptions(output, "site_set", suspendWhenHidden = FALSE)
 
 ## Resolved once so both the outline and its buffer ring agree, and so a
 ## typed value that R cannot parse falls back instead of erroring inside

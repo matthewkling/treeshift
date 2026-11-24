@@ -64,11 +64,12 @@ observe({
 })
 
 # Back and Forward (reported by ui/head.R) reload the page at that entry's
-# link, which rebuilds the controls and results from its settings. Moving
+# link, which rebuilds the controls and results from its settings; the browser
+# keeps what the link doesn't hold (ui/head.R). Moving
 # between the About page's sections changes only the hash, not the settings,
 # and doesn't reload.
 observeEvent(input$history_nav, {
-      if (!identical(input$history_nav, shown_query)) session$reload()
+      if (!identical(input$history_nav, shown_query)) session$sendCustomMessage("ts_reload", TRUE)
 })
 
 # The full link, for the settings record
