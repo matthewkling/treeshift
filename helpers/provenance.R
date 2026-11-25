@@ -107,7 +107,7 @@ provenance_text <- function(s, ctx, link, versions, created = Sys.time()) {
         "",
         "Map layers",
         line("Raster variable", switch(s$stat,
-              connectivity = "connectivity",
+              connectivity = paste("connectivity:", label(conn_choices(s$time), s$conn_stat)),
               evidence = label(evidence_choices, s$evidence_stat),
               label(stat_choices_cs, s$stat))),
         line("Vector variable", label(vector_choices_cs, s$vector)),

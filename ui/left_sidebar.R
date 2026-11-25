@@ -398,8 +398,8 @@ ui_panel_connectivity <- function(s) {
             "Landscape connectivity",
             helpText("Connectivity models run as a second stage on top of gridded suitability results.
                      They estimate how long-distance movement between suitable cells is constrained by local habitat resistance.
-                     Under 'Map layers', select 'connectivity', and change the `timeframe` to model either omnidirectional habitat connectivity within an era or
-                     directional connectivity between present and future habitat.",
+                     Under 'Map layers', select 'connectivity' and a measure (corridors, or how well connected each place is), and change the `timeframe` to model
+                     connectivity either within an era or between historical and future habitat.",
                      about_link("More details", "about-how_it_works-landscape-connectivity")),
             hr(),
             uiOutput("cs_note"),
@@ -436,7 +436,7 @@ ui_panel_map_layers <- function(s) {
                                               <dt>FIA variable</dt> <dd>Predicted values of the variable selected above.</dd>
                                               <dt>Analog evidence</dt> <dd>Measures of the FIA evidence behind each cell's estimate: its support, closeness, or spread. Choose one in the menu that appears below.</dd>
                                               <dt>Focal site similarity</dt> <dd>How climatically similar each cell is to the site you clicked on the map. Which climates are compared is set by the analog type, under 'Focal polygon and site'.</dd>
-                                              <dt>Connectivity</dt> <dd>How strongly movement through the mapped habitat is funneled through each place, compared with an even landscape: well above 1 in corridors and pinch points, below 1 where movement is impeded; see 'Landscape connectivity'. The timeframe picks the map: within historical or future habitat, or ('change') the pathways linking them. Available for occurrence, abundance and basal area of a single entity.</dd>
+                                              <dt>Connectivity</dt> <dd>How the landscape shapes movement through the mapped habitat: where movement is funneled, or how well connected each place is. Choose one in the menu that appears below; see 'Landscape connectivity'. Available for occurrence, abundance and basal area of a single entity.</dd>
                                           </dl>")),
             ## The analog evidence entry's measure; see evidence_choices
             ## (helpers/menus.R)
@@ -449,6 +449,20 @@ ui_panel_map_layers <- function(s) {
                                               <dt>Closeness</dt> <dd>How well the plots behind each estimate match the cell's climate and location, from near 0 (only weak matches) to 1 (exact matches). Low support with high closeness means a few good matches; low support with low closeness means only weak ones.</dd>
                                               <dt>Spread</dt> <dd>How much the values at the plots behind each estimate differ from one another, in the units of the variable. High spread means those plots disagree, so the estimate averages over very different stands. For presence variables, spread is highest where about half the plots have the species. Not shown for ratio variables.</dd>
                                               <dd>Support, closeness and spread depend on the bandwidth settings, so compare places within one map, not across settings.</dd>
+                                          </dl>"))
+            ),
+            ## The connectivity entry's measure; see conn_choices()
+            ## (helpers/menus.R). Its choices follow the timeframe
+            ## (server/controls.R).
+            conditionalPanel(
+                  condition = "input.stat == 'connectivity'",
+                  selectInput("conn_stat", "Connectivity measure", conn_choices(s$time),
+                              selected = s$conn_stat) %>%
+                        tooltip(HTML("<dl style='margin:0;'>
+                                              <dt>Corridors</dt> <dd>How strongly movement is funneled through each place, compared with an even landscape: well above 1 in corridors and pinch points, below 1 where movement is impeded. Under 'change', the pathways linking historical habitat to future habitat.</dd>
+                                              <dt>Connected habitat</dt> <dd>How much habitat each place of habitat can reach, as an area: the habitat within dispersal reach, counted in full where it is as easy to reach as through continuous, fully suitable habitat on unmodified land, and less where it is harder. It is lower where there is less habitat within reach, where it is farther away, or where the land between is hard to cross.</dd>
+                                              <dt>Proximity of suitable habitat</dt> <dd>The area of habitat within dispersal reach of each place of habitat, whatever lies between. Comparing it with connected habitat shows how much the land in between matters.</dd>
+                                              <dd style='margin-top:.5em;'>Both are larger with a longer reach, and need a reach other than 'no limit'. Under 'change', each has two directions: the future habitat around historical habitat (could populations follow their shifting habitat?), and the historical habitat around future habitat (could it be colonized?).</dd>
                                           </dl>"))
             ),
             uiOutput("stat_note"),
@@ -465,7 +479,7 @@ ui_panel_map_layers <- function(s) {
                         c("historical", "future", "change" = "delta"),
                         selected = s$time) %>%
                   tooltip("Choose whether to display historical (2000-2025) or future (scenario selected under 'Climate data') model predictions, or the change between them.
-                                      Only relevant for the `FIA variable` raster variable, the analog support, closeness and spread layers, and connectivity, where 'change' shows the pathways linking historical habitat to future habitat."),
+                                      Only relevant for the `FIA variable` raster variable, the analog support, closeness and spread layers, and connectivity, where 'change' links historical habitat to future habitat."),
             ## Community mode only: how the per-entity surfaces are
             ## combined into one map. It sits below the timeframe,
             ## which narrows the list, and is filtered by the

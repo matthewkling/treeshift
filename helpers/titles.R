@@ -101,9 +101,11 @@ comm_noun <- function(measure, fia_var, track) {
 
 # The parts of a layer's title. `stat` is the kind of layer (rast_stat());
 # `focal` the entity's display name (focal_label()); `direction`
-# input$analog_direction.
+# input$analog_direction; `conn` the connectivity measure and `reach` its
+# dispersal reach in km, as model$cs_reach holds it.
 layer_title <- function(stat, time, track = NULL, focal = NULL, fia_var = NULL,
-                        comm_measure = NULL, multi = FALSE, direction = NULL) {
+                        comm_measure = NULL, multi = FALSE, direction = NULL,
+                        conn = "corridors", reach = NULL) {
       subject <- NULL
       notes <- NULL
 
@@ -125,12 +127,28 @@ layer_title <- function(stat, time, track = NULL, focal = NULL, fia_var = NULL,
                                "historical climate distance from the focal site")
             notes <- "standardized units"
 
+      } else if (stat == "connectivity" && !identical(conn, "corridors")) {
+            subject <- focal
+            quantity <- switch(conn,
+                               "connectedness"      = paste("connected", time, "habitat"),
+                               "tracking"           = "future habitat connected to historical habitat",
+                               "colonization"       = "historical habitat connected to future habitat",
+                               "reach"              = paste("proximity of suitable", time, "habitat"),
+                               "reach_tracking"     = "proximity of suitable future habitat to historical habitat",
+                               "reach_colonization" = "proximity of suitable historical habitat to future habitat")
+            # These measures need a finite reach (cs_solve())
+            within <- if (is.finite(as.numeric(reach %||% Inf))) paste("within", reach, "km")
+                      else "within dispersal reach"
+            notes <- paste0("habitat area ", within, ", ",
+                            if (startsWith(conn, "reach")) "whatever lies between"
+                            else "discounted by difficulty of access")
+
       } else if (stat == "connectivity") {
             subject <- focal
             quantity <- switch(time,
-                               "historical" = "connectivity within historical habitat",
-                               "future"     = "connectivity within future habitat",
-                               "delta"      = "range shift connectivity, historical to future habitat")
+                               "historical" = "connectivity corridors within historical habitat",
+                               "future"     = "connectivity corridors within future habitat",
+                               "delta"      = "range shift corridors, historical to future habitat")
             notes <- "movement compared with an even landscape"
 
       } else if (multi) {

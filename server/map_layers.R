@@ -138,7 +138,8 @@ raster_title_parts <- reactive({
       layer_title(stat = rast_stat(), time = input$time, track = model$track,
                   focal = focal_label(), fia_var = model$fia_var,
                   comm_measure = input$comm_measure, multi = multi_mode(),
-                  direction = input$analog_direction)
+                  direction = input$analog_direction, conn = input$conn_stat,
+                  reach = model$cs_reach)
 })
 
 ## The raster's legend title: subject and quantity, then muted details
@@ -169,14 +170,14 @@ raster_scale_of <- function(r, stat) {
 
       # Scale transforms are meaningless on category codes, and
       # setValues() would drop the factor levels the legend reads from.
-      # Fixed classes (support, connectivity) already do the job of a
-      # transform.
+      # Classes (support, connectivity) already do the job of a transform.
       bins <- switch(stat,
                      # Reversed, so well-supported cells take the dark, cool end
                      support = list(breaks = support_breaks, labels = support_labels,
                                     palette = rev(scales::viridis_pal()(length(support_labels)))),
-                     connectivity = list(breaks = cs_breaks, labels = cs_break_labels,
-                                         palette = cs_break_colors))
+                     connectivity = if (identical(input$conn_stat, "corridors"))
+                           list(breaks = cs_breaks, labels = cs_break_labels, palette = cs_break_colors)
+                     else cs_area_bins(r[], anchor = !startsWith(input$conn_stat, "reach")))
       binned <- !is.null(bins)
       # Maps a transformed value back to the variable's units, for the legend
       # labels: colors follow the transformed scale, labels stay in the

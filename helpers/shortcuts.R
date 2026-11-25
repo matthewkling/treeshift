@@ -10,7 +10,7 @@
 
 # The settings a shortcut can change without the model being rebuilt; any
 # other change reopens the page at the new link (server/shortcuts.R)
-shortcut_display_ids <- c("stat", "evidence_stat", "vector", "analog_direction")
+shortcut_display_ids <- c("stat", "evidence_stat", "conn_stat", "vector", "analog_direction")
 
 # The entity type in a question: "this species", "forest types"
 shortcut_entity <- function(track, plural = FALSE) {
@@ -94,6 +94,7 @@ shortcuts <- list(
                   s <- shortcut_single(s, "occurrence", "delta")
                   if (is.character(s)) return(s)
                   s$stat <- "connectivity"
+                  s$conn_stat <- "corridors"
                   s
             }),
       evidence = list(

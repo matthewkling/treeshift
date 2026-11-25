@@ -34,7 +34,13 @@ test_that("links round-trip without problems", {
                   track = "All trees", metric = "basal area", stage = "any",
                   fia_var = resolve_var("All trees", "basal area", "any"),
                   cs_reach = "Inf", cs_landuse = 75, stat = "connectivity", time = "future",
-                  vector = "current field")))
+                  vector = "current field")),
+            connected_habitat = modifyList(d, list(
+                  stat = "connectivity", conn_stat = "colonization", time = "delta")),
+            habitat_within_reach = modifyList(d, list(
+                  stat = "connectivity", conn_stat = "reach", time = "future")),
+            habitat_within_reach_change = modifyList(d, list(
+                  stat = "connectivity", conn_stat = "reach_tracking", time = "delta")))
       # A specific model rather than a storyline
       states$species["scenario_storyline"] <- list(NULL)
       for (nm in names(states)) {
@@ -42,6 +48,19 @@ test_that("links round-trip without problems", {
             expect_identical(r$again, r$query, label = nm)
             expect_length(r$problems, 0)
       }
+})
+
+test_that("a connectivity link without a measure opens on corridors", {
+      r <- url_decode(sub("&r=conn&rcn=corr", "&r=conn", url_encode(modifyList(d, list(stat = "connectivity")), ctx)), ctx)
+      expect_identical(r$state$conn_stat, "corridors")
+      expect_length(r$problems, 0)
+})
+
+test_that("a connectivity measure the timeframe doesn't offer is reported", {
+      q <- url_encode(modifyList(d, list(stat = "connectivity", conn_stat = "tracking", time = "delta")), ctx)
+      r <- url_decode(sub("t=chg", "t=hist", q), ctx)
+      expect_identical(r$state$conn_stat, "corridors")
+      expect_length(r$problems, 1)
 })
 
 test_that("settings that don't apply are left out", {

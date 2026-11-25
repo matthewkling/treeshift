@@ -119,7 +119,7 @@ key_inputs <- c(e = "track", es = "entity_scope", sp = "species", ft = "forest_t
                 bx = "bbox_x", by = "bbox_y", poly = "polygon_unit", cv = "clim_vars",
                 ssp = "scenario_ssp", era = "scenario_period", sto = "scenario_choice", gcm = "scenario_choice",
                 tg = "theta_geog", tc = "theta_clim", crch = "cs_reach", clu = "cs_landuse", r = "stat",
-                rev = "evidence_stat", pts = "vector", an = "analog_direction")
+                rev = "evidence_stat", rcn = "conn_stat", pts = "vector", an = "analog_direction")
 
 # The inputs a link sets: those its keys name, plus the variable they resolve
 # to and the map layers, which links leave out when at their defaults

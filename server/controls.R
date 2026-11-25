@@ -174,6 +174,23 @@ observeEvent(cs_available(), {
                         selected = keep(input$vector, vector_choices, "occupied FIA plots"))
 }, ignoreInit = TRUE)
 
+## The connectivity measure's choices follow the timeframe: under change, the
+## habitat measures have two directions (conn_choices()). A measure stays
+## itself across the switch, in the direction from historical habitat under
+## change. The handler is isolated, so the measure it writes can't re-trigger
+## it.
+observeEvent(input$time, {
+      ch <- conn_choices(input$time)
+      cur <- input$conn_stat
+      delta <- input$time == "delta"
+      sel <- if (isTruthy(cur) && cur %in% ch) cur
+             else if (!isTruthy(cur) || cur == "corridors") "corridors"
+             else if (startsWith(cur, "reach")) { if (delta) "reach_tracking" else "reach" }
+             else if (delta) "tracking"
+             else "connectedness"
+      updateSelectInput(session, "conn_stat", choices = ch, selected = sel)
+}, ignoreInit = TRUE)
+
 # Swap eval_stat choices to the metric set cv_performance() produces for
 # the current response type. Binary (presence-type) responses get
 # ranking/threshold metrics; continuous responses get error metrics.

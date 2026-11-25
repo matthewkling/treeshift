@@ -44,8 +44,10 @@
 #   tg, tc geographic and climate bandwidths
 #   crch   connectivity dispersal reach (km, or inf);  clu  land use weight (%)
 #   r      raster layer;  rev  evidence measure
-#   rcm    retired: there is no longer a choice of connectivity measure, so
-#          old links' values are ignored
+#   rcm    retired: an earlier choice of connectivity measure, whose values
+#          old links' are ignored
+#   rcn    connectivity measure: corr; connected habitat: conn, track, colon;
+#          proximity of suitable habitat: reach, rtrack, rcolon (absent: corridors)
 #   pts    point layer
 #   an     analog direction
 
@@ -53,7 +55,7 @@ url_schema_version <- 1L
 
 url_keys <- c("v", "e", "es", "sp", "ft", "fg", "st", "m", "t", "cm", "n", "sf",
               "g", "bx", "by", "poly", "site", "cv", "ssp", "era", "sto", "gcm", "tg", "tc",
-              "crch", "clu", "r", "rev", "rcm", "pts", "an")
+              "crch", "clu", "r", "rev", "rcm", "rcn", "pts", "an")
 
 # Short codes for enumerated settings: code = app value
 url_codes <- list(
@@ -71,6 +73,9 @@ url_codes <- list(
       stat = c(fia = "FIA variable", evid = "evidence", sim = "focal site similarity",
                conn = "connectivity"),
       evidence = c(sup = "support", close = "closeness", spread = "spread"),
+      conn = c(corr = "corridors", conn = "connectedness", track = "tracking",
+               colon = "colonization", reach = "reach", rtrack = "reach_tracking",
+               rcolon = "reach_colonization"),
       vector = c(occ = "occupied FIA plots", all = "all FIA plots", analogs = "focal site analogs",
                  anim = "current animation", field = "current field", none = "none"),
       analog = c(contemp = "Contemporary analogs", reverse = "Reverse analogs",
@@ -118,7 +123,7 @@ url_defaults <- function(ctx) {
            scenario_model = ctx$default_model,
            theta_geog = d$theta_geog, theta_clim = d$theta_clim,
            cs_reach = "100", cs_landuse = 50,
-           stat = "FIA variable", evidence_stat = "support",
+           stat = "FIA variable", evidence_stat = "support", conn_stat = "corridors",
            vector = "occupied FIA plots", analog_direction = "Contemporary analogs")
 }
 
@@ -198,6 +203,7 @@ url_fields <- function(s, ctx) {
       }
       if (!identical(s$stat, d$stat)) f["r"] <- code_of(url_codes$stat, s$stat)
       if (identical(s$stat, "evidence")) f["rev"] <- code_of(url_codes$evidence, s$evidence_stat)
+      if (identical(s$stat, "connectivity")) f["rcn"] <- code_of(url_codes$conn, s$conn_stat)
       if (!identical(s$vector, d$vector)) f["pts"] <- code_of(url_codes$vector, s$vector)
       if (!identical(s$analog_direction, d$analog_direction))
             f["an"] <- code_of(url_codes$analog, s$analog_direction)
@@ -390,6 +396,11 @@ url_decode <- function(search, ctx) {
                        allowed = if (url_cs_available(s)) stat_choices_cs else stat_choices_base))
       if (identical(s$stat, "evidence"))
             set("evidence_stat", code("rev", url_codes$evidence, "Evidence measure"))
+      # Links from before the measure existed have none: corridors, the only
+      # map they could show
+      if (identical(s$stat, "connectivity"))
+            set("conn_stat", code("rcn", url_codes$conn, "Connectivity measure",
+                                  allowed = conn_choices(s$time)))
       set("vector", code("pts", url_codes$vector, "Point layer",
                          allowed = if (url_cs_available(s)) vector_choices_cs else vector_choices_base))
       set("analog_direction", code("an", url_codes$analog, "Analog direction"))
